@@ -2,7 +2,6 @@
 
 import { useState } from 'react'
 import {
-  CalendarCheck,
   CheckCircle2,
   Eye,
   EyeOff,
@@ -16,6 +15,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useLogin, useRecoverPassword, useSignup } from '@/hooks/use-auth'
+import { BrandMark } from '@/components/app/brand-mark'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -98,9 +98,7 @@ export function AuthScreen() {
       <div className="w-full max-w-md">
         {/* brand */}
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-lg">
-            <CalendarCheck className="h-7 w-7" />
-          </div>
+          <BrandMark className="mx-auto mb-4 h-14 w-14 shadow-lg" />
           <h1 className="text-2xl font-bold tracking-tight">
             {mode === 'signup' ? 'Your goals, on every device' : mode === 'signin' ? 'Welcome back' : 'Reset your password'}
           </h1>

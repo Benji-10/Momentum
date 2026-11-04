@@ -1,8 +1,9 @@
 'use client'
 
-import { CalendarCheck, CopyPlus, FileJson, ListChecks, Map as MapIcon, Repeat, Sparkles, Target } from 'lucide-react'
+import { CopyPlus, FileJson, ListChecks, Map as MapIcon, Palette, Repeat, Sparkles, Target } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ThemeQuickRow } from '@/components/app/theme-picker'
+import { BrandMark } from '@/components/app/brand-mark'
 
 export function EmptyState({
   onNewGoal,
@@ -19,9 +20,7 @@ export function EmptyState({
 }) {
   return (
     <div className="mx-auto max-w-lg py-10 text-center">
-      <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-3xl">
-        🎯
-      </div>
+      <BrandMark className="mx-auto mb-5 h-16 w-16" />
       <h2 className="text-2xl font-bold tracking-tight">Welcome to Momentum</h2>
       <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
         Stop practicing mindlessly. Set targets, build skill maps, schedule weekly routines — and let the app
@@ -82,7 +81,7 @@ export function EmptyState({
 
       <div className="mt-8 flex items-center justify-center gap-3">
         <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-          <CalendarCheck className="h-3.5 w-3.5" /> Pick a theme:
+          <Palette className="h-3.5 w-3.5" /> Pick a theme:
         </span>
         <ThemeQuickRow />
       </div>

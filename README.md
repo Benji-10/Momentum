@@ -38,6 +38,11 @@ with flexible routines, and watch the log write itself as you check things off.
   the header collapses to icon actions, Import/Export move into the menus,
   and any Netlify-injected badge iframe is hidden). Inner strips (tab rows,
   the roadmap picker, the quest map) scroll on their own.
+- **Brand mark & favicon** — the M drawn as an ascending progress line whose
+  last stroke breaks out as an upward arrow (`public/favicon.svg`), shipped
+  as an optically size-tiered set: `favicon.ico` (16/32/48 px cuts),
+  `apple-touch-icon.png`, and the same mark in the header, sign-in screen
+  and empty state (`src/components/app/brand-mark.tsx`).
 
 ## Quick start (local)
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { CalendarCheck, CalendarDays, ChevronDown, CopyPlus, LayoutDashboard, LogOut, Map as MapIcon, Plus, RefreshCw, Repeat, Settings, UserRound } from 'lucide-react'
+import { CalendarDays, ChevronDown, CopyPlus, LayoutDashboard, LogOut, Map as MapIcon, Plus, RefreshCw, Repeat, Settings, UserRound } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData } from '@/lib/types'
 import { useGoals, useSeedDemo } from '@/hooks/use-goals'
@@ -30,6 +30,7 @@ import { BulkCreateDialog } from '@/components/app/bulk-create-dialog'
 import { ImportDialog } from '@/components/app/import-dialog'
 import { EmptyState } from '@/components/app/empty-state'
 import { AuthScreen, IdentityUnconfiguredNotice } from '@/components/app/auth-screen'
+import { BrandMark } from '@/components/app/brand-mark'
 import { AccountSettingsDialog } from '@/components/app/account-settings'
 import { ExportButton, ImportButton, ThemePicker, exportData } from '@/components/app/theme-picker'
 
@@ -113,9 +114,7 @@ function App({ email, name }: { email: string; name: string | null }) {
       {/* header */}
       <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-1.5 px-3 min-[420px]:gap-2 sm:gap-3 sm:px-6">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
-            <CalendarCheck className="h-5 w-5" />
-          </div>
+          <BrandMark className="h-9 w-9" />
           <div className="mr-auto min-w-0">
             <div className="hidden truncate text-lg font-bold leading-tight tracking-tight min-[420px]:block">
               Momentum
@@ -309,9 +308,7 @@ export default function Home() {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="flex flex-col items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary text-primary-foreground">
-            <CalendarCheck className="h-6 w-6" />
-          </div>
+          <BrandMark className="h-12 w-12" />
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <UserRound className="h-4 w-4 animate-pulse" /> Checking your account…
           </div>

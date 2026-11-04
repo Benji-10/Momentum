@@ -20,7 +20,12 @@ export const metadata: Metadata = {
     "Set measurable goals with deadlines, break skills into step-by-step plans, and see exactly what you need to do each week to stay on track.",
   keywords: ["goals", "habits", "tracking", "planning", "progress"],
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    // the Momentum mark: M as an ascending progress line (see public/favicon.svg)
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/favicon.ico", sizes: "16x16 32x32 48x48" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
 };
 
