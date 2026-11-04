@@ -112,7 +112,10 @@ export function serializeGoal(goal: GoalWithRelations): GoalData {
       dones: r.dones.map((d) => ({
         id: d.id,
         routineId: d.routineId,
-        date: d.date.toISOString(),
+        // calendar day ("YYYY-MM-DD") — parsed back as *local* midnight on the
+        // client, so a check-off shows on the same day in every timezone.
+        // (Stored canonically as UTC midnight of that day.)
+        date: d.date.toISOString().slice(0, 10),
         creditedValue: d.creditedValue,
       })),
     })),

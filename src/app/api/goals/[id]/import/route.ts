@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { canonicalDayUtc } from '@/lib/routine-math'
 import { requireUser } from '@/lib/auth'
 import { ownedGoal, ownsGoal } from '@/lib/api-helpers'
 import { parseGoalScopeImport } from '@/lib/import-format'
@@ -140,7 +141,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               seen.add(day)
               return true
             })
-            .map((d) => ({ routineId: routine.id, date: new Date(d) })),
+            .map((d) => ({ routineId: routine.id, date: canonicalDayUtc(d.slice(0, 10)) })),
         })
       }
       addedRoutines++

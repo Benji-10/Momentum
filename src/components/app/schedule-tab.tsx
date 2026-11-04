@@ -30,6 +30,7 @@ import {
   routineStats,
   startOfWeek,
   sameDay,
+  toDayKey,
   weekFlexProgress,
   type Occurrence,
 } from '@/lib/routine-math'
@@ -331,7 +332,10 @@ export function ScheduleTab({
       {
         goalId: goal.id,
         routineId: routine.id,
-        date: date ? date.toISOString() : undefined,
+        // calendar day in the user's timezone — never a bare ISO timestamp,
+        // which the server would re-truncate to *its* midnight (wrong day
+        // for every non-UTC client)
+        date: date ? toDayKey(date) : undefined,
         undo,
       },
       {

@@ -48,6 +48,8 @@ export interface GoalNoteData {
 export interface RoutineDoneData {
   id: string
   routineId: string
+  /** calendar day "YYYY-MM-DD" (parsed as local midnight); legacy rows may
+   *  still carry a full ISO timestamp — parseDayKey() handles both */
   date: string
   /** progress that was auto-added to the linked skill node (for undo) */
   creditedValue: number | null

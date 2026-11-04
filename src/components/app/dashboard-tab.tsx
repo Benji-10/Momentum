@@ -19,10 +19,10 @@ import {
   X,
   Zap,
 } from 'lucide-react'
-import type { GoalData } from '@/lib/types'
+import type { GoalData, RoutineData } from '@/lib/types'
 import { computeGoalStats, formatNumber } from '@/lib/goal-math'
 import { buildSkillMap, computeXp, xpToReachLevel } from '@/lib/skill-tree'
-import { occurrencesInRange, routineStats, sameDay, startOfWeek } from '@/lib/routine-math'
+import { occurrencesInRange, routineStats, sameDay, startOfWeek, toDayKey, weekFlexProgress, isRoutineDone } from '@/lib/routine-math'
 import { goalColor } from '@/lib/goal-colors'
 import { useToggleRoutineDone } from '@/hooks/use-goals'
 import { toast } from 'sonner'
@@ -69,82 +69,146 @@ function XpBadge({ goals }: { goals: GoalData[] }) {
   )
 }
 
-/** Today's checkable list: every routine scheduled for today, any goal. */
+/** Today's checkable list: every routine scheduled for today, any goal.
+ *  Flexible (any-day-this-week) routines follow below — they aren't pinned
+ *  to today, so they get their own quota rows instead. */
 function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: (g: GoalData, tab?: string) => void }) {
   const toggleDone = useToggleRoutineDone()
   const today = new Date()
-  const tomorrow = new Date(today.getTime() + 86_400_000)
 
-  const occs = useMemo(() => {
-    const all = goals.flatMap((g) =>
+  // computed inline (React Compiler memoizes); `today` changes every render,
+  // so a manual useMemo over it could never be preserved anyway
+  const occs = goals
+    .flatMap((g) =>
       g.routines
         .filter((r) => !r.archived)
         .map((r) => ({ routine: r, goal: g, occ: occurrencesInRange([r], g.deadline, today, today)[0] })),
     )
-    return all
-      .filter((x) => x.occ)
-      .map((x) => ({ ...x.occ!, goal: x.goal, routine: x.routine }))
-  }, [goals])
+    .filter((x) => x.occ)
+    .map((x) => ({ ...x.occ!, goal: x.goal, routine: x.routine }))
 
-  if (occs.length === 0) return null
+  // flexible routines: "N times a week, any day" — shown while this week
+  // still has sessions left (or one was logged today, so it can be undone)
+  const flex = goals
+    .flatMap((g) =>
+      g.routines
+        .filter((r) => !r.archived && r.cadence === 'flexible')
+        .map((r) => ({ routine: r, goal: g, prog: weekFlexProgress(r, startOfWeek(today)) })),
+    )
+    .filter((x) => x.prog.left > 0 || isRoutineDone(x.routine, today))
+
+  if (occs.length === 0 && flex.length === 0) return null
 
   const doneCount = occs.filter((o) => o.done).length
 
+  const checkOff = (o: { goal: GoalData; routine: RoutineData; done: boolean; date: Date }) =>
+    toggleDone.mutate(
+      {
+        goalId: o.goal.id,
+        routineId: o.routine.id,
+        date: toDayKey(o.date), // the day in the user's calendar — TZ-proof
+        undo: o.done,
+      },
+      {
+        onSuccess: (res) => {
+          if (!res.autoLog || o.done) return
+          const unit = o.goal.unit ?? (o.goal.type === 'plan' ? 'session' : '')
+          const shown =
+            unit === 'session' || unit === 'sessions'
+              ? `${formatNumber(res.autoLog.amount)} ${res.autoLog.amount === 1 ? 'session' : 'sessions'}${o.routine.durationMin ? ` · ${o.routine.durationMin}m` : ''}`
+              : `${formatNumber(res.autoLog.amount)} ${unit || 'progress'}`
+          toast.success(`${o.routine.title} done`, {
+            description: `Logged ${shown} — not quite right?`,
+            action: { label: 'Adjust', onClick: () => onOpenGoal(o.goal, 'log') },
+          })
+        },
+      },
+    )
+
   return (
     <section aria-label="Today's checklist">
-      <div className="mb-1.5 flex items-baseline justify-between gap-2">
+      {occs.length > 0 && (
+        <>
+          <div className="mb-1.5 flex items-baseline justify-between gap-2">
+            <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              ✅ Check off when done — today&apos;s routines
+            </h3>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {doneCount}/{occs.length}
+            </span>
+          </div>
+          <div className="divide-y divide-border/60">
+            {occs.map((o) => {
+              const g = o.goal
+              const c = goalColor(g.color)
+              return (
+                <div key={o.routine.id + o.date.toISOString()} className="flex items-center gap-3 py-2.5">
+                  <button
+                    type="button"
+                    aria-label={o.done ? `Undo "${o.routine.title}"` : `Mark "${o.routine.title}" as done`}
+                    onClick={() => checkOff(o)}
+                    className={cn(
+                      'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-all hover:scale-110',
+                      o.done
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-muted-foreground/40 hover:border-primary',
+                    )}
+                  >
+                    {o.done && <Check className="h-3.5 w-3.5" strokeWidth={3} />}
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <div className={cn('text-sm font-medium leading-snug', o.done && 'text-muted-foreground line-through')}>
+                      {o.routine.title}
+                    </div>
+                    <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <span>{g.emoji}</span>
+                      <button
+                        type="button"
+                        className="max-w-40 truncate hover:underline"
+                        onClick={() => onOpenGoal(g, 'routine')}
+                      >
+                        {g.title}
+                      </button>
+                      {o.routine.durationMin != null && <span>· {o.routine.durationMin}m</span>}
+                    </div>
+                  </div>
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: c.hex }} aria-hidden />
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
+
+  {flex.length > 0 && (
+    <>
+      <div className="mb-1.5 mt-4 flex items-baseline justify-between gap-2">
         <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          ✅ Check off when done — today&apos;s routines
+          🗓 Any day this week — do them whenever it suits you
         </h3>
-        <span className="text-xs tabular-nums text-muted-foreground">
-          {doneCount}/{occs.length}
-        </span>
       </div>
       <div className="divide-y divide-border/60">
-        {occs.map((o) => {
-          const g = o.goal
+        {flex.map(({ routine, goal: g, prog }) => {
           const c = goalColor(g.color)
+          const doneToday = isRoutineDone(routine, today)
           return (
-            <div key={o.routine.id + o.date.toISOString()} className="flex items-center gap-3 py-2.5">
+            <div key={routine.id} className="flex items-center gap-3 py-2.5">
               <button
                 type="button"
-                aria-label={o.done ? `Undo "${o.routine.title}"` : `Mark "${o.routine.title}" as done`}
-                onClick={() =>
-                  toggleDone.mutate(
-                    {
-                      goalId: g.id,
-                      routineId: o.routine.id,
-                      date: o.date.toISOString(),
-                      undo: o.done,
-                    },
-                    {
-                      onSuccess: (res) => {
-                        if (!res.autoLog || o.done) return
-                        const unit = g.unit ?? (g.type === 'plan' ? 'session' : '')
-                        const shown =
-                          unit === 'session' || unit === 'sessions'
-                            ? `${formatNumber(res.autoLog.amount)} ${res.autoLog.amount === 1 ? 'session' : 'sessions'}${o.routine.durationMin ? ` · ${o.routine.durationMin}m` : ''}`
-                            : `${formatNumber(res.autoLog.amount)} ${unit || 'progress'}`
-                        toast.success(`${o.routine.title} done`, {
-                          description: `Logged ${shown} — not quite right?`,
-                          action: { label: 'Adjust', onClick: () => onOpenGoal(g, 'log') },
-                        })
-                      },
-                    },
-                  )
-                }
+                aria-label={doneToday ? `Undo "${routine.title}"` : `Log "${routine.title}" for today`}
+                onClick={() => checkOff({ goal: g, routine, done: doneToday, date: today })}
                 className={cn(
                   'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-all hover:scale-110',
-                  o.done
+                  doneToday
                     ? 'border-primary bg-primary text-primary-foreground'
                     : 'border-muted-foreground/40 hover:border-primary',
                 )}
               >
-                {o.done && <Check className="h-3.5 w-3.5" strokeWidth={3} />}
+                {doneToday && <Check className="h-3.5 w-3.5" strokeWidth={3} />}
               </button>
               <div className="min-w-0 flex-1">
-                <div className={cn('text-sm font-medium leading-snug', o.done && 'text-muted-foreground line-through')}>
-                  {o.routine.title}
+                <div className={cn('text-sm font-medium leading-snug', doneToday && 'text-muted-foreground line-through')}>
+                  {routine.title}
                 </div>
                 <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                   <span>{g.emoji}</span>
@@ -155,14 +219,27 @@ function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: 
                   >
                     {g.title}
                   </button>
-                  {o.routine.durationMin != null && <span>· {o.routine.durationMin}m</span>}
+                  {routine.durationMin != null && <span>· {routine.durationMin}m</span>}
                 </div>
               </div>
-              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: c.hex }} aria-hidden />
+              <div className="flex shrink-0 items-center gap-1" aria-label={`${prog.done} of ${prog.target} sessions this week`}>
+                {Array.from({ length: Math.min(prog.target, 7) }, (_, i) => (
+                  <span
+                    key={i}
+                    className={cn('h-2 w-2 rounded-full', i < prog.done ? 'bg-primary' : 'bg-muted-foreground/25')}
+                  />
+                ))}
+                <span className="ml-1 text-xs tabular-nums text-muted-foreground">
+                  {prog.done}/{prog.target}
+                </span>
+                <span className="ml-1 h-2 w-2 rounded-full" style={{ background: c.hex }} aria-hidden />
+              </div>
             </div>
           )
         })}
       </div>
+    </>
+  )}
     </section>
   )
 }

@@ -27,6 +27,37 @@ export function dayStart(d: Date): Date {
   return copy
 }
 
+/**
+ * Local calendar day as "YYYY-MM-DD". This is the wire format for routine
+ * check-offs: it names a *day in the user's calendar* unambiguously, so the
+ * server never has to guess the client's timezone (a full ISO timestamp of
+ * local midnight shifts a day for every client outside UTC — the bug behind
+ * "it syncs but the checkbox doesn't show ticked").
+ */
+export function toDayKey(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+/**
+ * Canonical DB instant for a calendar day: UTC midnight. Stored dates are
+ * always canonicalized to this, so the same day written from any timezone
+ * collides on the (routineId, date) unique index and serializes to the same
+ * value — no duplicate check-offs, no cross-device drift.
+ */
+export function canonicalDayUtc(dayKey: string): Date {
+  return new Date(`${dayKey}T00:00:00Z`)
+}
+
+/**
+ * Parse a dones wire date. "YYYY-MM-DD" (the day in the user's calendar) →
+ * local midnight of that day, so dayStart() recovers the exact day in every
+ * timezone. Legacy full-ISO strings (older exports) → the instant as-is.
+ */
+export function parseDayKey(s: string): Date {
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T00:00:00`) : new Date(s)
+}
+
 export function addDays(d: Date, n: number): Date {
   const copy = new Date(d)
   copy.setDate(copy.getDate() + n)
@@ -97,7 +128,7 @@ export function weekFlexProgress(r: RoutineData, weekStart: Date): { done: numbe
   const ws = dayStart(weekStart)
   const we = addDays(ws, 7)
   const done = r.dones.filter((d) => {
-    const dt = dayStart(new Date(d.date))
+    const dt = dayStart(parseDayKey(d.date))
     return dt >= ws && dt < we
   }).length
   const target = r.timesPerWeek ?? 0
@@ -129,7 +160,7 @@ export function describeCadence(r: {
 
 export function isRoutineDone(r: RoutineData, day: Date): boolean {
   const t = dayStart(day).getTime()
-  return r.dones.some((dn) => dayStart(new Date(dn.date)).getTime() === t)
+  return r.dones.some((dn) => dayStart(parseDayKey(dn.date)).getTime() === t)
 }
 
 /** Next occurrence strictly after `after` (returns null if none). */
@@ -246,7 +277,7 @@ export function routineStats(
       if (rv.start <= we) totalCount += n // the routine was live that week
     }
     const doneCount = r.dones.filter((d) => {
-      const dt = dayStart(new Date(d.date))
+      const dt = dayStart(parseDayKey(d.date))
       return dt >= from && dt <= today
     }).length
     const flex = weekFlexProgress(r, startOfWeek(today))

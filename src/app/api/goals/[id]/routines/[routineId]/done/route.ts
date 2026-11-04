@@ -8,8 +8,14 @@ import { syncMilestoneReached } from '@/lib/milestones'
 import { nodeDependencies, buildNodeIndex, nodeStatus } from '@/lib/skill-tree'
 
 const doneSchema = z.object({
-  /** ISO date of the occurrence (defaults to today, normalized to midnight) */
-  date: z.string().datetime().optional(),
+  /**
+   * The day being checked off. Preferred form: "YYYY-MM-DD" — a day in the
+   * user's calendar, unambiguous regardless of timezone. Legacy full ISO
+   * timestamps (local midnight of the client) are still accepted.
+   */
+  date: z
+    .union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.string().datetime()])
+    .optional(),
   /** true = remove the done mark (undo) */
   undo: z.boolean().optional(),
 })
@@ -94,9 +100,25 @@ export async function POST(req: Request, { params }: Params) {
     const routine = await db.routineItem.findFirst({ where: { id: routineId, goalId: id } })
     if (!routine) return NextResponse.json({ error: 'Routine not found' }, { status: 404 })
 
-    const day = new Date(d.date ?? Date.now())
-    day.setHours(0, 0, 0, 0)
+    //
+    // The day is derived from the client's calendar, never from the server's
+    // clock: a client in UTC+2 sending its local midnight as a full ISO used
+    // to get truncated to the *server's* midnight, landing the check-off on
+    // the previous day ("synced but doesn't show ticked"). Date-only keys
+    // remove the guesswork entirely.
+    //
+    const dayKey = d.date && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : null
+    const day = dayKey
+      ? new Date(`${dayKey}T00:00:00Z`) // canonical: UTC midnight of that day
+      : (() => {
+          const x = new Date(d.date ?? Date.now())
+          x.setHours(0, 0, 0, 0) // legacy path: server-local midnight
+          return x
+        })()
     const dayEnd = new Date(day.getTime() + 86_400_000)
+    // auto-log instant: UTC noon of the same calendar day, so the log entry
+    // dayStarts to the right day on any device within ±12h of UTC.
+    const logDay = dayKey ? new Date(`${dayKey}T12:00:00Z`) : day
 
     const existing = await db.routineDone.findFirst({
       where: { routineId, date: { gte: day, lt: dayEnd } },
@@ -157,7 +179,7 @@ export async function POST(req: Request, { params }: Params) {
             goalId: id,
             amount,
             note: autoLogNote(goalRow, routine),
-            date: day,
+            date: logDay,
           },
         })
         await db.routineDone.update({ where: { id: done.id }, data: { logId: log.id } })

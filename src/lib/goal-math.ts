@@ -1,4 +1,5 @@
 import type { GoalData, GoalStepData, TrackStatus } from './types'
+import { parseDayKey } from './routine-math'
 
 export const DAY_MS = 86_400_000
 export const WEEK_MS = 7 * DAY_MS
@@ -352,13 +353,13 @@ export function timeSpent(goal: GoalData, now = new Date()): TimeSpent | null {
   let events: { date: number; hours: number }[]
 
   if (timeUnit === 'hours') {
-    events = goal.logs.map((l) => ({ date: +new Date(l.date), hours: l.amount }))
+    events = goal.logs.map((l) => ({ date: +parseDayKey(l.date), hours: l.amount }))
   } else if (timeUnit === 'minutes') {
-    events = goal.logs.map((l) => ({ date: +new Date(l.date), hours: l.amount / 60 }))
+    events = goal.logs.map((l) => ({ date: +parseDayKey(l.date), hours: l.amount / 60 }))
   } else {
     events = goal.routines
       .filter((r) => !r.archived && r.durationMin != null && r.durationMin > 0)
-      .flatMap((r) => r.dones.map((d) => ({ date: +new Date(d.date), hours: r.durationMin! / 60 })))
+      .flatMap((r) => r.dones.map((d) => ({ date: +parseDayKey(d.date), hours: r.durationMin! / 60 })))
   }
 
   if (events.length === 0) return null

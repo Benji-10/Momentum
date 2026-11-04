@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
 import { db } from '@/lib/db'
+import { canonicalDayUtc } from '@/lib/routine-math'
 import { requireUser } from '@/lib/auth'
 import { parseImportFile } from '@/lib/import-format'
 import { goalInclude, serializeGoal } from '@/lib/goal-serialize'
@@ -137,7 +138,7 @@ export async function POST(req: Request) {
                 seen.add(day)
                 return true
               })
-              .map((d) => ({ routineId: routine.id, date: new Date(d) })),
+              .map((d) => ({ routineId: routine.id, date: canonicalDayUtc(d.slice(0, 10)) })),
           })
         }
       }

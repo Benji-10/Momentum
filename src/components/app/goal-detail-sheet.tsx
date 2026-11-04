@@ -38,7 +38,7 @@ import {
 } from '@/lib/goal-math'
 import { goalColor } from '@/lib/goal-colors'
 import { buildSkillMap } from '@/lib/skill-tree'
-import { describeCadence, occurrencesInRange, relativeDayLabel, routineStats, sameDay } from '@/lib/routine-math'
+import { describeCadence, occurrencesInRange, relativeDayLabel, routineStats, sameDay, toDayKey } from '@/lib/routine-math'
 import { parseGoalScopeImport } from '@/lib/import-format'
 import {
   useAddLog,
@@ -832,7 +832,7 @@ function DetailBody({
                                 {
                                   goalId: goal.id,
                                   routineId: o.routine.id,
-                                  date: o.date.toISOString(),
+                                  date: toDayKey(o.date), // calendar day — TZ-proof
                                   undo: o.done,
                                 },
                                 {

@@ -5,9 +5,11 @@ import { SEED_GOALS } from '@/lib/templates'
 import { goalInclude, serializeGoal } from '@/lib/goal-serialize'
 import {
   addDays,
+  canonicalDayUtc,
   dayStart,
   occursOn,
   routineView,
+  toDayKey,
   type RoutineView,
 } from '@/lib/routine-math'
 import type { RoutineData } from '@/lib/types'
@@ -159,7 +161,9 @@ export async function POST() {
         const rv = routineView(rd, null)
         for (const d of seedRoutineDones(rv, r.doneRatio ?? 0.7, rd)) {
           await db.routineDone.create({
-            data: { routineId: created.id, date: d },
+            // canonical UTC midnight of the calendar day — matches what the
+            // check-off API writes, whatever timezone the server runs in
+            data: { routineId: created.id, date: canonicalDayUtc(toDayKey(d)) },
           })
         }
       }
