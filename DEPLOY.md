@@ -79,3 +79,20 @@ as preview-only).
   generates exactly one.
 - `DATABASE_URL` starting with `postgres://` is what switches the app into
   production mode: Neon database, real Netlify Identity, dev shim disabled.
+
+## Removing the "Powered by Netlify" badge
+
+New public projects on a Netlify Free plan show a "Powered by Netlify"
+badge (bottom-right corner) to visitors. Two ways to deal with it:
+
+1. **Turn it off (recommended)** — Netlify UI → your project →
+   **Project configuration → General → Powered by Netlify badge → off**.
+   Takes effect on the next request; no redeploy needed.
+2. **Already built-in fallback** — `src/app/globals.css` hides the badge's
+   injected iframe (`iframe#nl-badge-frame`, plus the older
+   `#netlify-identity-widget`) with `display: none !important`. You don't
+   have to do anything; this covers the badge even if the UI setting is
+   ever out of reach. (Netlify injects the iframe at the edge — hiding the
+   iframe *element* from your own stylesheet always works, since styling
+   the iframe's *contents* is the only thing it protects against.)
+

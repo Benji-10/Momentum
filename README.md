@@ -34,6 +34,10 @@ with flexible routines, and watch the log write itself as you check things off.
   goals, nullable fields and empty arrays.
 - **Six themes** — Paper, Meadow, Blossom (light) · Charcoal, Forest, Sunset
   (dark) — plus confetti when a node levels up.
+- **Mobile-first fit** — the page never scrolls sideways (tested 320–390 px:
+  the header collapses to icon actions, Import/Export move into the menus,
+  and any Netlify-injected badge iframe is hidden). Inner strips (tab rows,
+  the roadmap picker, the quest map) scroll on their own.
 
 ## Quick start (local)
 

@@ -453,14 +453,46 @@ input[type='date'] {
 }
 
 /* ---------------------------------------------------------------------------
-   Netlify Identity widget badge — Netlify injects this as an iframe
-   (<iframe id="netlify-identity-widget">) once Identity is enabled, and an
-   iframe's contents can't be styled from outside. The app has its own custom
-   sign-in UI, so the badge is pure noise: hide the iframe element itself.
+   Netlify-injected HUD iframes. Netlify edge-injects these into the page DOM
+   (an iframe's *contents* can't be styled from outside, but the iframe
+   *element* is ours to hide):
+     - #nl-badge-frame  → "Powered by Netlify" badge (Free-plan public sites)
+     - #netlify-identity-widget → the old Identity widget badge
+   The app ships its own sign-in UI, so both are pure noise. Hiding the
+   element is a fallback: the clean way is the Netlify UI →
+   Project configuration → General → "Powered by Netlify badge" → off.
 --------------------------------------------------------------------------- */
+iframe#nl-badge-frame,
+iframe[title='Powered by Netlify'],
 iframe#netlify-identity-widget,
 #netlify-identity-widget {
   display: none !important;
   visibility: hidden !important;
   pointer-events: none !important;
 }
+
+/* ============================================================
+   MOBILE HARDENING
+   ============================================================ */
+
+/* No sideways page scroll, ever. `clip` (unlike `hidden`) doesn't create a
+   scroll container, so sticky headers and inner horizontal scrollers keep
+   working. Inner strips (tab rows, roadmap picker, quest map) scroll on
+   their own; the page itself never wiggles left/right. */
+html,
+body {
+  overflow-x: clip;
+}
+
+/* App-like taps: no blue flash on Android/iOS */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Stop iOS from inflating text in landscape / narrow viewports */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* slim scrollbars for long lists */

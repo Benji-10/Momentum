@@ -123,11 +123,11 @@ export function AuthScreen() {
                 aria-selected={mode === 'signup'}
                 onClick={() => setMode('signup')}
                 className={cn(
-                  'flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold transition-all',
+                  'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-2 text-sm font-semibold transition-all min-[400px]:px-3',
                   mode === 'signup' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground',
                 )}
               >
-                <UserPlus className="h-4 w-4" /> Create account
+                <UserPlus className="h-4 w-4 shrink-0" /> Create account
               </button>
               <button
                 type="button"
@@ -135,11 +135,11 @@ export function AuthScreen() {
                 aria-selected={mode === 'signin'}
                 onClick={() => setMode('signin')}
                 className={cn(
-                  'flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold transition-all',
+                  'flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2 py-2 text-sm font-semibold transition-all min-[400px]:px-3',
                   mode === 'signin' ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground',
                 )}
               >
-                <LogIn className="h-4 w-4" /> Sign in
+                <LogIn className="h-4 w-4 shrink-0" /> Sign in
               </button>
             </div>
           )}

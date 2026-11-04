@@ -437,7 +437,7 @@ function DetailBody({
       <div className="nice-scroll flex-1 overflow-y-auto">
         <Tabs defaultValue={initialTab ?? 'overview'} className="gap-0">
           <div className="sticky top-0 z-10 border-b bg-background/90 px-4 pt-3 backdrop-blur sm:px-6">
-            <TabsList className="h-10 w-full justify-start gap-1 overflow-x-auto rounded-lg bg-muted/60 p-1">
+            <TabsList className="nice-scroll h-10 w-full justify-start gap-1 overflow-x-auto rounded-lg bg-muted/60 p-1">
               {[
                 { v: 'overview', label: 'Overview', icon: TrendingUp },
                 { v: 'steps', label: 'Steps', icon: ListChecks },

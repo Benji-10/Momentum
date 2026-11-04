@@ -74,12 +74,8 @@ export async function POST(req: Request, { params }: Params) {
       const body = await req.json().catch(() => ({}))
       const email = String(body.email ?? '').trim().toLowerCase()
       const password = String(body.password ?? '')
-      const name =
-        (
-          body.data &&
-          (body.data.name ?? body.data.full_name) != null &&
-          String(body.data.name ?? body.data.full_name)
-        ).trim() || null
+      const rawName = body.data?.name ?? body.data?.full_name
+      const name = rawName == null ? null : String(rawName).trim() || null
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return bad('invalid_email', 'Enter a valid email address')
       if (password.length < 8) return bad('weak_password', 'Password needs at least 8 characters')
       if (password.length > 200) return bad('weak_password', 'That password is too long')

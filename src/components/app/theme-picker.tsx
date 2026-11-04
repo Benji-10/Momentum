@@ -69,32 +69,44 @@ export function ThemePicker() {
   )
 }
 
+/** Download the JSON export (shared by the header button and the mobile
+ *  account-menu item — the header buttons are hidden below sm). */
+export async function exportData() {
+  try {
+    // fetch with the identity token (a plain link can't carry it)
+    const { apiBlob } = await import('@/lib/api-client')
+    const blob = await apiBlob('/api/export')
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `momentum-roadmap-${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    toast.error('Could not export your data', { description: e instanceof Error ? e.message : undefined })
+  }
+}
+
 export function ExportButton() {
   const [busy, setBusy] = useState(false)
 
   async function handleExport() {
     if (busy) return
     setBusy(true)
-    try {
-      // fetch with the identity token (a plain link can't carry it)
-      const { apiBlob } = await import('@/lib/api-client')
-      const blob = await apiBlob('/api/export')
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `momentum-roadmap-${new Date().toISOString().slice(0, 10)}.json`
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(url)
-    } catch (e) {
-      toast.error('Could not export your data', { description: e instanceof Error ? e.message : undefined })
-    } finally {
-      setBusy(false)
-    }
+    await exportData()
+    setBusy(false)
   }
   return (
-    <Button variant="outline" size="sm" onClick={handleExport} disabled={busy} className="gap-1.5" aria-label="Export your data as JSON">
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={handleExport}
+      disabled={busy}
+      className="hidden gap-1.5 sm:inline-flex"
+      aria-label="Export your data as JSON"
+    >
       <Download className="h-4 w-4" aria-hidden />
       <span className="hidden sm:inline">Export</span>
     </Button>
@@ -103,7 +115,13 @@ export function ExportButton() {
 
 export function ImportButton({ onClick }: { onClick: () => void }) {
   return (
-    <Button variant="outline" size="sm" onClick={onClick} className="gap-1.5" aria-label="Import a roadmap from JSON">
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={onClick}
+      className="hidden gap-1.5 sm:inline-flex"
+      aria-label="Import a roadmap from JSON"
+    >
       <FileJson className="h-4 w-4" aria-hidden />
       <span className="hidden sm:inline">Import</span>
     </Button>

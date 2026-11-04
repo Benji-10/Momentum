@@ -17,6 +17,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Download } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 import { DashboardTab } from '@/components/app/dashboard-tab'
@@ -30,7 +31,7 @@ import { ImportDialog } from '@/components/app/import-dialog'
 import { EmptyState } from '@/components/app/empty-state'
 import { AuthScreen, IdentityUnconfiguredNotice } from '@/components/app/auth-screen'
 import { AccountSettingsDialog } from '@/components/app/account-settings'
-import { ExportButton, ImportButton, ThemePicker } from '@/components/app/theme-picker'
+import { ExportButton, ImportButton, ThemePicker, exportData } from '@/components/app/theme-picker'
 
 /** Manual sync button — shows freshness, taps to pull the latest from the server. */
 function SyncButton({ goalsQuery }: { goalsQuery: ReturnType<typeof useGoals> }) {
@@ -111,7 +112,7 @@ function App({ email, name }: { email: string; name: string | null }) {
     <div className="flex min-h-screen flex-col">
       {/* header */}
       <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-7xl items-center gap-2 px-3 min-[420px]:gap-3 sm:px-6">
+        <div className="mx-auto flex h-16 max-w-7xl items-center gap-1.5 px-3 min-[420px]:gap-2 sm:gap-3 sm:px-6">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground">
             <CalendarCheck className="h-5 w-5" />
           </div>
@@ -149,6 +150,11 @@ function App({ email, name }: { email: string; name: string | null }) {
               <DropdownMenuItem className="gap-2" onClick={() => setAcctOpen(true)}>
                 <Settings className="h-4 w-4" /> Account settings
               </DropdownMenuItem>
+              {/* Export lives here on phones — the header buttons are
+                  hidden below sm so the bar fits a 320px screen */}
+              <DropdownMenuItem className="gap-2 sm:hidden" onClick={() => void exportData()}>
+                <Download className="h-4 w-4" /> Export your data
+              </DropdownMenuItem>
               <DropdownMenuItem
                 className="gap-2"
                 onClick={() =>
@@ -161,7 +167,7 @@ function App({ email, name }: { email: string; name: string | null }) {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          <div className="flex">
+          <div className="flex shrink-0">
             <Button onClick={openCreate} className="rounded-r-none" aria-label="Create a new goal">
               <Plus className="h-4 w-4" aria-hidden /> <span className="hidden sm:inline">New goal</span>
             </Button>
