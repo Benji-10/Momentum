@@ -1,0 +1,226 @@
+// PRODUCTION SCHEMA — PostgreSQL (Neon, via the DATABASE_URL connection string).
+//
+// Keep this file in sync with prisma/schema.prisma (the SQLite variant used
+// for local dev / preview). The models must stay identical — only the
+// generator block and datasource provider differ.
+//
+// On Netlify the build generates this client (see netlify.toml); at runtime
+// src/lib/db.ts picks it whenever DATABASE_URL is a postgres:// connection
+// string. Tables are created automatically on first request, so deploying is
+// just: set DATABASE_URL → deploy.
+
+generator client {
+  // No custom output: this generates into node_modules/@prisma/client — the
+  // same import path as the SQLite client. Each environment generates ONE
+  // schema (Netlify builds this one, local dev generates schema.prisma), so
+  // the rest of the app just does `import { PrismaClient } from
+  // '@prisma/client'` and gets the right engine.
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// An account. Authentication itself is handled by Netlify Identity
+// (GoTrue): this table just mirrors the identity user so goals can be
+// owned. `passwordHash` is only used by the local preview's built-in
+// identity shim — always null on Neon.
+model User {
+  id           String    @id // Netlify Identity user id (uuid)
+  email        String    @unique
+  name         String?
+  passwordHash String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  goals        Goal[]
+}
+
+// A goal is either:
+//  - "quantitative": a measurable target with a deadline (e.g. read 12 books
+//    by the end of the year). Progress is the sum of ProgressLog amounts.
+//  - "plan": a step-by-step plan to build a skill (e.g. learn guitar).
+//    Progress is tracked through GoalStep completion + practice logs.
+// Goals also carry a skill map (SkillPath/SkillNode), a weekly routine
+// schedule (RoutineItem) and free-form notes (GoalNote).
+model Goal {
+  id           String         @id @default(cuid())
+  userId       String? // owner; null = not yet claimed by an account
+  user         User?          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title        String
+  description  String?
+  emoji        String         @default("🎯")
+  color        String         @default("emerald")
+  category     String? // e.g. "Music", "Fitness", "Learning" — used for filters
+  type         String // "quantitative" | "plan"
+  targetValue  Float? // quantitative: total target amount
+  unit         String? // e.g. "books", "pages", "hours", "sessions", "km"
+  weeklyTarget Float? // optional weekly commitment (mainly for plan goals)
+  deadline     DateTime?
+  status       String         @default("active") // active | archived
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  steps        GoalStep[]
+  logs         ProgressLog[]
+  notes        GoalNote[]
+  routines     RoutineItem[]
+  skillPaths   SkillPath[]
+  skillNodes   SkillNode[]
+}
+
+// One step of a plan-type goal.
+model GoalStep {
+  id          String    @id @default(cuid())
+  goalId      String
+  goal        Goal      @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  title       String
+  notes       String?
+  order       Int       @default(0)
+  status      String    @default("pending") // pending | in_progress | done
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([goalId, order])
+}
+
+// A single logged unit of progress (pages read, a practice session, ...).
+model ProgressLog {
+  id        String   @id @default(cuid())
+  goalId    String
+  goal      Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  date      DateTime @default(now())
+  amount    Float    @default(0)
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([goalId, date])
+}
+
+// Free-form note attached to a goal (insights, links, reflections...).
+model GoalNote {
+  id        String   @id @default(cuid())
+  goalId    String
+  goal      Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  content   String
+  pinned    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([goalId, createdAt])
+}
+
+// A recurring scheduled activity tied to a goal, e.g. "drills every 2 days"
+// (cadence = "interval"), "focused practice every Sunday" (cadence =
+// "weekly"), or "gym 3× a week, any day" (cadence = "flexible" — rest
+// days built in, you choose the days).
+// A routine may point at a skill node (nodeId): "what this session works on",
+// e.g. Tuesday's session is grammar, Sunday's is speaking. Checking it off
+// can add `credit` progress to that node automatically.
+model RoutineItem {
+  id           String       @id @default(cuid())
+  goalId       String
+  goal         Goal         @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  title        String
+  notes        String?
+  cadence      String       @default("weekly") // "interval" | "weekly" | "flexible"
+  everyNDays   Int? // interval: repeat every N days from startDate
+  weekdays     String? // weekly: csv of weekday numbers, 0=Sun .. 6=Sat, e.g. "0,3"
+  timesPerWeek Int? // flexible: N sessions per week, on any day
+  nodeId       String? // optional: the skill node this session advances
+  node         SkillNode?  @relation("RoutineFocus", fields: [nodeId], references: [id], onDelete: SetNull)
+  credit       Float? // optional: progress added to the node per completed session
+  durationMin  Int?
+  startDate    DateTime     @default(now())
+  endDate      DateTime? // null = repeat until the goal deadline / forever
+  archived     Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  dones        RoutineDone[]
+
+  @@index([goalId])
+}
+
+// Marks one occurrence (day) of a routine as completed. creditedValue
+// records how much progress was auto-added to the linked skill node, and
+// logId points at the progress-log entry auto-created on check-off, so an
+// undo can take exactly that much back out.
+model RoutineDone {
+  id            String       @id @default(cuid())
+  routineId     String
+  routine       RoutineItem  @relation(fields: [routineId], references: [id], onDelete: Cascade)
+  date          DateTime // the occurrence day (normalized to midnight)
+  creditedValue Float?
+  logId         String? // the auto-created ProgressLog entry (undo deletes it)
+  createdAt     DateTime     @default(now())
+
+  @@unique([routineId, date])
+  @@index([routineId, date])
+}
+
+// A vertical path in the skill map, e.g. "Vocabulary", "Grammar", "Shooting".
+// Paths are independent branches; nodes inside are ordered tiers (HSK1 → 2 → 3).
+model SkillPath {
+  id          String       @id @default(cuid())
+  goalId      String
+  goal        Goal         @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  icon        String       @default("🌿")
+  unit        String? // default unit for nodes, e.g. "words"
+  order       Int          @default(0)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  nodes       SkillNode[]
+
+  @@index([goalId, order])
+}
+
+// One tier of a path, with measurable progress (e.g. "HSK3 · 30/600 words").
+// Status is derived: not_started (0) / in_progress / mastered (current >= target).
+model SkillNode {
+  id           String     @id @default(cuid())
+  goalId       String
+  goal         Goal       @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  pathId       String
+  path         SkillPath  @relation(fields: [pathId], references: [id], onDelete: Cascade)
+  title        String
+  description  String?
+  icon         String     @default("✨")
+  order        Int        @default(0)
+  currentValue Float      @default(0)
+  targetValue  Float      @default(100)
+  unit         String? // overrides path unit
+  xpValue      Int        @default(20)
+  // csv of node ids that must be mastered before this one unlocks.
+  // null/empty = the default ladder: the previous node in the same path
+  // (HSK2 → HSK3). Explicit ids may cross paths ("Reading HSK3 needs
+  // Vocabulary HSK2").
+  requiresIds  String?
+  completedAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  milestones   SkillMilestone[]
+  focusRoutines RoutineItem[] @relation("RoutineFocus")
+
+  @@index([pathId, order])
+  @@index([goalId])
+}
+
+// A sub-checkpoint along the way to a node's target, e.g. 50 and 100 words
+// on the road to the 150-word "HSK1" checkpoint. Keeps motivation up and
+// feeds the quest-map pop-outs. reachedAt is derived from progress.
+model SkillMilestone {
+  id        String     @id @default(cuid())
+  nodeId    String
+  node      SkillNode  @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  value     Float
+  label     String?
+  reachedAt DateTime?
+  createdAt DateTime   @default(now())
+
+  @@unique([nodeId, value])
+  @@index([nodeId])
+}
