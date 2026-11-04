@@ -1,14 +1,171 @@
 'use client'
 
-import { CalendarClock, Flame, Gauge } from 'lucide-react'
-import type { GoalData } from '@/lib/types'
-import { computeGoalStats, formatNumber, weeklyHistory } from '@/lib/goal-math'
+import { useState } from 'react'
+import { CalendarClock, Clock, Flame, Gauge, Plus, Timer, Trash2, Trophy, X } from 'lucide-react'
+import { toast } from 'sonner'
+import type { GoalData, PersonalBestData } from '@/lib/types'
+import { computeGoalStats, formatDateShort, formatHours, formatNumber, weeklyHistory } from '@/lib/goal-math'
 import { goalColor } from '@/lib/goal-colors'
+import { currentPb, formatPbValue, pbDelta, pbSeries, sortedRecords } from '@/lib/pb-math'
+import { timeSpent } from '@/lib/goal-math'
+import { useDeletePb, useDeletePbRecord } from '@/hooks/use-goals'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { StatusBadge } from '@/components/app/goal-visuals'
-import { WeeklyBars } from '@/components/app/charts'
+import { PbChart, TimeAreaChart, WeeklyBars } from '@/components/app/charts'
+import { AddPbMetricDialog, RecordPbDialog } from '@/components/app/pb-dialogs'
+import { cn } from '@/lib/utils'
+
+/** One PB metric: current best, the PB-over-time chart, record + manage. */
+function PbMetricBlock({
+  goal,
+  pb,
+  onRecord,
+}: {
+  goal: GoalData
+  pb: PersonalBestData
+  onRecord: (pb: PersonalBestData) => void
+}) {
+  const c = goalColor(goal.color)
+  const best = currentPb(pb)
+  const delta = pbDelta(pb)
+  const records = sortedRecords(pb)
+  const deletePb = useDeletePb(goal.id)
+  const deleteRecord = useDeletePbRecord(goal.id)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  const improving = delta == null ? null : pb.direction === 'up' ? delta > 0 : delta < 0
+
+  return (
+    <div className="rounded-xl border bg-muted/20 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex items-baseline gap-2">
+          <span className="text-sm font-semibold">
+            🏆 {pb.name}
+          </span>
+          {best && (
+            <span className="text-2xl font-bold tabular-nums" style={{ color: c.hex }}>
+              {formatPbValue(pb)}
+              {pb.unit ? <span className="ml-1 text-xs font-medium text-muted-foreground">{pb.unit}</span> : null}
+            </span>
+          )}
+          {delta != null && delta !== 0 && (
+            <span
+              className={cn(
+                'rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums',
+                improving ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-muted text-muted-foreground',
+              )}
+              title="Change since your previous PB"
+            >
+              {delta > 0 ? '+' : ''}
+              {formatNumber(delta)}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          <Button variant="outline" size="sm" className="h-7 gap-1 px-2.5 text-xs" onClick={() => onRecord(pb)}>
+            <Plus className="h-3.5 w-3.5" /> Record
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+            aria-label={`Stop tracking ${pb.name}`}
+            onClick={() => setConfirmDelete(true)}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+
+      {records.length > 0 && (
+        <>
+          <div className="mt-2">
+            <PbChart data={pbSeries(pb)} color={c.hex} unit={pb.unit} direction={pb.direction} />
+          </div>
+          {/* attempts, newest first — hover an X to fix typos */}
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {[...records].reverse().map((r) => {
+              const isBest = best != null && r.id === best.id
+              return (
+                <span
+                  key={r.id}
+                  className={cn(
+                    'group inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] tabular-nums',
+                    isBest ? 'border-primary/50 bg-primary/10 font-semibold' : 'text-muted-foreground',
+                  )}
+                  title={r.note ?? undefined}
+                >
+                  {formatDateShort(new Date(r.date))} · {formatNumber(r.value)}
+                  {isBest && <Trophy className="h-3 w-3 text-amber-500" />}
+                  <button
+                    type="button"
+                    aria-label={`Delete the ${formatNumber(r.value)} attempt`}
+                    onClick={() =>
+                      deleteRecord.mutate(
+                        { pbId: pb.id, recordId: r.id },
+                        {
+                          onSuccess: () => toast.success('Attempt removed'),
+                          onError: (e) => toast.error('Could not remove the attempt', { description: e.message }),
+                        },
+                      )
+                    }
+                    className="ml-0.5 hidden rounded-full p-0.5 hover:bg-destructive/15 hover:text-destructive group-hover:inline-flex"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </span>
+              )
+            })}
+          </div>
+        </>
+      )}
+
+      <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Stop tracking {pb.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This deletes the metric and its {records.length} {records.length === 1 ? 'attempt' : 'attempts'} for “{goal.title}”.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() =>
+                deletePb.mutate(
+                  { pbId: pb.id },
+                  {
+                    onSuccess: () => toast.success(`Stopped tracking ${pb.name}`),
+                    onError: (e) => toast.error('Could not delete the metric', { description: e.message }),
+                  },
+                )
+              }
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
+}
 
 export function ReviewTab({ goals, onOpen }: { goals: GoalData[]; onOpen: (g: GoalData) => void }) {
+  const [pbGoal, setPbGoal] = useState<GoalData | null>(null)
+  const [recordPb, setRecordPb] = useState<PersonalBestData | null>(null)
+
   if (goals.length === 0) {
     return (
       <div className="rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">
@@ -23,6 +180,7 @@ export function ReviewTab({ goals, onOpen }: { goals: GoalData[]; onOpen: (g: Go
         A friendly look at your rhythm — what you actually logged each week, with the dashed line showing your goal&apos;s
         pace. Gaps are just information, not verdicts.
       </p>
+
       {goals.map((goal) => {
         const stats = computeGoalStats(goal)
         const c = goalColor(goal.color)
@@ -33,102 +191,173 @@ export function ReviewTab({ goals, onOpen }: { goals: GoalData[]; onOpen: (g: Go
           (w) => (requirement != null ? w.amount >= requirement * 0.99 : w.amount > 0),
         ).length
         const avg = weekly.reduce((s, w) => s + w.amount, 0) / (weekly.length || 1)
+        const time = timeSpent(goal)
+        const pbs = goal.pbs
 
         return (
-          <Card
-            key={goal.id}
-            role="button"
-            tabIndex={0}
-            onClick={() => onOpen(goal)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault()
-                onOpen(goal)
-              }
-            }}
-            className="cursor-pointer p-5 transition-all hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-2 focus-visible:outline-ring"
-          >
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div
-                  className="flex h-10 w-10 items-center justify-center rounded-xl text-lg"
-                  style={{ background: c.soft }}
-                >
-                  {goal.emoji}
-                </div>
-                <div>
-                  <h3 className="font-semibold leading-tight">{goal.title}</h3>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    {goal.type === 'quantitative'
-                      ? `${formatNumber(stats.currentValue)} / ${formatNumber(stats.targetValue ?? 0)} ${goal.unit ?? ''} · ${stats.progressPct}%`
-                      : `${stats.stepsDone}/${stats.stepsTotal} steps · ${stats.progressPct}%`}
+          <div key={goal.id} className="space-y-3">
+            <Card
+              role="button"
+              tabIndex={0}
+              onClick={() => onOpen(goal)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  onOpen(goal)
+                }
+              }}
+              className="cursor-pointer p-5 transition-all hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-2 focus-visible:outline-ring"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div
+                    className="flex h-10 w-10 items-center justify-center rounded-xl text-lg"
+                    style={{ background: c.soft }}
+                  >
+                    {goal.emoji}
                   </div>
+                  <div>
+                    <h3 className="font-semibold leading-tight">{goal.title}</h3>
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      {goal.type === 'quantitative'
+                        ? `${formatNumber(stats.currentValue)} / ${formatNumber(stats.targetValue ?? 0)} ${goal.unit ?? ''} · ${stats.progressPct}%`
+                        : `${stats.stepsDone}/${stats.stepsTotal} steps · ${stats.progressPct}%`}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 gap-1 px-2.5 text-xs"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setPbGoal(goal)
+                    }}
+                    aria-label={`Track a personal best for ${goal.title}`}
+                  >
+                    <Trophy className="h-3.5 w-3.5 text-amber-500" /> PB
+                  </Button>
+                  <StatusBadge status={stats.status} />
                 </div>
               </div>
-              <StatusBadge status={stats.status} />
-            </div>
 
-            <div className="mt-4 grid gap-5 lg:grid-cols-[1fr_260px]">
-              <WeeklyBars
-                data={weekly}
-                color={c.hex}
-                unit={goal.unit}
-                requirement={requirement}
-                height={150}
-              />
-              <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
-                <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
-                  <Gauge className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <div className="text-xs">
-                    <span className="font-semibold tabular-nums">{formatNumber(Math.round(avg * 10) / 10)}</span>{' '}
-                    <span className="text-muted-foreground">
-                      avg {goal.unit || 'sessions'}/week (8w)
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
-                  <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <div className="text-xs">
-                    <span className="font-semibold tabular-nums">
-                      {weeksMet}/{weekly.length}
-                    </span>{' '}
-                    <span className="text-muted-foreground">weeks kept pace</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
-                  <Flame className="h-4 w-4 shrink-0 text-orange-500" />
-                  <div className="text-xs">
-                    <span className="font-semibold tabular-nums">{stats.streakWeeks} week</span>{' '}
-                    <span className="text-muted-foreground">current streak</span>
-                  </div>
-                </div>
-                {goal.type === 'quantitative' && stats.projectedFinishDate && goal.deadline && (
+              <div className="mt-4 grid gap-5 lg:grid-cols-[1fr_260px]">
+                <WeeklyBars
+                  data={weekly}
+                  color={c.hex}
+                  unit={goal.unit}
+                  requirement={requirement}
+                  height={150}
+                />
+                <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
                   <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
-                    <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <Gauge className="h-4 w-4 shrink-0 text-muted-foreground" />
                     <div className="text-xs">
-                      <span className="text-muted-foreground">projected finish </span>{' '}
-                      <span
-                        className="font-semibold tabular-nums"
-                        style={{
-                          color:
-                            stats.projectedFinishDate.getTime() <= new Date(goal.deadline).getTime()
-                              ? '#10b981'
-                              : '#f59e0b',
-                        }}
-                      >
-                        {stats.projectedFinishDate.toLocaleDateString('en-GB', {
-                          day: 'numeric',
-                          month: 'short',
-                        })}
+                      <span className="font-semibold tabular-nums">{formatNumber(Math.round(avg * 10) / 10)}</span>{' '}
+                      <span className="text-muted-foreground">
+                        avg {goal.unit || 'sessions'}/week (8w)
                       </span>
                     </div>
                   </div>
-                )}
+                  {time && (
+                    <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
+                      <Clock className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <div className="text-xs">
+                        <span className="font-semibold tabular-nums">{formatHours(time.total)}</span>{' '}
+                        <span className="text-muted-foreground">invested · {formatHours(time.thisWeek)} this week</span>
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
+                    <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <div className="text-xs">
+                      <span className="font-semibold tabular-nums">
+                        {weeksMet}/{weekly.length}
+                      </span>{' '}
+                      <span className="text-muted-foreground">weeks kept pace</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
+                    <Flame className="h-4 w-4 shrink-0 text-orange-500" />
+                    <div className="text-xs">
+                      <span className="font-semibold tabular-nums">{stats.streakWeeks} week</span>{' '}
+                      <span className="text-muted-foreground">current streak</span>
+                    </div>
+                  </div>
+                  {goal.type === 'quantitative' && stats.projectedFinishDate && goal.deadline && (
+                    <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
+                      <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <div className="text-xs">
+                        <span className="text-muted-foreground">projected finish </span>{' '}
+                        <span
+                          className="font-semibold tabular-nums"
+                          style={{
+                            color:
+                              stats.projectedFinishDate.getTime() <= new Date(goal.deadline).getTime()
+                                ? '#10b981'
+                                : '#f59e0b',
+                          }}
+                        >
+                          {stats.projectedFinishDate.toLocaleDateString('en-GB', {
+                            day: 'numeric',
+                            month: 'short',
+                          })}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          </Card>
+
+              {time && time.series.length > 1 && (
+                <div className="mt-4 border-t pt-4">
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5 text-sm font-semibold">
+                      <Timer className="h-4 w-4" style={{ color: c.hex }} /> Time spent
+                    </span>
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      {formatHours(time.total)} total · {formatHours(time.thisWeek)} this week
+                    </span>
+                  </div>
+                  <TimeAreaChart data={time.series} color={c.hex} />
+                </div>
+              )}
+            </Card>
+
+            {pbs.length > 0 && (
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Trophy className="h-4 w-4 text-amber-500" /> Personal bests
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Every attempt is a dot; the line is your PB moving. Tap a metric&apos;s chip to delete a typo.
+                  </p>
+                </CardHeader>
+                <CardContent className="grid gap-3 pb-4 md:grid-cols-2">
+                  {pbs.map((pb) => (
+                    <PbMetricBlock key={pb.id} goal={goal} pb={pb} onRecord={setRecordPb} />
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+          </div>
         )
       })}
+
+      {/* dialogs (portal-rendered, outside the clickable cards) */}
+      {pbGoal && (
+        <AddPbMetricDialog goal={pbGoal} open onOpenChange={(open) => !open && setPbGoal(null)} />
+      )}
+      {recordPb && (
+        <RecordPbDialog
+          goalId={recordPb.goalId}
+          pb={recordPb}
+          open
+          onOpenChange={(open) => !open && setRecordPb(null)}
+        />
+      )}
     </div>
   )
 }

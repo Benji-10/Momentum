@@ -1,5 +1,5 @@
-import { PrismaClient } from '@prisma/client'
-import { PG_BOOTSTRAP_SQL } from './pg-ddl'
+import { PrismaClient, Prisma } from '@prisma/client'
+import { PG_BOOTSTRAP_SQL, PG_MIGRATIONS } from './pg-ddl'
 
 /**
  * One database client for two worlds:
@@ -30,28 +30,57 @@ export const db =
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db
 
+/** Split a DDL script into single statements (mirrors the .sql file layout). */
+function splitStatements(sql: string): string[] {
+  return sql
+    .split(/;\s*\n/)
+    .map((s) => s.trim())
+    .filter((s) => s.replace(/^--[^\n]*\n?/gm, '').trim().length > 0)
+}
+
+/** Does a table exist? to_regclass() returns regclass, which Prisma's
+ *  queryRaw cannot deserialize — always cast to ::text (P2010). */
+async function tableExists(table: string): Promise<boolean> {
+  const rows = await db.$queryRaw<Array<{ has: string | null }>>(
+    Prisma.sql`SELECT to_regclass(${table})::text as has`,
+  )
+  return !!rows[0]?.has
+}
+
 /**
- * On a brand-new Neon database the tables don't exist yet. Instead of asking
- * anyone to run migrations, the very first authenticated request creates the
- * whole schema (idempotent: it checks for the Goal table first).
+ * Keeping the database ready, with zero migration steps for the user:
+ *
+ *  - a brand-new Neon database gets the whole schema on the very first
+ *    authenticated request (idempotent: checked via the Goal table), and
+ *  - a deployment that predates a feature gets each missing table from
+ *    PG_MIGRATIONS — so upgrading is just "deploy the new code".
  */
 export function ensureDbReady(): Promise<void> {
   if (!isPostgresMode) return Promise.resolve()
   if (!globalForPrisma.pgBootstrapped) {
     globalForPrisma.pgBootstrapped = (async () => {
-      // to_regclass() returns the Postgres `regclass` type, which Prisma's
-      // queryRaw cannot deserialize — cast it to text (see Prisma P2010).
-      const check = async () =>
-        (await db.$queryRaw<Array<{ has: string | null }>>`SELECT to_regclass('public."Goal"')::text as has`)[0]?.has
-      if (await check()) return
-      const statements = PG_BOOTSTRAP_SQL.split(/;\s*\n/)
-        .map((s) => s.trim())
-        .filter((s) => s.replace(/^--[^\n]*\n?/gm, '').trim().length > 0)
-      try {
-        await db.$transaction(statements.map((sql) => db.$executeRawUnsafe(sql)))
-      } catch {
-        // two requests racing on first boot — fine as long as the tables exist now
-        if (!(await check())) throw new Error('Could not create the database schema')
+      // 1. fresh database → create the whole schema in one transaction
+      if (!(await tableExists('public."Goal"'))) {
+        try {
+          await db.$transaction(splitStatements(PG_BOOTSTRAP_SQL).map((sql) => db.$executeRawUnsafe(sql)))
+        } catch {
+          // two requests racing on first boot — fine as long as the tables exist now
+          if (!(await tableExists('public."Goal"'))) throw new Error('Could not create the database schema')
+        }
+      }
+      // 2. existing deployment → apply whatever per-table migrations are missing
+      for (const migration of PG_MIGRATIONS) {
+        const table = `public."${migration.table}"`
+        if (await tableExists(table)) continue
+        try {
+          await db.$transaction(splitStatements(migration.sql).map((sql) => db.$executeRawUnsafe(sql)))
+        } catch {
+          // the DDL is idempotent (IF NOT EXISTS), so a racing request that
+          // already created the table is the expected "failure"
+          if (!(await tableExists(table))) {
+            throw new Error(`Could not upgrade the database schema (${migration.table})`)
+          }
+        }
       }
     })().catch((e) => {
       globalForPrisma.pgBootstrapped = undefined // let the next request retry

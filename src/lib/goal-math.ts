@@ -312,3 +312,89 @@ export function formatDateShort(d: Date): string {
 export function formatDateLong(d: Date): string {
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
 }
+
+// ---------------------------------------------------------------------------
+// Time spent — everything the app knows about *duration*, as hours
+// ---------------------------------------------------------------------------
+
+const HOUR_UNITS = ['h', 'hr', 'hrs', 'hour', 'hours']
+const MINUTE_UNITS = ['m', 'min', 'mins', 'minute', 'minutes']
+
+export function isTimeUnitGoal(goal: GoalData): 'hours' | 'minutes' | null {
+  const unit = (goal.unit ?? '').toLowerCase()
+  if (HOUR_UNITS.includes(unit)) return 'hours'
+  if (MINUTE_UNITS.includes(unit)) return 'minutes'
+  return null
+}
+
+export interface TimeSpentPoint {
+  date: number // timestamp
+  hours: number // cumulative hours as of that day
+}
+
+export interface TimeSpent {
+  total: number // hours
+  thisWeek: number // hours
+  series: TimeSpentPoint[]
+}
+
+/**
+ * Cumulative time spent on a goal, in hours — the "time going up" chart.
+ *
+ * Where the time comes from:
+ *  - goals that count in hours/minutes → every progress log (routine
+ *    check-offs auto-log their duration, manual entries add the rest)
+ *  - any other goal → each completed routine session counts its preset
+ *    duration ("Shooting drills · 45m" = 0.75h per check-off)
+ */
+export function timeSpent(goal: GoalData, now = new Date()): TimeSpent | null {
+  const timeUnit = isTimeUnitGoal(goal)
+  let events: { date: number; hours: number }[]
+
+  if (timeUnit === 'hours') {
+    events = goal.logs.map((l) => ({ date: +new Date(l.date), hours: l.amount }))
+  } else if (timeUnit === 'minutes') {
+    events = goal.logs.map((l) => ({ date: +new Date(l.date), hours: l.amount / 60 }))
+  } else {
+    events = goal.routines
+      .filter((r) => !r.archived && r.durationMin != null && r.durationMin > 0)
+      .flatMap((r) => r.dones.map((d) => ({ date: +new Date(d.date), hours: r.durationMin! / 60 })))
+  }
+
+  if (events.length === 0) return null
+  events = events.filter((e) => Number.isFinite(e.hours) && e.hours > 0)
+  if (events.length === 0) return null
+  events.sort((a, b) => a.date - b.date)
+
+  // one point per day (several sessions a day stack), then cumulative
+  const perDay = new Map<number, number>()
+  for (const e of events) {
+    const day = new Date(e.date)
+    day.setHours(0, 0, 0, 0)
+    perDay.set(day.getTime(), (perDay.get(day.getTime()) ?? 0) + e.hours)
+  }
+  const series: TimeSpentPoint[] = []
+  let cum = 0
+  for (const [day, hours] of [...perDay.entries()].sort((a, b) => a[0] - b[0])) {
+    cum = Math.round((cum + hours) * 100) / 100
+    series.push({ date: day, hours: cum })
+  }
+  // extend the line to today so "time going up" includes the present
+  const today = new Date(now)
+  today.setHours(0, 0, 0, 0)
+  if (today.getTime() > series[series.length - 1].date) {
+    series.push({ date: today.getTime(), hours: series[series.length - 1].hours })
+  }
+
+  const weekStart = startOfWeek(now).getTime()
+  const thisWeek = Math.round(events.filter((e) => e.date >= weekStart).reduce((s, e) => s + e.hours, 0) * 100) / 100
+
+  return { total: series[series.length - 1].hours, thisWeek, series }
+}
+
+/** "12.5 h" / "45 m" — compact human duration for chips and tooltips. */
+export function formatHours(hours: number): string {
+  if (hours === 0) return '0 h'
+  if (hours < 1) return `${Math.round(hours * 60)} m`
+  return `${formatNumber(Math.round(hours * 10) / 10)} h`
+}

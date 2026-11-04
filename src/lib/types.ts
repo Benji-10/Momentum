@@ -114,6 +114,27 @@ export interface SkillPathData {
   nodes: SkillNodeData[]
 }
 
+/** One attempt at a personal-best metric, e.g. 128 WPM on 2026-10-31. */
+export interface PbRecordData {
+  id: string
+  date: string
+  value: number
+  note: string | null
+}
+
+/** A personal-best metric on a goal — "WPM" (higher = better) or "BLD
+ *  solve" (lower = better). The current PB is derived from `records`. */
+export interface PersonalBestData {
+  id: string
+  goalId: string
+  name: string
+  unit: string | null
+  direction: 'up' | 'down'
+  records: PbRecordData[]
+  createdAt: string
+  updatedAt: string
+}
+
 export interface GoalData {
   id: string
   title: string
@@ -134,6 +155,7 @@ export interface GoalData {
   notes: GoalNoteData[]
   routines: RoutineData[]
   skillPaths: SkillPathData[]
+  pbs: PersonalBestData[]
 }
 
 export interface StepInput {

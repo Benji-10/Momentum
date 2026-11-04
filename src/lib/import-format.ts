@@ -24,6 +24,10 @@ import type { RoutineCadence } from './types'
 //     everyDays:2 for intervals, or timesPerWeek:3 for "any 3 days a week"
 //   • routines may carry node:"Grammar › HSK3" + credit:10 — each check-off
 //     advances that checkpoint in the skill tree automatically
+//   • goals may carry pbs:[{ name:"WPM", unit:"wpm", direction:"up",
+//     records:[{ date:"2026-01-05", value:128 }] }] — personal-best metrics
+//     with their full attempt history ("down" = lower is better, e.g. a
+//     BLD solve time in seconds)
 // ---------------------------------------------------------------------------
 
 const WEEKDAY_NAMES: Record<string, number> = {
@@ -195,6 +199,46 @@ function canonLog(l: unknown): unknown {
   return out
 }
 
+const DIRECTION_ALIASES: Record<string, 'up' | 'down'> = {
+  up: 'up', higher: 'up', high: 'up', max: 'up', greater: 'up', more: 'up',
+  down: 'down', lower: 'down', low: 'down', min: 'down', less: 'down',
+}
+
+function canonPbRecord(r: unknown): unknown {
+  if (typeof r === 'number') return { value: r }
+  if (!isPlainObject(r)) return r
+  const out: Record<string, unknown> = {}
+  const value = toNum(pick(r, ['value', 'score', 'result', 'amount', 'val']))
+  if (value != null) out.value = value
+  const date = pick(r, ['date', 'day', 'when'])
+  if (typeof date === 'string') out.date = date
+  const daysAgo = toNum(r.daysAgo)
+  if (daysAgo != null) out.daysAgo = daysAgo
+  const note = pick(r, ['note', 'notes', 'comment'])
+  if (typeof note === 'string') out.note = note
+  return out
+}
+
+function canonPb(pb: unknown): unknown {
+  if (typeof pb === 'string') return { name: pb }
+  if (!isPlainObject(pb)) return pb
+  const out: Record<string, unknown> = {}
+  const name = pick(pb, ['name', 'metric', 'title', 'label'])
+  if (name != null) out.name = name
+  const unit = pick(pb, ['unit', 'units'])
+  if (unit != null) out.unit = unit
+  const directionRaw = pick(pb, ['direction', 'dir', 'better'])
+  if (typeof directionRaw === 'string') {
+    const dir = DIRECTION_ALIASES[directionRaw.trim().toLowerCase()]
+    if (dir) out.direction = dir
+  }
+  const records = pick(pb, ['records', 'entries', 'history', 'values', 'attempts', 'dones'])
+  if (Array.isArray(records)) out.records = records.filter((r) => r != null).map(canonPbRecord)
+  else if (records != null) out.records = [canonPbRecord(records)]
+  else delete out.records
+  return out
+}
+
 function canonGoal(g: unknown): unknown {
   if (!isPlainObject(g)) return g
   const out: Record<string, unknown> = { ...g }
@@ -218,6 +262,8 @@ function canonGoal(g: unknown): unknown {
   if (Array.isArray(g.routines)) out.routines = g.routines.filter((r) => r != null).map(canonRoutine)
   if (Array.isArray(g.logs)) out.logs = g.logs.filter((l) => l != null).map(canonLog)
   if (Array.isArray(g.notes)) out.notes = g.notes.filter((n) => typeof n === 'string')
+  const pbs = pick(g, ['pbs', 'personalBests', 'bests'])
+  if (Array.isArray(pbs)) out.pbs = pbs.filter((p) => p != null).map(canonPb)
   return out
 }
 
@@ -303,6 +349,21 @@ const logSchema = z.object({
   note: z.string().max(500).nullish(),
 })
 
+const pbRecordSchema = z.object({
+  daysAgo: z.number().min(0).max(3650).nullish(),
+  date: z.string().nullish(), // YYYY-MM-DD or ISO
+  value: z.number().positive().max(1_000_000),
+  note: z.string().max(200).nullish(),
+})
+
+const pbSchema = z.object({
+  name: z.string().min(1).max(60),
+  unit: z.string().max(30).nullish(),
+  /** "up" = higher is better (WPM) · "down" = lower is better (solve time) */
+  direction: z.enum(['up', 'down']).nullish(),
+  records: z.array(pbRecordSchema).max(500).nullish(),
+})
+
 const goalSchema = z.object({
   title: z.string().min(1).max(120),
   description: z.string().max(2000).nullish(),
@@ -317,6 +378,7 @@ const goalSchema = z.object({
   steps: z.array(stepSchema).max(100).nullish(),
   paths: z.array(skillPathSchema).max(12).nullish(), // the skill map
   routines: z.array(routineSchema).max(30).nullish(),
+  pbs: z.array(pbSchema).max(20).nullish(),
   notes: z.array(z.string().min(1).max(2000)).max(50).nullish(),
   logs: z.array(logSchema).max(1000).nullish(),
 })
@@ -378,6 +440,17 @@ export interface NormalizedLog {
   note: string | null
   date: string // ISO
 }
+export interface NormalizedPbRecord {
+  value: number
+  note: string | null
+  date: string // ISO
+}
+export interface NormalizedPb {
+  name: string
+  unit: string | null
+  direction: 'up' | 'down'
+  records: NormalizedPbRecord[]
+}
 export interface NormalizedGoal {
   title: string
   description: string | null
@@ -392,6 +465,7 @@ export interface NormalizedGoal {
   steps: NormalizedStep[]
   paths: NormalizedSkillPath[]
   routines: NormalizedRoutine[]
+  pbs: NormalizedPb[]
   notes: string[]
   logs: NormalizedLog[]
 }
@@ -502,6 +576,16 @@ export function normalizeGoal(g: ImportGoalRaw): NormalizedGoal {
     steps,
     paths,
     routines,
+    pbs: (g.pbs ?? []).map((pb) => ({
+      name: pb.name.trim(),
+      unit: pb.unit?.trim() || null,
+      direction: pb.direction ?? 'up',
+      records: (pb.records ?? []).map((r) => ({
+        value: r.value,
+        note: r.note ?? null,
+        date: isoFromDaysAgoOrDate(r.daysAgo, r.date),
+      })),
+    })),
     notes: (g.notes ?? []).map((n) => n.trim()).filter(Boolean),
     logs: (g.logs ?? []).map((l) => ({
       amount: l.amount,
@@ -722,6 +806,10 @@ export const IMPORT_EXAMPLE_JSON = `{
         { "title": "Gym — full body", "timesPerWeek": 3, "durationMin": 60,
           "node": "Strength › Foundation", "credit": 1,
           "notes": "3× a week, any day — rest days are part of the plan" }
+      ],
+      "pbs": [
+        { "name": "Deadlift", "unit": "kg", "direction": "up",
+          "records": [ { "date": "2026-01-05", "value": 120 } ] }
       ]
     }
   ]

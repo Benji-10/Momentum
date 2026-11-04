@@ -68,6 +68,7 @@ model Goal {
   routines     RoutineItem[]
   skillPaths   SkillPath[]
   skillNodes   SkillNode[]
+  pbs          PersonalBest[]
 }
 
 // One step of a plan-type goal.
@@ -223,4 +224,23 @@ model SkillMilestone {
 
   @@unique([nodeId, value])
   @@index([nodeId])
+}
+
+// A personal-best metric on a goal — e.g. "WPM" (higher = better) or
+// "BLD solve" (lower = better). Every attempt is kept as a record in
+// `history` (JSON) so the Review tab can chart how the PB moved over time;
+// the current PB itself is always derived, never stored.
+model PersonalBest {
+  id        String   @id @default(cuid())
+  goalId    String
+  goal      Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  name      String // e.g. "WPM", "BLD", "5K time"
+  unit      String? // e.g. "wpm", "s", "kg"
+  direction String   @default("up") // "up" = higher is better | "down" = lower is better
+  history   String   @default("[]") // JSON: [{ id, date, value, note }]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([goalId, name])
+  @@index([goalId])
 }

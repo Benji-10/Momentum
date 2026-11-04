@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { randomUUID } from 'crypto'
 import { db } from '@/lib/db'
 import { requireUser } from '@/lib/auth'
 import { parseImportFile } from '@/lib/import-format'
@@ -139,6 +140,27 @@ export async function POST(req: Request) {
               .map((d) => ({ routineId: routine.id, date: new Date(d) })),
           })
         }
+      }
+
+      // personal-best metrics with their attempt history
+      for (const pb of g.pbs) {
+        if (!pb.records.length) continue
+        await db.personalBest.create({
+          data: {
+            goalId: goal.id,
+            name: pb.name,
+            unit: pb.unit,
+            direction: pb.direction,
+            history: JSON.stringify(
+              pb.records.map((r) => ({
+                id: randomUUID(),
+                date: r.date,
+                value: r.value,
+                note: r.note,
+              })),
+            ),
+          },
+        })
       }
     }
 

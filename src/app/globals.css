@@ -451,3 +451,16 @@ input[type='date'] {
   animation: quest-glow 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
   will-change: transform, opacity;
 }
+
+/* ---------------------------------------------------------------------------
+   Netlify Identity widget badge — Netlify injects this as an iframe
+   (<iframe id="netlify-identity-widget">) once Identity is enabled, and an
+   iframe's contents can't be styled from outside. The app has its own custom
+   sign-in UI, so the badge is pure noise: hide the iframe element itself.
+--------------------------------------------------------------------------- */
+iframe#netlify-identity-widget,
+#netlify-identity-widget {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}

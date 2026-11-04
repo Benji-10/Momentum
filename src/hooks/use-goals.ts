@@ -383,6 +383,60 @@ export function useDeleteNode(goalId: string | null) {
   })
 }
 
+// ---------------- personal bests ----------------
+
+export function useAddPb(goalId: string | null) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: {
+      name: string
+      unit?: string | null
+      direction?: 'up' | 'down'
+      firstValue?: number | null
+      firstDate?: string | null
+    }) =>
+      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/pbs`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+  })
+}
+
+export function useDeletePb(goalId: string | null) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ pbId }: { pbId: string }) =>
+      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/pbs/${pbId}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+  })
+}
+
+export function useAddPbRecord(goalId: string | null) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ pbId, value, date, note }: { pbId: string; value: number; date?: string; note?: string | null }) =>
+      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/pbs/${pbId}/records`, {
+        method: 'POST',
+        body: JSON.stringify({ value, date, note: note || null }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+  })
+}
+
+export function useDeletePbRecord(goalId: string | null) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ pbId, recordId }: { pbId: string; recordId: string }) =>
+      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/pbs/${pbId}/records/${recordId}`, {
+        method: 'DELETE',
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+  })
+}
+
 // ---------------- import / export / seed ----------------
 
 export function useImportGoals() {

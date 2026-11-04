@@ -19,6 +19,13 @@ with flexible routines, and watch the log write itself as you check things off.
 - **Auto-logging** — checking off a routine that has a preset duration
   ("read 20 min", "work 2 h") writes the log entry for you; a separate quick
   entry still lets you log custom amounts.
+- **Personal bests & time invested** — track PB metrics per goal ("WPM",
+  higher is better; "BLD" solve time, lower is better) with a PB-over-time
+  chart and per-attempt history, plus a cumulative time-spent graph — both on
+  the Review tab.
+- **One "Today" card** — the dashboard splits today's work into "check off
+  when done" (scheduled routines) and "work toward" (ongoing targets, which
+  advance as you log progress — each row has an inline + Log button).
 - **Accounts** — Netlify Identity behind a custom sign-in / sign-up screen
   (no default identity widget). Every account sees only its own data, on any
   device.

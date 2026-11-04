@@ -1,10 +1,29 @@
-import type { Goal, GoalNote, GoalStep, Prisma, ProgressLog, RoutineDone, RoutineItem, SkillMilestone, SkillNode, SkillPath } from '@prisma/client'
-import type { GoalData } from './types'
+import type { Goal, GoalNote, GoalStep, PersonalBest, Prisma, ProgressLog, RoutineDone, RoutineItem, SkillMilestone, SkillNode, SkillPath } from '@prisma/client'
+import type { GoalData, PbRecordData } from './types'
 import { parseWeekdaysCsv } from './skill-tree'
 
 function parseIdsCsv(csv: string | null): string[] {
   if (!csv) return []
   return csv.split(',').map((s) => s.trim()).filter(Boolean)
+}
+
+/** Parse a PersonalBest `history` JSON column; corrupt rows degrade to []. */
+function parsePbHistory(history: string): PbRecordData[] {
+  try {
+    const parsed = JSON.parse(history)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter(
+        (r): r is { id: string; date: string; value: number; note?: string | null } =>
+          typeof r?.id === 'string' &&
+          typeof r?.date === 'string' &&
+          typeof r?.value === 'number' &&
+          Number.isFinite(r.value),
+      )
+      .map((r) => ({ id: r.id, date: r.date, value: r.value, note: r.note ?? null }))
+  } catch {
+    return []
+  }
 }
 
 /** Shared Prisma include so every endpoint returns the same goal shape. */
@@ -13,6 +32,7 @@ export const goalInclude = {
   logs: { orderBy: { date: 'desc' } },
   notes: { orderBy: [{ pinned: 'desc' }, { createdAt: 'desc' }] },
   routines: { include: { dones: true }, orderBy: { createdAt: 'asc' } },
+  pbs: { orderBy: { createdAt: 'asc' } },
   skillPaths: {
     include: {
       nodes: { include: { milestones: true }, orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] },
@@ -26,6 +46,7 @@ type GoalWithRelations = Goal & {
   logs: ProgressLog[]
   notes: GoalNote[]
   routines: (RoutineItem & { dones: RoutineDone[] })[]
+  pbs: PersonalBest[]
   skillPaths: (SkillPath & { nodes: (SkillNode & { milestones: SkillMilestone[] })[] })[]
 }
 
@@ -94,6 +115,16 @@ export function serializeGoal(goal: GoalWithRelations): GoalData {
         date: d.date.toISOString(),
         creditedValue: d.creditedValue,
       })),
+    })),
+    pbs: goal.pbs.map((pb) => ({
+      id: pb.id,
+      goalId: pb.goalId,
+      name: pb.name,
+      unit: pb.unit,
+      direction: pb.direction as 'up' | 'down',
+      records: parsePbHistory(pb.history),
+      createdAt: pb.createdAt.toISOString(),
+      updatedAt: pb.updatedAt.toISOString(),
     })),
     skillPaths: goal.skillPaths.map((p) => ({
       id: p.id,

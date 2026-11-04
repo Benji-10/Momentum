@@ -102,6 +102,33 @@ export async function GET() {
             dones: r.dones.map((d) => toDateString(d.date)),
           })),
           notes: g.notes.map((n) => n.content),
+          ...(g.pbs.length
+            ? {
+                pbs: g.pbs.map((pb) => ({
+                  name: pb.name,
+                  unit: pb.unit,
+                  direction: pb.direction,
+                  records: ((): Array<{ date: string; value: number; note: string | null }> => {
+                    try {
+                      const parsed = JSON.parse(pb.history)
+                      if (!Array.isArray(parsed)) return []
+                      return parsed
+                        .filter(
+                          (r): r is { date: string; value: number; note?: string | null } =>
+                            typeof r?.date === 'string' && typeof r?.value === 'number',
+                        )
+                        .map((r) => ({
+                          date: toDateString(new Date(r.date)),
+                          value: r.value,
+                          note: r.note ?? null,
+                        }))
+                    } catch {
+                      return []
+                    }
+                  })(),
+                })),
+              }
+            : {}),
           logs: g.logs.map((l) => ({
             date: toDateString(l.date),
             amount: l.amount,

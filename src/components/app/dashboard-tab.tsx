@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import {
+  CalendarCheck,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -9,6 +10,7 @@ import {
   Circle,
   Flame,
   ListFilter,
+  Plus,
   Repeat,
   Search,
   Target,
@@ -28,6 +30,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { GoalCard } from '@/components/app/goal-card'
+import { NodeQuickAddPopover, QuickLogPopover } from '@/components/app/quick-log'
 import { cn } from '@/lib/utils'
 
 type StatusFilter = 'all' | 'on_track' | 'behind' | 'completed'
@@ -66,7 +69,8 @@ function XpBadge({ goals }: { goals: GoalData[] }) {
   )
 }
 
-function TodaysRoutines({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: (g: GoalData, tab?: string) => void }) {
+/** Today's checkable list: every routine scheduled for today, any goal. */
+function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: (g: GoalData, tab?: string) => void }) {
   const toggleDone = useToggleRoutineDone()
   const today = new Date()
   const tomorrow = new Date(today.getTime() + 86_400_000)
@@ -87,81 +91,79 @@ function TodaysRoutines({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: 
   const doneCount = occs.filter((o) => o.done).length
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Repeat className="h-4 w-4 text-primary" /> Today&apos;s routine
-          <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-xs font-normal text-muted-foreground">
-            {doneCount}/{occs.length} done
-          </span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="pb-3">
-        <div className="divide-y divide-border/60">
-          {occs.map((o) => {
-            const g = o.goal
-            const c = goalColor(g.color)
-            return (
-              <div key={o.routine.id + o.date.toISOString()} className="flex items-center gap-3 py-2.5">
-                <button
-                  type="button"
-                  aria-label={o.done ? `Undo "${o.routine.title}"` : `Mark "${o.routine.title}" as done`}
-                  onClick={() =>
-                    toggleDone.mutate(
-                      {
-                        goalId: g.id,
-                        routineId: o.routine.id,
-                        date: o.date.toISOString(),
-                        undo: o.done,
+    <section aria-label="Today's checklist">
+      <div className="mb-1.5 flex items-baseline justify-between gap-2">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+          ✅ Check off when done — today&apos;s routines
+        </h3>
+        <span className="text-xs tabular-nums text-muted-foreground">
+          {doneCount}/{occs.length}
+        </span>
+      </div>
+      <div className="divide-y divide-border/60">
+        {occs.map((o) => {
+          const g = o.goal
+          const c = goalColor(g.color)
+          return (
+            <div key={o.routine.id + o.date.toISOString()} className="flex items-center gap-3 py-2.5">
+              <button
+                type="button"
+                aria-label={o.done ? `Undo "${o.routine.title}"` : `Mark "${o.routine.title}" as done`}
+                onClick={() =>
+                  toggleDone.mutate(
+                    {
+                      goalId: g.id,
+                      routineId: o.routine.id,
+                      date: o.date.toISOString(),
+                      undo: o.done,
+                    },
+                    {
+                      onSuccess: (res) => {
+                        if (!res.autoLog || o.done) return
+                        const unit = g.unit ?? (g.type === 'plan' ? 'session' : '')
+                        const shown =
+                          unit === 'session' || unit === 'sessions'
+                            ? `${formatNumber(res.autoLog.amount)} ${res.autoLog.amount === 1 ? 'session' : 'sessions'}${o.routine.durationMin ? ` · ${o.routine.durationMin}m` : ''}`
+                            : `${formatNumber(res.autoLog.amount)} ${unit || 'progress'}`
+                        toast.success(`${o.routine.title} done`, {
+                          description: `Logged ${shown} — not quite right?`,
+                          action: { label: 'Adjust', onClick: () => onOpenGoal(g, 'log') },
+                        })
                       },
-                      {
-                        onSuccess: (res) => {
-                          if (!res.autoLog || o.done) return
-                          const unit = g.unit ?? (g.type === 'plan' ? 'session' : '')
-                          const shown =
-                            unit === 'session' || unit === 'sessions'
-                              ? `${formatNumber(res.autoLog.amount)} ${res.autoLog.amount === 1 ? 'session' : 'sessions'}${o.routine.durationMin ? ` · ${o.routine.durationMin}m` : ''}`
-                              : `${formatNumber(res.autoLog.amount)} ${unit || 'progress'}`
-                          toast.success(`${o.routine.title} done`, {
-                            description: `Logged ${shown} — not quite right?`,
-                            action: { label: 'Adjust', onClick: () => onOpenGoal(g, 'log') },
-                          })
-                        },
-                      },
-                    )
-                  }
-                  className={cn(
-                    'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-all hover:scale-110',
-                    o.done
-                      ? 'border-primary bg-primary text-primary-foreground'
-                      : 'border-muted-foreground/40 hover:border-primary',
-                  )}
-                >
-                  {o.done && <Check className="h-3.5 w-3.5" strokeWidth={3} />}
-                </button>
-                <div className="min-w-0 flex-1">
-                  <div className={cn('text-sm font-medium leading-snug', o.done && 'text-muted-foreground line-through')}>
-                    {o.routine.title}
-                  </div>
-                  <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <span>{g.emoji}</span>
-                    <button
-                      type="button"
-                      className="max-w-40 truncate hover:underline"
-                      onClick={() => onOpenGoal(g, 'routine')}
-                    >
-                      {g.title}
-                    </button>
-                    {o.routine.durationMin != null && <span>· {o.routine.durationMin}m</span>}
-                  </div>
+                    },
+                  )
+                }
+                className={cn(
+                  'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 transition-all hover:scale-110',
+                  o.done
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-muted-foreground/40 hover:border-primary',
+                )}
+              >
+                {o.done && <Check className="h-3.5 w-3.5" strokeWidth={3} />}
+              </button>
+              <div className="min-w-0 flex-1">
+                <div className={cn('text-sm font-medium leading-snug', o.done && 'text-muted-foreground line-through')}>
+                  {o.routine.title}
                 </div>
-                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: c.hex }} aria-hidden />
+                <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <span>{g.emoji}</span>
+                  <button
+                    type="button"
+                    className="max-w-40 truncate hover:underline"
+                    onClick={() => onOpenGoal(g, 'routine')}
+                  >
+                    {g.title}
+                  </button>
+                  {o.routine.durationMin != null && <span>· {o.routine.durationMin}m</span>}
+                </div>
               </div>
-            )
-          })}
-        </div>
-      </CardContent>
-    </Card>
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: c.hex }} aria-hidden />
+            </div>
+          )
+        })}
+      </div>
+    </section>
   )
 }
 
@@ -175,6 +177,8 @@ function FocusItem({ goal, onOpen }: { goal: GoalData; onOpen: (g: GoalData, tab
   let detail: string
   let done = false
   let tab: string | undefined = undefined
+  // quick-log affordance, depends on what "working toward" means for this goal
+  let quickLog: React.ReactNode = null
 
   if (stats.status === 'completed') {
     title = 'Goal completed'
@@ -186,9 +190,23 @@ function FocusItem({ goal, onOpen }: { goal: GoalData; onOpen: (g: GoalData, tab
     const nn = nextPath?.nextNode
     title = nn ? `${nextPath!.path.icon} ${nextPath!.path.title}: ${nn.node.title}` : 'Skill map complete'
     detail = nn
-      ? `${formatNumber(nn.node.currentValue)}/${formatNumber(nn.node.targetValue)}${nn.unit ? ` ${nn.unit}` : ''} — click to log progress`
+      ? `${formatNumber(nn.node.currentValue)}/${formatNumber(nn.node.targetValue)}${nn.unit ? ` ${nn.unit}` : ''} — advances as you log progress`
       : 'All tiers mastered 🏆'
     tab = 'skills'
+    if (nn) {
+      quickLog = (
+        <NodeQuickAddPopover
+          goalId={goal.id}
+          nodeId={nn.node.id}
+          nodeTitle={nn.node.title}
+          unit={nn.unit}
+        >
+          <span className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary">
+            <Plus className="h-3.5 w-3.5" /> Log
+          </span>
+        </NodeQuickAddPopover>
+      )
+    }
   } else if (goal.type === 'quantitative') {
     if (stats.perDayForWeek && stats.perDayForWeek > 0) {
       title = `Do ~${formatNumber(stats.perDayForWeek)} ${unit} today`
@@ -201,6 +219,13 @@ function FocusItem({ goal, onOpen }: { goal: GoalData; onOpen: (g: GoalData, tab
       title = 'Log your first entry'
       detail = `Aim for ~${formatNumber(stats.requiredPerDay ?? 0)} ${unit}/day`
     }
+    quickLog = (
+      <QuickLogPopover goal={goal}>
+        <span className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary">
+          <Plus className="h-3.5 w-3.5" /> Log
+        </span>
+      </QuickLogPopover>
+    )
   } else {
     // plan goal
     const parts: string[] = []
@@ -213,13 +238,29 @@ function FocusItem({ goal, onOpen }: { goal: GoalData; onOpen: (g: GoalData, tab
     title = parts[0]
     detail = parts.slice(1).join(' · ') || 'Open to log a practice session'
     tab = stats.stepsTotal === 0 ? 'steps' : undefined
+    if (goal.weeklyTarget) {
+      quickLog = (
+        <QuickLogPopover goal={goal}>
+          <span className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary">
+            <Plus className="h-3.5 w-3.5" /> Log
+          </span>
+        </QuickLogPopover>
+      )
+    }
   }
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={() => onOpen(goal, tab)}
-      className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left transition-colors hover:bg-accent/60"
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpen(goal, tab)
+        }
+      }}
+      className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2.5 text-left transition-colors hover:bg-accent/60 focus-visible:outline-2 focus-visible:outline-ring"
     >
       {done ? (
         <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500" />
@@ -233,8 +274,79 @@ function FocusItem({ goal, onOpen }: { goal: GoalData; onOpen: (g: GoalData, tab
         </div>
         <div className="mt-0.5 truncate text-xs text-muted-foreground">{detail}</div>
       </div>
+      {quickLog}
       <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/60" />
-    </button>
+    </div>
+  )
+}
+
+/**
+ * Everything about today in ONE place, split into the two kinds of work the
+ * app tracks — so it's always obvious what to do:
+ *
+ *   ✅ check off  → concrete things scheduled today (routines)
+ *   📈 work toward → ongoing targets that advance as you log progress
+ *                   (skill checkpoints / weekly amounts — no checkbox,
+ *                    because "done" is reached in steps, not in one tap)
+ */
+function TodayCard({
+  goals,
+  onOpen,
+  onNewGoal,
+}: {
+  goals: GoalData[]
+  onOpen: (g: GoalData, tab?: string) => void
+  onNewGoal: () => void
+}) {
+  const active = useMemo(
+    () => goals.filter((g) => computeGoalStats(g).status !== 'completed'),
+    [goals],
+  )
+
+  const hasChecklist = goals.some((g) =>
+    g.routines.some((r) => {
+      if (r.archived) return false
+      return occurrencesInRange([r], g.deadline, new Date(), new Date()).length > 0
+    }),
+  )
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <CalendarCheck className="h-4 w-4 text-primary" /> Today
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-5 pb-4">
+        <TodayChecklist goals={goals} onOpenGoal={onOpen} />
+
+        {active.length > 0 ? (
+          <section aria-label="Ongoing targets">
+            <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              📈 Work toward — log progress to advance (no checkbox)
+            </h3>
+            <div className="divide-y divide-border/60">
+              {active.map((goal) => (
+                <FocusItem key={goal.id} goal={goal} onOpen={onOpen} />
+              ))}
+            </div>
+          </section>
+        ) : (
+          !hasChecklist && (
+            <div className="flex flex-col items-center gap-3 py-6 text-center">
+              <p className="text-sm text-muted-foreground">
+                {goals.length === 0
+                  ? 'Create your first goal to see your daily plan here.'
+                  : 'All goals completed — time for a new challenge!'}
+              </p>
+              <Button onClick={onNewGoal} variant="secondary" size="sm">
+                <Target className="h-4 w-4" /> New goal
+              </Button>
+            </div>
+          )
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
@@ -351,35 +463,8 @@ export function DashboardTab({
         <XpBadge goals={goals} />
       </div>
 
-      {/* today's routines */}
-      <TodaysRoutines goals={goals} onOpenGoal={onOpen} />
-
-      {/* today's focus */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">Today&apos;s focus</CardTitle>
-        </CardHeader>
-        <CardContent className="pb-3">
-          {active.length > 0 ? (
-            <div className="divide-y divide-border/60">
-              {active.map(({ goal }) => (
-                <FocusItem key={goal.id} goal={goal} onOpen={onOpen} />
-              ))}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-3 py-6 text-center">
-              <p className="text-sm text-muted-foreground">
-                {goals.length === 0
-                  ? 'Create your first goal to see your daily plan here.'
-                  : 'All goals completed — time for a new challenge!'}
-              </p>
-              <Button onClick={onNewGoal} variant="secondary" size="sm">
-                <Target className="h-4 w-4" /> New goal
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Today — one card, two clear kinds of work */}
+      <TodayCard goals={goals} onOpen={onOpen} onNewGoal={onNewGoal} />
 
       {/* search & filters */}
       <div className="space-y-3">

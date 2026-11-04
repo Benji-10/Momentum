@@ -229,4 +229,55 @@ ALTER TABLE "SkillNode" ADD CONSTRAINT "SkillNode_pathId_fkey" FOREIGN KEY ("pat
 -- AddForeignKey
 ALTER TABLE "SkillMilestone" ADD CONSTRAINT "SkillMilestone_nodeId_fkey" FOREIGN KEY ("nodeId") REFERENCES "SkillNode"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
+-- CreateTable
+CREATE TABLE "PersonalBest" (
+    "id" TEXT NOT NULL,
+    "goalId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "unit" TEXT,
+    "direction" TEXT NOT NULL DEFAULT 'up',
+    "history" TEXT NOT NULL DEFAULT '[]',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "PersonalBest_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE INDEX "PersonalBest_goalId_idx" ON "PersonalBest"("goalId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "PersonalBest_goalId_name_key" ON "PersonalBest"("goalId", "name");
+
+-- AddForeignKey
+ALTER TABLE "PersonalBest" ADD CONSTRAINT "PersonalBest_goalId_fkey" FOREIGN KEY ("goalId") REFERENCES "Goal"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
 `
+
+/**
+ * Incremental upgrades for databases deployed BEFORE a feature existed.
+ * The bootstrap check above only looks at the "Goal" table, so an existing
+ * deployment would never receive new tables — each entry here is checked
+ * and applied on its own, and is written idempotently (IF NOT EXISTS) so
+ * racing cold starts can't fight over it.
+ */
+export const PG_MIGRATIONS: { table: string; sql: string }[] = [
+  {
+    table: 'PersonalBest',
+    sql: `-- v1.1: personal-best metrics (PB WPM, PB BLD, …)
+CREATE TABLE IF NOT EXISTS "PersonalBest" (
+    "id" TEXT NOT NULL,
+    "goalId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "unit" TEXT,
+    "direction" TEXT NOT NULL DEFAULT 'up',
+    "history" TEXT NOT NULL DEFAULT '[]',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "PersonalBest_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "PersonalBest_goalId_fkey" FOREIGN KEY ("goalId") REFERENCES "Goal"("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX IF NOT EXISTS "PersonalBest_goalId_idx" ON "PersonalBest"("goalId");
+CREATE UNIQUE INDEX IF NOT EXISTS "PersonalBest_goalId_name_key" ON "PersonalBest"("goalId", "name");`,
+  },
+]
