@@ -39,8 +39,10 @@ export function ensureDbReady(): Promise<void> {
   if (!isPostgresMode) return Promise.resolve()
   if (!globalForPrisma.pgBootstrapped) {
     globalForPrisma.pgBootstrapped = (async () => {
+      // to_regclass() returns the Postgres `regclass` type, which Prisma's
+      // queryRaw cannot deserialize — cast it to text (see Prisma P2010).
       const check = async () =>
-        (await db.$queryRaw<Array<{ has: string | null }>>`SELECT to_regclass('public."Goal"') as has`)[0]?.has
+        (await db.$queryRaw<Array<{ has: string | null }>>`SELECT to_regclass('public."Goal"')::text as has`)[0]?.has
       if (await check()) return
       const statements = PG_BOOTSTRAP_SQL.split(/;\s*\n/)
         .map((s) => s.trim())
