@@ -118,8 +118,9 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
             <FileJson className="h-5 w-5 shrink-0 text-primary" /> Import a roadmap
           </DialogTitle>
           <DialogDescription>
-            Paste or upload a JSON roadmap — goals, plan steps, skill paths with checkpoints &amp; sub-checkpoints,
-            locked progression (requires), per-day routines and flexible weekly quotas are all created for you.
+            Paste or upload a JSON roadmap — goals, plan steps, skill paths with checkpoints, labels &amp;
+            sub-checkpoints, locked progression (requires), per-day / every-N-days / flexible weekly
+            routines, personal bests and your progress history are all created for you.
           </DialogDescription>
         </DialogHeader>
 
@@ -195,7 +196,7 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
               {showExample && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                    <span className="min-w-0 truncate">Format reference (a language-learning skill map)</span>
+                    <span className="min-w-0 truncate">Format reference — one of every field the roadmap format supports</span>
                     <Button
                       type="button"
                       variant="ghost"
@@ -222,7 +223,7 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
           {stage === 'preview' && parsed && stats && (
             <div className="space-y-4">
               {/* stats */}
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                 {[
                   { label: 'Goals', value: stats.goals },
                   { label: 'Steps', value: stats.steps },
@@ -230,6 +231,7 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
                   { label: 'Checkpoints', value: stats.nodes },
                   { label: 'Sub-★', value: stats.milestones },
                   { label: 'Routines', value: stats.routines },
+                  { label: 'PB entries', value: stats.pbs },
                   { label: 'History', value: stats.history },
                 ].map((s) => (
                   <div key={s.label} className="rounded-xl border bg-card p-3 text-center">

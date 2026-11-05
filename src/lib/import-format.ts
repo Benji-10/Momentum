@@ -5,29 +5,40 @@ import type { RoutineCadence } from './types'
 // Import / export JSON format ("roadmap files")
 //
 // Hand-authored or generated anywhere: paste/upload the JSON and every goal,
-// step, skill path and weekly routine is created. Export produces the same
-// shape (plus your progress and history).
+// step, skill path, routine, personal-best metric and note is created.
+// Export produces the same shape (plus an `exportedAt` stamp, your progress
+// and your history) so files round-trip losslessly.
 //
 // The parser is deliberately forgiving:
 //   • null is accepted anywhere the field may be absent
 //   • common aliases are understood (checkpoints→nodes, subCheckpoints→
 //     milestones, everyNDays→everyDays, name→title, …)
 //   • numbers may be sent as strings ("150")
-//   • steps may carry done:true, routines may carry dones:["2026-01-05",…]
-//     so an export round-trips losslessly
+//   • dates may be "2026-01-05", a full ISO timestamp, or daysAgo:3
 //
-// Scheduling & progression (v1):
-//   • nodes may carry requires:["HSK3"] or ["Vocabulary › HSK3"] — the
-//     checkpoint stays locked until those are cleared (default: the
-//     previous node in the same path, i.e. HSK2 → HSK3)
-//   • routines may carry weekdays:["Mon","Tue"] for fixed days,
-//     everyDays:2 for intervals, or timesPerWeek:3 for "any 3 days a week"
-//   • routines may carry node:"Grammar › HSK3" + credit:10 — each check-off
-//     advances that checkpoint in the skill tree automatically
-//   • goals may carry pbs:[{ name:"WPM", unit:"wpm", direction:"up",
-//     records:[{ date:"2026-01-05", value:128 }] }] — personal-best metrics
-//     with their full attempt history ("down" = lower is better, e.g. a
-//     BLD solve time in seconds)
+// Every customizable field (IMPORT_EXAMPLE_JSON below shows one of each):
+//   goal    title, description, emoji, color, category, type ("plan" |
+//           "quantitative"), targetValue, unit, weeklyTarget, deadline,
+//           steps, paths, routines, pbs, notes, logs
+//   step    title, notes, done
+//   path    title, description, icon, unit (the default for its nodes)
+//   node    title, description, icon, current, target, unit (override),
+//           xp, mastered (shortcut: current = target), milestones (numbers
+//           or {value,label} sub-checkpoints), requires (node titles or
+//           "Path › Node" refs that must be cleared first — default: the
+//           previous node in the same path)
+//   routine title, notes, cadence + weekdays (fixed days) / everyDays
+//           (interval) / timesPerWeek (any N days a week), durationMin,
+//           node + credit (auto-advance a checkpoint per check-off),
+//           startDate, endDate, dones (completion history)
+//   pb      name, unit, direction ("up" = higher is better, e.g. WPM;
+//           "down" = lower is better, e.g. a solve time), records
+//   record  date or daysAgo, value, note
+//   log     date or daysAgo, amount, note
+//
+// Not part of the file: theme & time zone are account settings (synced via
+// Settings), and archived goals are skipped by export — a roadmap file only
+// carries the plan and its progress.
 // ---------------------------------------------------------------------------
 
 const WEEKDAY_NAMES: Record<string, number> = {
@@ -705,6 +716,7 @@ export function describeImport(imp: NormalizedImport): {
   nodes: number
   milestones: number
   routines: number
+  pbs: number
   notes: number
   history: number
 } {
@@ -718,6 +730,10 @@ export function describeImport(imp: NormalizedImport): {
       0,
     ),
     routines: imp.goals.reduce((s, g) => s + g.routines.length, 0),
+    pbs: imp.goals.reduce(
+      (s, g) => s + g.pbs.reduce((x, pb) => x + pb.records.length, 0),
+      0,
+    ),
     notes: imp.goals.reduce((s, g) => s + g.notes.length, 0),
     history: imp.goals.reduce(
       (s, g) => s + g.routines.reduce((x, r) => x + r.doneDates.length, 0) + g.logs.length,
@@ -728,6 +744,13 @@ export function describeImport(imp: NormalizedImport): {
 
 // ---------------------------------------------------------------------------
 // Reference example (shown in the Import dialog)
+//
+// One of *every* customizable field, in a realistic shape: a plan goal with
+// a full skill map (labels, unit overrides, gating, mastered shortcuts) and
+// all three routine cadences, plus a quantitative goal (target, unit,
+// weekly target) with PB metrics in both directions and progress history.
+// scripts/verify-example.ts asserts the example still parses and exercises
+// every key of the zod schemas above.
 // ---------------------------------------------------------------------------
 
 export const IMPORT_EXAMPLE_JSON = `{
@@ -738,13 +761,19 @@ export const IMPORT_EXAMPLE_JSON = `{
       "description": "Read, write and hold conversations in Mandarin.",
       "emoji": "🀄", "color": "rose", "category": "Language", "type": "plan",
       "deadline": "2027-06-30",
+      "steps": [
+        "Install Anki and pick a textbook",
+        { "title": "Book a weekly tutor lesson", "notes": "Thursday evenings work best", "done": true },
+        { "title": "Pass an HSK3 mock exam", "notes": "210/300 or better counts as a pass" }
+      ],
       "paths": [
         {
           "title": "Vocabulary", "icon": "📖", "unit": "words",
+          "description": "One deck per HSK level; targets are cumulative word counts.",
           "nodes": [
             { "title": "HSK1", "current": 150, "target": 150, "xp": 20, "milestones": [50, 100] },
-            { "title": "HSK2", "current": 300, "target": 300, "xp": 40, "milestones": [100, 200] },
-            { "title": "HSK3", "current": 30, "target": 600, "xp": 60,
+            { "title": "HSK2", "target": 300, "xp": 40, "mastered": true, "milestones": [100, 200] },
+            { "title": "HSK3", "icon": "🧠", "current": 30, "target": 600, "xp": 60,
               "description": "600 most common HSK3 words, recall within 3s",
               "milestones": [ { "value": 100, "label": "First 100" },
                 { "value": 300, "label": "Halfway!" }, { "value": 500 } ] },
@@ -776,41 +805,69 @@ export const IMPORT_EXAMPLE_JSON = `{
             { "title": "HSK1", "current": 150, "target": 150, "xp": 20 },
             { "title": "HSK2", "current": 280, "target": 300, "xp": 40, "milestones": [150] },
             { "title": "HSK3", "current": 80, "target": 600, "xp": 60,
-              "requires": ["HSK2"], "milestones": [200, 400] }
+              "requires": ["HSK2"], "milestones": [200, 400] },
+            { "title": "Newspapers", "target": 30, "xp": 50, "unit": "articles",
+              "requires": ["Reading › HSK3"],
+              "description": "Unit override — this checkpoint counts articles, not pages" }
           ]
         }
       ],
       "routines": [
-        { "title": "Flashcards — vocab", "weekdays": ["Mon", "Tue", "Thu"],
+        { "title": "Flashcards — vocab", "cadence": "weekly", "weekdays": ["Mon", "Tue", "Thu"],
           "durationMin": 20, "node": "Vocabulary › HSK3", "credit": 25,
-          "notes": "Anki deck, focus on the 3-star leeches" },
+          "startDate": "2026-01-05", "endDate": null,
+          "notes": "Anki deck, focus on the 3-star leeches",
+          "dones": ["2026-01-05", "2026-01-06", "2026-01-08"] },
         { "title": "Grammar practice", "weekdays": ["Tue"], "durationMin": 30,
           "node": "Grammar › HSK3", "credit": 10 },
-        { "title": "Speaking practice", "weekdays": ["Sun"], "durationMin": 45,
+        { "title": "Language exchange call", "timesPerWeek": 2, "durationMin": 30,
           "node": "Speaking › HSK2", "credit": 20,
-          "notes": "Read aloud + record myself" }
+          "notes": "Any 2 days a week — flexible cadence" },
+        { "title": "Leech review", "everyDays": 3, "durationMin": 10,
+          "startDate": "2026-01-10", "endDate": "2026-03-31",
+          "notes": "Every 3rd day until the end of March" }
+      ],
+      "pbs": [
+        { "name": "Reading speed", "unit": "chars/min", "direction": "up",
+          "records": [
+            { "date": "2026-01-04", "value": 128, "note": "Graded reader, HSK2" },
+            { "daysAgo": 2, "value": 142, "note": "First attempt over 140" }
+          ] }
+      ],
+      "logs": [
+        { "date": "2026-01-06", "amount": 20, "note": "Flashcards" },
+        { "daysAgo": 1, "amount": 30 }
       ],
       "notes": ["Textbook: HSK Standard Course 3. Different focus each day: Mon vocab, Tue vocab + grammar, Sun speaking."]
     },
     {
-      "title": "Get stronger", "emoji": "💪", "color": "indigo",
-      "category": "Fitness", "type": "plan",
-      "paths": [
-        { "title": "Strength", "icon": "🏋️", "unit": "sessions",
-          "nodes": [
-            { "title": "Foundation", "current": 12, "target": 24, "xp": 30, "milestones": [12, 18] },
-            { "title": "Intermediate", "target": 48, "xp": 60, "requires": ["Foundation"] }
-          ] }
+      "title": "Run a half marathon",
+      "description": "21.1 km in under 2:15.",
+      "emoji": "🏃", "color": "amber", "category": "Fitness", "type": "quantitative",
+      "targetValue": 21.1, "unit": "km", "weeklyTarget": 25, "deadline": "2027-01-17",
+      "steps": [
+        { "title": "Sign up for the race", "done": true },
+        "Get fitted for proper running shoes"
       ],
       "routines": [
-        { "title": "Gym — full body", "timesPerWeek": 3, "durationMin": 60,
-          "node": "Strength › Foundation", "credit": 1,
-          "notes": "3× a week, any day — rest days are part of the plan" }
+        { "title": "Easy run", "everyDays": 2, "durationMin": 40,
+          "notes": "Zone 2, conversational pace" },
+        { "title": "Long run", "weekdays": [6], "durationMin": 75 }
       ],
       "pbs": [
-        { "name": "Deadlift", "unit": "kg", "direction": "up",
-          "records": [ { "date": "2026-01-05", "value": 120 } ] }
-      ]
+        { "name": "5K time", "unit": "min", "direction": "down",
+          "records": [
+            { "date": "2026-10-04", "value": 26.5, "note": "First timed parkrun" },
+            { "date": "2026-11-01", "value": 24.8, "note": "Negative split!" }
+          ] },
+        { "name": "Longest run", "unit": "km", "direction": "up",
+          "records": [ { "daysAgo": 3, "value": 14 } ] }
+      ],
+      "logs": [
+        { "date": "2026-11-02", "amount": 7.5, "note": "Easy 7.5 km" },
+        { "daysAgo": 1, "amount": 10 }
+      ],
+      "notes": ["Austin Half, January 2027 — two easy runs and one long run per week."]
     }
   ]
 }`

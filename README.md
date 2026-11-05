@@ -96,5 +96,24 @@ To move existing data, use **Export** (header → ⬇) on the old build and
 ## Data format
 
 Import / export uses a versioned JSON document (`"version": 1`) with a
-`goals` array. The exact shape and the normalization rules live in
-`src/lib/import-format.ts`.
+`goals` array; exports also carry an `exportedAt` stamp and your progress
+history, and re-import losslessly. The parser is tolerant of multiple goals,
+nullable fields, empty arrays, numeric strings (`"150"`) and common aliases
+(`checkpoints` → `nodes`, `everyNDays` → `everyDays`, …). Dates may be
+`"2026-01-05"`, a full ISO timestamp, or `daysAgo: 3`. The exact shape and
+normalization rules live in `src/lib/import-format.ts` — the Import dialog's
+**Example** button shows one of every field.
+
+| Level | Fields |
+| --- | --- |
+| goal | `title` · `description` · `emoji` · `color` · `category` · `type` (`plan` \| `quantitative`) · `targetValue` · `unit` · `weeklyTarget` · `deadline` · `steps` · `paths` · `routines` · `pbs` · `notes` · `logs` |
+| step | `title` · `notes` · `done` |
+| path | `title` · `description` · `icon` · `unit` (the default for its nodes) |
+| node | `title` · `description` · `icon` · `current` · `target` · `unit` (override) · `xp` · `mastered` (shortcut for `current = target`) · `milestones` (`[50, 100]` or `[{ "value": 100, "label": "First 100" }]`) · `requires` (`["HSK3"]`, or cross-path `"Vocabulary › HSK3"` — default is the previous node in the same path) |
+| routine | `title` · `notes` · `cadence` with `weekdays` (`["Mon","Thu"]` or `[1, 4]`) / `everyDays` (interval) / `timesPerWeek` (any N days a week) · `durationMin` · `node` + `credit` (auto-advance a checkpoint per check-off) · `startDate` · `endDate` · `dones` (completion history) |
+| pb | `name` · `unit` · `direction` (`up` = higher is better, e.g. WPM; `down` = lower is better, e.g. a solve time) · `records` |
+| record / log | `date` or `daysAgo` · `value` / `amount` · `note` |
+
+Theme and time zone are *account* settings (Settings menu, synced across
+devices) and are deliberately not part of the roadmap file; archived goals
+are skipped by export.
