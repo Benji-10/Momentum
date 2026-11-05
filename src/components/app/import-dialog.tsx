@@ -1,7 +1,7 @@
 'use client'
 
-import { useRef, useState } from 'react'
-import { AlertCircle, Check, ChevronDown, ClipboardPaste, FileJson, FileUp, Loader2, Sparkles } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
+import { AlertCircle, Check, ChevronDown, ClipboardPaste, FileJson, FileUp, GitMerge, Loader2, PlusCircle, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   IMPORT_EXAMPLE_JSON,
@@ -9,7 +9,7 @@ import {
   parseImportFile,
   type NormalizedImport,
 } from '@/lib/import-format'
-import { useImportGoals } from '@/hooks/use-goals'
+import { useGoals, useImportGoals } from '@/hooks/use-goals'
 import { getAppTimezone } from '@/lib/app-time'
 import {
   Dialog,
@@ -24,15 +24,27 @@ import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
 type Stage = 'input' | 'preview'
+type Mode = 'create' | 'merge'
+
+function normTitle(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, ' ')
+}
 
 export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const [stage, setStage] = useState<Stage>('input')
+  const [mode, setMode] = useState<Mode>('create')
   const [raw, setRaw] = useState('')
   const [parsed, setParsed] = useState<NormalizedImport | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [showExample, setShowExample] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const importGoals = useImportGoals()
+  const { data: existingGoals } = useGoals()
+
+  const existingTitles = useMemo(
+    () => new Set((existingGoals ?? []).map((g) => normTitle(g.title))),
+    [existingGoals],
+  )
 
   function reset() {
     setStage('input')
@@ -78,18 +90,40 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
 
   function handleImport() {
     if (!parsed) return
-    importGoals.mutate(JSON.parse(raw), {
-      onSuccess: (res) => {
-        toast.success(`Imported ${res.created} goal${res.created === 1 ? '' : 's'}`, {
-          description: 'Roadmap, routines and skill maps are ready to go.',
-        })
-        onOpenChange(false)
-        reset()
+    importGoals.mutate(
+      { data: JSON.parse(raw), mode },
+      {
+        onSuccess: (res) => {
+          if (mode === 'merge' && res.summary) {
+            const s = res.summary
+            const bits = [
+              s.goalsUpdated > 0 && `${s.goalsUpdated} updated`,
+              s.goalsCreated > 0 && `${s.goalsCreated} new`,
+              s.pathsCreated > 0 && `+${s.pathsCreated} branch${s.pathsCreated === 1 ? '' : 'es'}`,
+              s.nodesCreated > 0 && `+${s.nodesCreated} checkpoint${s.nodesCreated === 1 ? '' : 's'}`,
+              s.routinesCreated > 0 && `+${s.routinesCreated} routine${s.routinesCreated === 1 ? '' : 's'}`,
+              s.logsAdded + s.donesAdded + s.recordsAdded > 0 &&
+                `+${s.logsAdded + s.donesAdded + s.recordsAdded} history`,
+            ].filter(Boolean)
+            toast.success(
+              s.goalsUpdated > 0 ? `Merged into ${s.goalsUpdated} goal${s.goalsUpdated === 1 ? '' : 's'}` : `Created ${s.goalsCreated} goal${s.goalsCreated === 1 ? '' : 's'}`,
+              {
+                description: `${bits.join(' · ') || 'Nothing to change'} — progress, XP & history kept.`,
+              },
+            )
+          } else {
+            toast.success(`Imported ${res.created} goal${res.created === 1 ? '' : 's'}`, {
+              description: 'Roadmap, routines and skill maps are ready to go.',
+            })
+          }
+          onOpenChange(false)
+          reset()
+        },
+        onError: (e) => {
+          setError(e.message)
+        },
       },
-      onError: (e) => {
-        setError(e.message)
-      },
-    })
+    )
   }
 
   const stats = parsed ? describeImport(parsed) : null
@@ -128,6 +162,49 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
         <div className="nice-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6">
           {stage === 'input' && (
             <div className="space-y-4">
+              {/* mode: create fresh vs merge into existing */}
+              <div role="radiogroup" aria-label="Import mode" className="grid gap-2 sm:grid-cols-2">
+                {(
+                  [
+                    {
+                      key: 'create' as Mode,
+                      icon: <PlusCircle className="h-4 w-4 shrink-0" />,
+                      label: 'Add as new goals',
+                      hint: 'Creates everything fresh — importing the same file twice duplicates it.',
+                    },
+                    {
+                      key: 'merge' as Mode,
+                      icon: <GitMerge className="h-4 w-4 shrink-0" />,
+                      label: 'Merge into existing',
+                      hint: 'Matches goals, branches & checkpoints by name, updates them and keeps all progress, XP & history.',
+                    },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    role="radio"
+                    aria-checked={mode === opt.key}
+                    onClick={() => setMode(opt.key)}
+                    className={cn(
+                      'flex items-start gap-2.5 rounded-xl border p-3 text-left transition-colors',
+                      mode === opt.key
+                        ? 'border-primary bg-primary/10'
+                        : 'hover:border-primary/40',
+                    )}
+                  >
+                    <span className={cn('mt-0.5', mode === opt.key ? 'text-primary' : 'text-muted-foreground')}>
+                      {opt.icon}
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold">{opt.label}</span>
+                      <span className="block text-xs leading-relaxed text-muted-foreground">{opt.hint}</span>
+                    </span>
+                    {mode === opt.key && <Check className="ml-auto h-4 w-4 shrink-0 self-center text-primary" />}
+                  </button>
+                ))}
+              </div>
+
               {/* upload */}
               <button
                 type="button"
@@ -245,24 +322,41 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
 
               {/* goal list */}
               <div className="space-y-2">
-                {parsed.goals.map((g, i) => (
-                  <div key={i} className="flex items-center gap-3 rounded-xl border bg-card p-3">
-                    <span className="shrink-0 text-xl">{g.emoji}</span>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-semibold">{g.title}</div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        {g.category ? `${g.category} · ` : ''}
-                        {g.type === 'quantitative' ? `target ${g.targetValue} ${g.unit ?? ''}` : 'plan'}
-                        {g.paths.length > 0 &&
-                          ` · ${g.paths.length} paths · ${g.paths.reduce((s, p) => s + p.nodes.length, 0)} checkpoints`}
-                        {g.paths.some((p) => p.nodes.some((n) => n.milestones.length > 0)) &&
-                          ` · ${g.paths.reduce((s, p) => s + p.nodes.reduce((y, n) => y + n.milestones.length, 0), 0)} sub-★`}
-                        {g.routines.length > 0 && ` · ${g.routines.length} routines`}
-                        {g.deadline && ` · by ${new Date(g.deadline).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: getAppTimezone() })}`}
+                {parsed.goals.map((g, i) => {
+                  const matches = existingTitles.has(normTitle(g.title))
+                  return (
+                    <div key={i} className="flex items-center gap-3 rounded-xl border bg-card p-3">
+                      <span className="shrink-0 text-xl">{g.emoji}</span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate text-sm font-semibold">{g.title}</span>
+                          {mode === 'merge' && (
+                            <span
+                              className={cn(
+                                'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+                                matches
+                                  ? 'border-teal-500/30 bg-teal-500/10 text-teal-700 dark:text-teal-400'
+                                  : 'border-muted-foreground/25 bg-muted/50 text-muted-foreground',
+                              )}
+                            >
+                              {matches ? 'Merge' : 'New'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          {g.category ? `${g.category} · ` : ''}
+                          {g.type === 'quantitative' ? `target ${g.targetValue} ${g.unit ?? ''}` : 'plan'}
+                          {g.paths.length > 0 &&
+                            ` · ${g.paths.length} paths · ${g.paths.reduce((s, p) => s + p.nodes.length, 0)} checkpoints`}
+                          {g.paths.some((p) => p.nodes.some((n) => n.milestones.length > 0)) &&
+                            ` · ${g.paths.reduce((s, p) => s + p.nodes.reduce((y, n) => y + n.milestones.length, 0), 0)} sub-★`}
+                          {g.routines.length > 0 && ` · ${g.routines.length} routines`}
+                          {g.deadline && ` · by ${new Date(g.deadline).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: getAppTimezone() })}`}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}
@@ -289,11 +383,14 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
                 <Button onClick={handleImport} disabled={importGoals.isPending}>
                   {importGoals.isPending ? (
                     <>
-                      <Loader2 className="h-4 w-4 animate-spin" /> Importing…
+                      <Loader2 className="h-4 w-4 animate-spin" /> {mode === 'merge' ? 'Merging…' : 'Importing…'}
                     </>
                   ) : (
                     <>
-                      <Check className="h-4 w-4" /> Import {stats?.goals} goal{stats?.goals === 1 ? '' : 's'}
+                      {mode === 'merge' ? <GitMerge className="h-4 w-4" /> : <Check className="h-4 w-4" />}
+                      {mode === 'merge'
+                        ? `Merge ${stats?.goals} goal${stats?.goals === 1 ? '' : 's'}`
+                        : `Import ${stats?.goals} goal${stats?.goals === 1 ? '' : 's'}`}
                     </>
                   )}
                 </Button>

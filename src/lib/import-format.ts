@@ -484,7 +484,7 @@ export interface NormalizedImport {
   goals: NormalizedGoal[]
 }
 
-function isoFromFlexibleDate(s: string | null | undefined): string | null {
+export function isoFromFlexibleDate(s: string | null | undefined): string | null {
   if (!s) return null
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
     const d = new Date(`${s}T12:00:00`)
@@ -494,7 +494,7 @@ function isoFromFlexibleDate(s: string | null | undefined): string | null {
   return isNaN(d.getTime()) ? null : d.toISOString()
 }
 
-function isoFromDaysAgoOrDate(daysAgo?: number | null, date?: string | null): string {
+export function isoFromDaysAgoOrDate(daysAgo?: number | null, date?: string | null): string {
   if (date) {
     const iso = isoFromFlexibleDate(date)
     if (iso) return iso
@@ -642,8 +642,11 @@ function describeIssue(issue: z.ZodIssue): string {
   return issue.message
 }
 
-/** Parse + normalize a pasted/uploaded roadmap JSON. Throws Error with a readable message. */
-export function parseImportFile(raw: unknown): NormalizedImport {
+/** Parse + validate a pasted/uploaded roadmap JSON into the *raw* zod shapes
+ *  (field presence preserved: absent = key missing, so the merge importer can
+ *  tell "not in the file" apart from "explicitly null"). Throws Error with a
+ *  readable message. */
+export function parseImportFileRaw(raw: unknown): ImportGoalRaw[] {
   const canonical = canonicalizeImport(raw)
   const parsed = importFileSchema.safeParse(canonical)
   if (!parsed.success) {
@@ -659,8 +662,12 @@ export function parseImportFile(raw: unknown): NormalizedImport {
     }
     throw new Error(msg)
   }
-  const goalsRaw = Array.isArray(parsed.data) ? parsed.data : parsed.data.goals
-  return { goals: goalsRaw.map(normalizeGoal) }
+  return Array.isArray(parsed.data) ? parsed.data : parsed.data.goals
+}
+
+/** Parse + normalize a pasted/uploaded roadmap JSON. Throws Error with a readable message. */
+export function parseImportFile(raw: unknown): NormalizedImport {
+  return { goals: parseImportFileRaw(raw).map(normalizeGoal) }
 }
 
 /** Goal-scoped import: add steps/paths/routines to an existing goal. */
@@ -676,7 +683,15 @@ export interface NormalizedGoalScopeImport {
   routines: NormalizedRoutine[]
 }
 
-export function parseGoalScopeImport(raw: unknown): NormalizedGoalScopeImport {
+/** Raw (presence-preserving) scoped import — the basis for merge-mode
+ *  "import into this goal". Same lenient aliases as the full-file parser. */
+export interface RawGoalScopeImport {
+  steps: ImportGoalRaw['steps']
+  paths: ImportGoalRaw['paths']
+  routines: ImportGoalRaw['routines']
+}
+
+export function parseGoalScopeImportRaw(raw: unknown): RawGoalScopeImport {
   // accept the raw scoped shape or a full goal object (paths/steps/routines
   // are pulled out of it) — canonicalized with the same lenient aliases
   const scoped = isPlainObject(raw)
@@ -699,11 +714,20 @@ export function parseGoalScopeImport(raw: unknown): NormalizedGoalScopeImport {
     })
     throw new Error(details.join(' · '))
   }
-  const g = normalizeGoal({
-    title: 'scope',
+  return {
     steps: parsed.data.steps ?? undefined,
     paths: parsed.data.paths ?? undefined,
     routines: parsed.data.routines ?? undefined,
+  }
+}
+
+export function parseGoalScopeImport(raw: unknown): NormalizedGoalScopeImport {
+  const s = parseGoalScopeImportRaw(raw)
+  const g = normalizeGoal({
+    title: 'scope',
+    steps: s.steps ?? undefined,
+    paths: s.paths ?? undefined,
+    routines: s.routines ?? undefined,
   })
   return { steps: g.steps, paths: g.paths, routines: g.routines }
 }

@@ -3,13 +3,21 @@ import { randomUUID } from 'crypto'
 import { db } from '@/lib/db'
 import { canonicalDayUtc } from '@/lib/routine-math'
 import { requireUser } from '@/lib/auth'
-import { parseImportFile } from '@/lib/import-format'
+import { parseImportFile, parseImportFileRaw } from '@/lib/import-format'
+import { mergeImportGoals } from '@/lib/merge-import'
 import { goalInclude, serializeGoal } from '@/lib/goal-serialize'
 import { buildRequiresIds, resolveNodeRef, idsCsv, type NodeRefEntry } from '@/lib/resolve-refs'
 
 /**
- * POST /api/import — bulk-import goals from a roadmap JSON file.
+ * POST /api/import — import goals from a roadmap JSON file.
  * Body: the raw parsed JSON (array of goals or { version, goals: [...] }).
+ *
+ *  · default (create): everything in the file is created fresh — importing
+ *    the same file twice duplicates it.
+ *  · ?mode=merge: goals/branches/checkpoints/steps/routines/PBs that already
+ *    exist (matched by name) are updated in place; definitions follow the
+ *    file while progress, XP, history and check-offs are kept.
+ *
  * Node "requires" refs and routine "node" refs (written as titles) are
  * resolved to ids inside each goal.
  */
@@ -18,6 +26,27 @@ export async function POST(req: Request) {
   if ('error' in auth) return auth.error
   try {
     const raw = await req.json()
+    const mode = new URL(req.url).searchParams.get('mode')
+
+    if (mode === 'merge') {
+      const goalsRaw = parseImportFileRaw(raw)
+      const summary = await mergeImportGoals(auth.user.id, goalsRaw)
+      const goals = await db.goal.findMany({
+        where: { status: 'active', userId: auth.user.id },
+        include: goalInclude,
+        orderBy: { createdAt: 'asc' },
+      })
+      return NextResponse.json(
+        {
+          goals: goals.map(serializeGoal),
+          created: summary.goalsCreated,
+          updated: summary.goalsUpdated,
+          summary,
+        },
+        { status: 201 },
+      )
+    }
+
     const normalized = parseImportFile(raw)
 
     for (const g of normalized.goals) {

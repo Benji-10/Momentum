@@ -1,7 +1,7 @@
 'use client'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { CreateGoalInput, GoalData, StepStatus } from '@/lib/types'
+import type { CreateGoalInput, GoalData, MergeSummary, StepStatus } from '@/lib/types'
 import type { NormalizedImport } from '@/lib/import-format'
 import { apiFetch } from '@/lib/api-client'
 
@@ -439,13 +439,20 @@ export function useDeletePbRecord(goalId: string | null) {
 
 // ---------------- import / export / seed ----------------
 
+export interface ImportResponse {
+  goals: GoalData[]
+  created: number
+  updated?: number
+  summary?: MergeSummary
+}
+
 export function useImportGoals() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (raw: unknown) =>
-      jsonFetch<{ goals: GoalData[]; created: number }>('/api/import', {
+    mutationFn: ({ data, mode }: { data: unknown; mode?: 'create' | 'merge' }) =>
+      jsonFetch<ImportResponse>(`/api/import${mode === 'merge' ? '?mode=merge' : ''}`, {
         method: 'POST',
-        body: JSON.stringify(raw),
+        body: JSON.stringify(data),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
   })
@@ -455,10 +462,39 @@ export function useGoalScopeImport(goalId: string | null) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (raw: unknown) =>
-      jsonFetch<{ goal: GoalData | null; added: { steps: number; paths: number; routines: number } }>(
-        `/api/goals/${goalId}/import`,
-        { method: 'POST', body: JSON.stringify(raw) },
-      ),
+      jsonFetch<{
+        goal: GoalData | null
+        added: { steps: number; paths: number; routines: number }
+        summary?: MergeSummary
+      }>(`/api/goals/${goalId}/import`, { method: 'POST', body: JSON.stringify(raw) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+  })
+}
+
+// ---------------- danger zone ----------------
+
+export interface DangerStats {
+  goals?: number
+  goalsDeleted?: number
+  nodesReset?: number
+  milestonesReset?: number
+  stepsReset?: number
+  routines?: number
+  donesDeleted?: number
+  logsDeleted?: number
+  pbRecordsCleared?: number
+}
+
+/** Reset all progress, or wipe every goal — the typed confirmation word
+ *  ("RESET" / "WIPE") is validated by the server too. */
+export function useDangerAction() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { action: 'reset-progress' | 'wipe-all'; confirm: string }) =>
+      jsonFetch<{ ok: true; action: string; stats: DangerStats }>('/api/danger', {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
   })
 }

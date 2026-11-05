@@ -1,10 +1,11 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Check, Globe, KeyRound, Loader2, MapPin, UserRound } from 'lucide-react'
+import { AlertTriangle, Check, Globe, KeyRound, Loader2, MapPin, RotateCcw, Trash2, UserRound } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTheme } from 'next-themes'
 import { useUpdateIdentityProfile, useUpdateSettings } from '@/hooks/use-auth'
+import { useDangerAction } from '@/hooks/use-goals'
 import type { UserSettings } from '@/lib/settings'
 import {
   clockLabel,
@@ -18,6 +19,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -204,6 +206,190 @@ function ThemeGrid({ onPick }: { onPick: (key: string) => void }) {
 }
 
 // ---------------------------------------------------------------------------
+// Danger zone — reset progress / wipe everything, behind a typed word
+// ---------------------------------------------------------------------------
+
+type DangerAction = 'reset-progress' | 'wipe-all'
+
+const DANGER_META: Record<
+  DangerAction,
+  { word: string; title: string; button: string; body: string; effects: string[] }
+> = {
+  'reset-progress': {
+    word: 'RESET',
+    title: 'Reset all progress?',
+    button: 'Reset progress',
+    body: 'Every value goes back to zero, but the roadmap itself stays exactly as it is.',
+    effects: [
+      'All checkpoints reset to 0 / target — sub-★ and clear dates cleared',
+      'All check-offs, practice logs and PB records deleted',
+      'Steps go back to pending',
+      'Goals, branches, checkpoints, routines, PB metrics and notes are kept',
+    ],
+  },
+  'wipe-all': {
+    word: 'WIPE',
+    title: 'Delete everything?',
+    button: 'Delete everything',
+    body: 'Permanently removes every goal and everything under it. There is no undo.',
+    effects: [
+      'All goals, branches, checkpoints, routines and PB metrics deleted',
+      'All progress, history, check-offs, steps and notes deleted',
+      'Your account, password and these settings stay',
+      'Consider exporting a backup first — deleted data cannot be recovered',
+    ],
+  },
+}
+
+function DangerZone() {
+  const [confirming, setConfirming] = useState<DangerAction | null>(null)
+  const [word, setWord] = useState('')
+  const danger = useDangerAction()
+  const meta = confirming ? DANGER_META[confirming] : null
+
+  function run() {
+    if (!confirming || !meta) return
+    danger.mutate(
+      { action: confirming, confirm: word },
+      {
+        onSuccess: (_res, vars) => {
+          if (vars.action === 'wipe-all') {
+            toast.success('Everything deleted — fresh start!', {
+              description: 'Your account and settings are untouched. Import a roadmap to begin again.',
+            })
+          } else {
+            const s = _res.stats
+            toast.success('Progress reset', {
+              description: [
+                s.nodesReset ? `${s.nodesReset} checkpoints` : null,
+                s.routines ? `${s.routines} routines` : null,
+                s.donesDeleted ? `${s.donesDeleted} check-offs` : null,
+                s.logsDeleted ? `${s.logsDeleted} logs` : null,
+                s.pbRecordsCleared ? `${s.pbRecordsCleared} PB records` : null,
+              ]
+                .filter(Boolean)
+                .join(' · ') || 'Nothing to reset yet.',
+            })
+          }
+          setConfirming(null)
+          setWord('')
+        },
+        onError: (err) => toast.error('Action failed', { description: err.message }),
+      },
+    )
+  }
+
+  return (
+    <>
+      <section className="space-y-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4">
+        <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-destructive">
+          <AlertTriangle className="h-3.5 w-3.5" /> Danger zone
+        </div>
+
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-medium">Reset all progress</div>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+              Back to zero everywhere — keeps your goals, skill trees, routines and PB metrics.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            onClick={() => {
+              setConfirming('reset-progress')
+              setWord('')
+            }}
+          >
+            <RotateCcw className="h-3.5 w-3.5" /> Reset…
+          </Button>
+        </div>
+
+        <div className="h-px bg-destructive/20" />
+
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-medium">Delete everything</div>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+              Permanently deletes every goal, branch, routine and record. Your account and settings stay.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            className="shrink-0"
+            onClick={() => {
+              setConfirming('wipe-all')
+              setWord('')
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" /> Delete all…
+          </Button>
+        </div>
+      </section>
+
+      {/* confirmation — typing the word is the point */}
+      <Dialog
+        open={confirming !== null}
+        onOpenChange={(o) => {
+          if (!o) {
+            setConfirming(null)
+            setWord('')
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              {meta?.title}
+            </DialogTitle>
+            <DialogDescription>{meta?.body}</DialogDescription>
+          </DialogHeader>
+          <ul className="space-y-1.5 text-xs leading-relaxed text-muted-foreground">
+            {meta?.effects.map((e) => (
+              <li key={e} className="flex items-start gap-1.5">
+                <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-destructive/60" />
+                {e}
+              </li>
+            ))}
+          </ul>
+          <div className="space-y-2">
+            <Label htmlFor="danger-word">
+              Type <span className="font-mono font-semibold text-destructive">{meta?.word}</span> to confirm
+            </Label>
+            <Input
+              id="danger-word"
+              value={word}
+              onChange={(e) => setWord(e.target.value)}
+              placeholder={meta?.word}
+              autoComplete="off"
+              className="font-mono"
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:justify-end">
+            <Button variant="outline" onClick={() => setConfirming(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={!meta || word.trim().toUpperCase() !== meta.word || danger.isPending}
+              onClick={run}
+            >
+              {danger.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : confirming === 'wipe-all' ? <Trash2 className="h-4 w-4" /> : <RotateCcw className="h-4 w-4" />}
+              {meta?.button}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // The dialog
 // ---------------------------------------------------------------------------
 
@@ -369,6 +555,9 @@ export function SettingsDialog({
             </Button>
           </div>
         </form>
+
+        {/* ── danger zone ── */}
+        <DangerZone />
       </DialogContent>
     </Dialog>
   )

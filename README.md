@@ -117,3 +117,40 @@ normalization rules live in `src/lib/import-format.ts` — the Import dialog's
 Theme and time zone are *account* settings (Settings menu, synced across
 devices) and are deliberately not part of the roadmap file; archived goals
 are skipped by export.
+
+### Merge imports (update without losing progress)
+
+The Import dialog offers two modes:
+
+- **Add as new goals** — everything is created fresh (importing the same file
+  twice duplicates it).
+- **Merge into existing** — goals, branches, checkpoints, steps, routines and
+  PB metrics are matched **by name** (case-insensitive) and updated in place;
+  anything the file doesn't mention is left untouched. One principle drives
+  every rule: *definitions follow the file, progress survives wherever it
+  still fits.*
+
+| Field on a matched item | Merge rule |
+| --- | --- |
+| absent from the file | existing value kept (a partial file only touches what it mentions) |
+| `null` in the file | cleared · a value → set (definitions: `description`, `emoji`, `color`, `category`, `type`, `targetValue`, `unit`, `weeklyTarget`, `deadline`, icons, `xp`, routine `cadence`/`durationMin`/`node`/`credit`/`endDate`, pb `unit`/`direction`) |
+| node `target` / `milestones` / `requires` | always follow the file (`target` is required; milestones sync by value keeping `reachedAt`; `requires` re-resolves cycle-safe on top of locked-in existing edges) |
+| node `current` / `mastered` | progress can only grow: `max(existing, incoming)` — a stale file never rolls you back |
+| node `completedAt` | kept when still cleared, stamped when newly reached, cleared only when a raised target outruns progress |
+| step `done` | existing OR incoming — a merge never un-ticks |
+| routine `dones` | union of days (deduped) |
+| pb `records` / `logs` / `notes` | append-only, deduped by day+value / day+amount+note / exact content |
+
+Items missing from the file (a branch you deleted, a checkpoint you renamed)
+are **kept** with all their progress — deleting is what the danger zone is
+for. The same upsert-by-name logic powers *Import into this goal* on the goal
+sheet. Verified end-to-end by `bun scripts/verify-merge.ts`.
+
+### Danger zone (Settings)
+
+- **Reset all progress** (type `RESET`) — zeroes every checkpoint, check-off,
+  log, PB record and step status; goals, branches, checkpoints, routines, PB
+  metrics and notes all stay.
+- **Delete everything** (type `WIPE`) — deletes every goal and everything
+  under it. The account, password and synced settings stay. Export a backup
+  first; there is no undo.

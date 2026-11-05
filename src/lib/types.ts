@@ -192,3 +192,29 @@ export interface CreateGoalInput {
   deadline?: string | null
   steps?: StepInput[]
 }
+
+/** Outcome of a merge-mode import (matching by name, progress kept).
+ *  "Kept" counts existing items the file didn't mention — they are untouched. */
+export interface MergeSummary {
+  goalsCreated: number
+  goalsUpdated: number
+  pathsCreated: number
+  pathsUpdated: number
+  pathsKept: number
+  nodesCreated: number
+  nodesUpdated: number
+  nodesKept: number
+  milestonesAdded: number
+  milestonesRemoved: number
+  stepsCreated: number
+  stepsUpdated: number
+  stepsKept: number
+  routinesCreated: number
+  routinesUpdated: number
+  donesAdded: number
+  pbsCreated: number
+  pbsUpdated: number
+  recordsAdded: number
+  logsAdded: number
+  notesAdded: number
+}

@@ -301,8 +301,13 @@ function DetailBody({
       }
       scopeImport.mutate(JSON.parse(scopeJson), {
         onSuccess: (res) => {
+          const s = res.summary
+          const mergedAny =
+            s && (s.pathsUpdated + s.nodesUpdated + s.routinesUpdated + s.stepsUpdated + s.donesAdded) > 0
           toast.success('Imported into goal', {
-            description: `${res.added.paths} paths · ${res.added.steps} steps · ${res.added.routines} routines`,
+            description: s
+              ? `${res.added.paths} new paths · ${res.added.steps} new steps · ${res.added.routines} new routines${mergedAny ? ' — matching items updated, progress kept' : ''}`
+              : `${res.added.paths} paths · ${res.added.steps} steps · ${res.added.routines} routines`,
           })
           setScopeJson('')
           setScopeOpen(false)
