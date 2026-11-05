@@ -15,14 +15,24 @@ with flexible routines, and watch the log write itself as you check things off.
 - **Routines** — `every N days` or specific weekdays, optional rest days and
   end dates, weekday-specific tasks (e.g. vocab cards on Mondays, speaking
   practice on Sundays), and preset durations. Missed days surface gently for
-  catch-up instead of breaking anything.
+  catch-up instead of breaking anything. **Extra credit** routines
+  (`optional: true`) are nice-to-do bonus sessions — a skipped one is forgiven
+  on the spot: it never shows as “open”, never counts against adherence, and
+  has no penalty of any kind.
+- **Derived checkpoints** — track a second unit of the same activity without
+  per-session math. Give a checkpoint `deriveFrom` + `derivePer` (e.g.
+  *Books finished*: every 300 pages on *Pages read* = 1 book) and it becomes a
+  passive meter: every progress entry on the source auto-advances it, in the
+  roadmap (an “auto” chip), on check-offs, quick adds and imports. One level
+  only — a meter can't be a source — and it never locks behind gating.
 - **Auto-logging** — checking off a routine that has a preset duration
   ("read 20 min", "work 2 h") writes the log entry for you; a separate quick
   entry still lets you log custom amounts.
 - **Personal bests & time invested** — track PB metrics per goal ("WPM",
   higher is better; "BLD" solve time, lower is better) with a PB-over-time
-  chart and per-attempt history, plus a cumulative time-spent graph — both on
-  the Review tab.
+  chart and per-attempt history, plus a cumulative time-spent graph. Each
+  goal's review card carries a **Rhythm ⇄ Bests** switch — the PB view lives
+  in the same section, one tap away, instead of a separate block below it.
 - **One "Today" card** — the dashboard splits today's work into "check off
   when done" (scheduled routines) and "work toward" (ongoing targets, which
   advance as you log progress — each row has an inline + Log button).
@@ -109,8 +119,8 @@ normalization rules live in `src/lib/import-format.ts` — the Import dialog's
 | goal | `title` · `description` · `emoji` · `color` · `category` · `type` (`plan` \| `quantitative`) · `targetValue` · `unit` · `weeklyTarget` · `deadline` · `steps` · `paths` · `routines` · `pbs` · `notes` · `logs` |
 | step | `title` · `notes` · `done` |
 | path | `title` · `description` · `icon` · `unit` (the default for its nodes) |
-| node | `title` · `description` · `icon` · `current` · `target` · `unit` (override) · `xp` · `mastered` (shortcut for `current = target`) · `milestones` (`[50, 100]` or `[{ "value": 100, "label": "First 100" }]`) · `requires` (`["HSK3"]`, or cross-path `"Vocabulary › HSK3"` — default is the previous node in the same path) |
-| routine | `title` · `notes` · `cadence` with `weekdays` (`["Mon","Thu"]` or `[1, 4]`) / `everyDays` (interval) / `timesPerWeek` (any N days a week) · `durationMin` · `node` + `credit` (auto-advance a checkpoint per check-off) · `startDate` · `endDate` · `dones` (completion history) |
+| node | `title` · `description` · `icon` · `current` · `target` · `unit` (override) · `xp` · `mastered` (shortcut for `current = target`) · `milestones` (`[50, 100]` or `[{ "value": 100, "label": "First 100" }]`) · `requires` (`["HSK3"]`, or cross-path `"Vocabulary › HSK3"` — default is the previous node in the same path) · `deriveFrom` + `derivePer` (a passive meter that auto-converts another checkpoint's progress into this node's unit — every 300 pages = 1 book) |
+| routine | `title` · `notes` · `cadence` with `weekdays` (`["Mon","Thu"]` or `[1, 4]`) / `everyDays` (interval) / `timesPerWeek` (any N days a week) · `durationMin` · `node` + `credit` (auto-advance a checkpoint per check-off) · `startDate` · `endDate` · `dones` (completion history) · `optional` (extra credit — no penalty when skipped) |
 | pb | `name` · `unit` · `direction` (`up` = higher is better, e.g. WPM; `down` = lower is better, e.g. a solve time) · `records` |
 | record / log | `date` or `daysAgo` · `value` / `amount` · `note` |
 
@@ -135,10 +145,11 @@ The Import dialog offers two modes:
 | absent from the file | existing value kept (a partial file only touches what it mentions) |
 | `null` in the file | cleared · a value → set (definitions: `description`, `emoji`, `color`, `category`, `type`, `targetValue`, `unit`, `weeklyTarget`, `deadline`, icons, `xp`, routine `cadence`/`durationMin`/`node`/`credit`/`endDate`, pb `unit`/`direction`) |
 | node `target` / `milestones` / `requires` | always follow the file (`target` is required; milestones sync by value keeping `reachedAt`; `requires` re-resolves cycle-safe on top of locked-in existing edges) |
+| node `deriveFrom` / `derivePer` | follow the file: a new source/factor re-links the meter and re-syncs it to the source's progress so far — **upward only** (existing progress is never taken away). Omitted → link kept; `null` → unlinked, progress kept |
 | node `current` / `mastered` | progress can only grow: `max(existing, incoming)` — a stale file never rolls you back |
 | node `completedAt` | kept when still cleared, stamped when newly reached, cleared only when a raised target outruns progress |
 | step `done` | existing OR incoming — a merge never un-ticks |
-| routine `dones` | union of days (deduped) |
+| routine `dones` / `optional` | dones union of days (deduped); `optional` follows the file like any definition |
 | pb `records` / `logs` / `notes` | append-only, deduped by day+value / day+amount+note / exact content |
 
 Items missing from the file (a branch you deleted, a checkpoint you renamed)

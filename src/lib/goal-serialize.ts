@@ -108,6 +108,7 @@ export function serializeGoal(goal: GoalWithRelations): GoalData {
       startDate: r.startDate.toISOString(),
       endDate: r.endDate?.toISOString() ?? null,
       archived: r.archived,
+      optional: r.optional,
       createdAt: r.createdAt.toISOString(),
       dones: r.dones.map((d) => ({
         id: d.id,
@@ -151,6 +152,8 @@ export function serializeGoal(goal: GoalWithRelations): GoalData {
         unit: n.unit,
         xpValue: n.xpValue,
         requiresIds: parseIdsCsv(n.requiresIds),
+        deriveFromId: n.deriveFromId,
+        deriveFactor: n.deriveFactor,
         completedAt: n.completedAt?.toISOString() ?? null,
         createdAt: n.createdAt.toISOString(),
         milestones: n.milestones.map((m) => ({

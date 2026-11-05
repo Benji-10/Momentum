@@ -12,6 +12,7 @@ import {
 } from './import-format'
 import { resolveNodeRef, filterCyclicEdges, idsCsv, type NodeRefEntry } from './resolve-refs'
 import { canonicalDayUtc } from './routine-math'
+import { resyncDerivedMeters, setNodeDerivation } from './derive'
 import type { MergeSummary } from './types'
 
 // ---------------------------------------------------------------------------
@@ -43,6 +44,10 @@ import type { MergeSummary } from './types'
 //   logs / notes     → appended, deduped by day+amount+note / exact content
 //   milestones       → synced to the file's list, but a kept value keeps its
 //                      reachedAt (and gets stamped if progress now covers it)
+//
+// Derivation follows the file like any definition (value → set, null → clear,
+// absent → keep); the meter itself is re-synced upward only — existing
+// progress on the meter is never taken away when the source/factor changes.
 //
 // Items that exist in the database but are NOT in the file are kept untouched
 // (renaming a checkpoint in the file therefore creates a new one rather than
@@ -212,9 +217,17 @@ async function mergeEntitiesIntoGoal(goalId: string, scope: EntityScope, summary
     }
   }
 
-  const fileRequires = await mergePaths(goal, scope.paths, summary)
+  // derivation changes asked for by the file, applied once every node exists
+  // (refs may point at kept, updated or newly created checkpoints)
+  const pendingDerive = new Map<string, { ref: string | null | undefined; factor: number | null | undefined }>()
+
+  const fileRequires = await mergePaths(goal, scope.paths, summary, pendingDerive)
   const entries = await nodeEntries(goal.id)
   await syncRequires(goal.id, fileRequires, existingRequires, entries)
+  await syncDerive(goal.id, pendingDerive, entries)
+  // final pass: every meter reflects its source's (possibly updated) progress —
+  // one deterministic sweep instead of order-dependent per-node propagation
+  await resyncDerivedMeters(goal.id)
 
   await mergeRoutines(goal, scope.routines, entries, summary)
   await mergePbs(goal, scope.pbs, summary)
@@ -267,11 +280,13 @@ async function mergeSteps(goal: GoalRow, steps: ImportGoalRaw['steps'], summary:
 
 /** Merge paths + their nodes. Returns nodeId → file "requires" refs for every
  *  node whose gating the file defines (matched with a requires key, or newly
- *  created with one). */
+ *  created with one). Derivation requests are collected into `pendingDerive`
+ *  for a later syncDerive pass. */
 async function mergePaths(
   goal: GoalRow,
   paths: ImportGoalRaw['paths'],
   summary: MergeSummary,
+  pendingDerive: Map<string, { ref: string | null | undefined; factor: number | null | undefined }>,
 ): Promise<Map<string, string[]>> {
   const fileRequires = new Map<string, string[]>()
   if (!paths?.length) {
@@ -299,7 +314,7 @@ async function mergePaths(
         await db.skillPath.update({ where: { id: m.id }, data: patch as Prisma.SkillPathUpdateInput })
       }
       summary.pathsUpdated++
-      await mergeNodes(goal.id, m, p, summary, fileRequires)
+      await mergeNodes(goal.id, m, p, summary, fileRequires, pendingDerive)
     } else {
       // brand-new branch: create-mode semantics (normalizeGoal defaults)
       const [np] = normalizeGoal({ title: 'scope', paths: [p] }).paths
@@ -340,6 +355,10 @@ async function mergePaths(
       np.nodes.forEach((n, i) => {
         const createdNode = created.nodes[i]
         if (createdNode && n.requires.length > 0) fileRequires.set(createdNode.id, n.requires)
+        // …and with the file's derivation, when fully specified
+        if (createdNode && n.deriveFromRef && n.deriveFactor != null) {
+          pendingDerive.set(createdNode.id, { ref: n.deriveFromRef, factor: n.deriveFactor })
+        }
       })
       summary.pathsCreated++
       summary.nodesCreated += np.nodes.length
@@ -355,6 +374,7 @@ async function mergeNodes(
   p: RawPath,
   summary: MergeSummary,
   fileRequires: Map<string, string[]>,
+  pendingDerive: Map<string, { ref: string | null | undefined; factor: number | null | undefined }>,
 ): Promise<void> {
   const byTitle = new Map<string, NodeRow>()
   for (const n of path.nodes) {
@@ -376,6 +396,9 @@ async function mergeNodes(
       seq = 0
       await updateMatchedNode(m, n, summary)
       if (n.requires !== undefined) fileRequires.set(m.id, n.requires ?? [])
+      if (n.deriveFrom !== undefined || n.derivePer !== undefined) {
+        pendingDerive.set(m.id, { ref: n.deriveFrom, factor: n.derivePer })
+      }
     } else {
       // insert the new checkpoint right after its file predecessor (or at the
       // top of the path if it comes first); orders are re-indexed afterwards
@@ -407,6 +430,9 @@ async function mergeNodes(
       })
       createdIds.push(created.id)
       if (n.requires !== undefined) fileRequires.set(created.id, n.requires ?? [])
+      if (node.deriveFromRef && node.deriveFactor != null) {
+        pendingDerive.set(created.id, { ref: node.deriveFromRef, factor: node.deriveFactor })
+      }
       anchor = order
       summary.nodesCreated++
     }
@@ -497,6 +523,49 @@ async function nodeEntries(goalId: string): Promise<NodeRefEntry[]> {
   return paths.flatMap((p) => p.nodes.map((n) => ({ id: n.id, title: n.title, pathTitle: p.title })))
 }
 
+/** Apply the derivation changes the file asked for (presence semantics like
+ *  every other definition: value → set, null → clear, absent → keep). Invalid
+ *  requests — unknown refs, a source that is itself derived, a missing factor —
+ *  are quietly dropped, like unknown requires refs. */
+async function syncDerive(
+  goalId: string,
+  pending: Map<string, { ref: string | null | undefined; factor: number | null | undefined }>,
+  entries: NodeRefEntry[],
+): Promise<void> {
+  if (pending.size === 0) return
+  for (const [nodeId, req] of pending) {
+    const node = await db.skillNode.findUnique({ where: { id: nodeId } })
+    if (!node || node.goalId !== goalId) continue
+
+    // which source is being asked for?
+    let sourceId: string | null | undefined = undefined // undefined = leave the link as-is
+    if (req.ref === null) sourceId = null // explicit clear
+    else if (typeof req.ref === 'string') {
+      const src = resolveNodeRef(req.ref, null, entries)
+      if (!src || src === nodeId) continue // unknown or self → drop quietly
+      const srcRow = await db.skillNode.findUnique({ where: { id: src } })
+      if (!srcRow || srcRow.goalId !== goalId) continue
+      if (srcRow.deriveFromId != null) continue // a meter can't be a source — no chains
+      sourceId = src
+    }
+
+    const effectiveSource = sourceId === undefined ? node.deriveFromId : sourceId
+    const effectiveFactor = req.factor !== undefined ? req.factor : node.deriveFactor
+
+    if (effectiveSource == null) {
+      if (sourceId === null) {
+        // the file asked to clear it
+        await setNodeDerivation(goalId, nodeId, null, null)
+      }
+      continue
+    }
+    if (effectiveFactor == null || effectiveFactor <= 0) continue
+    if (effectiveSource === node.deriveFromId && effectiveFactor === node.deriveFactor) continue // unchanged
+    const err = await setNodeDerivation(goalId, nodeId, effectiveSource, effectiveFactor)
+    if (err) continue // validation failed — drop quietly, the merge stays lenient
+  }
+}
+
 /** Re-resolve gating for the nodes the file defines requires on. Existing
  *  edges (from nodes the file doesn't mention) are locked in first, so new
  *  edges that would close a cycle are the ones dropped. */
@@ -564,6 +633,8 @@ async function mergeRoutines(
 
       if (r.notes !== undefined) patch.notes = r.notes
       if (r.durationMin !== undefined) patch.durationMin = r.durationMin
+      // extra credit: nice to do, never a penalty when skipped
+      if ((r as RawRoutine).optional !== undefined) patch.optional = (r as RawRoutine).optional === true
 
       // cadence: presence-aware, falling back to the existing values
       const cadenceInput =
@@ -657,6 +728,7 @@ async function mergeRoutines(
           durationMin: nr.durationMin,
           startDate: nr.startDate ? new Date(nr.startDate) : new Date(),
           endDate: nr.endDate ? new Date(nr.endDate) : null,
+          optional: nr.optional,
         },
       })
       if (nr.doneDates.length) {

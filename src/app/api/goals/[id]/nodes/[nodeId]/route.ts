@@ -6,6 +6,7 @@ import { ownedGoal, ownsGoal } from '@/lib/api-helpers'
 import { goalInclude, serializeGoal } from '@/lib/goal-serialize'
 import { normalizeMilestoneDefs, replaceNodeMilestones, syncMilestoneReached } from '@/lib/milestones'
 import { buildNodeIndex, nodeDependencies, nodeStatus } from '@/lib/skill-tree'
+import { propagateDerived, setNodeDerivation } from '@/lib/derive'
 
 const updateNodeSchema = z.object({
   title: z.string().min(1).max(120).optional(),
@@ -27,6 +28,10 @@ const updateNodeSchema = z.object({
     .optional(),
   /** move node up/down one tier within its path */
   move: z.enum(['up', 'down']).optional(),
+  /** make this a derived checkpoint: auto-convert `deriveFromId`'s progress
+   *  into this node's unit at `deriveFactor` source units per 1 of ours */
+  deriveFromId: z.string().max(64).nullable().optional(),
+  deriveFactor: z.number().positive().max(1_000_000).nullable().optional(),
 })
 
 type Params = { params: Promise<{ id: string; nodeId: string }> }
@@ -45,8 +50,10 @@ export async function PATCH(req: Request, { params }: Params) {
 
     // dependency gate: progress can't be logged on a locked checkpoint —
     // HSK4 stays sealed until HSK3 is cleared. Renames/reordering are fine.
+    // Derived checkpoints are meters: they measure another checkpoint's
+    // progress, so nothing may lock them (and nothing blocks the conversion).
     const changingProgress = d.add != null || d.currentValue != null || d.mastered === true
-    if (changingProgress && nodeStatus(node) !== 'mastered') {
+    if (changingProgress && node.deriveFromId == null && nodeStatus(node) !== 'mastered') {
       const goalPaths = await db.skillPath.findMany({
         where: { goalId: id },
         include: { nodes: true },
@@ -111,6 +118,21 @@ export async function PATCH(req: Request, { params }: Params) {
       await replaceNodeMilestones(nodeId, normalizeMilestoneDefs(d.milestones, target))
     }
     await syncMilestoneReached(nodeId, current)
+
+    // derived checkpoints: the source just moved by (current − old) — push the
+    // same change (divided by each meter's factor) into every derived child
+    await propagateDerived(id, nodeId, current - node.currentValue)
+
+    // (re)define or clear this node's own derivation, if the patch asks for it
+    if (d.deriveFromId !== undefined || d.deriveFactor !== undefined) {
+      const err = await setNodeDerivation(
+        id,
+        nodeId,
+        d.deriveFromId !== undefined ? d.deriveFromId : node.deriveFromId,
+        d.deriveFactor !== undefined ? d.deriveFactor : node.deriveFactor,
+      )
+      if (err) return NextResponse.json({ error: err }, { status: 400 })
+    }
 
     const goal = await db.goal.findUnique({ where: { id }, include: goalInclude })
     return NextResponse.json({ goal: goal ? serializeGoal(goal) : null })

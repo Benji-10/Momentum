@@ -159,6 +159,14 @@ function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: 
                   <div className="min-w-0 flex-1">
                     <div className={cn('text-sm font-medium leading-snug', o.done && 'text-muted-foreground line-through')}>
                       {o.routine.title}
+                      {o.routine.optional && (
+                        <span
+                          className="ml-1.5 rounded-full bg-violet-500/15 px-1.5 py-px align-middle text-[9px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400"
+                          title="Extra credit — skipping this never counts against you"
+                        >
+                          extra
+                        </span>
+                      )}
                     </div>
                     <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                       <span>{g.emoji}</span>
@@ -209,6 +217,14 @@ function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: 
               <div className="min-w-0 flex-1">
                 <div className={cn('text-sm font-medium leading-snug', doneToday && 'text-muted-foreground line-through')}>
                   {routine.title}
+                  {routine.optional && (
+                    <span
+                      className="ml-1.5 rounded-full bg-violet-500/15 px-1.5 py-px align-middle text-[9px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400"
+                      title="Extra credit — skipping this never counts against you"
+                    >
+                      extra
+                    </span>
+                  )}
                 </div>
                 <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                   <span>{g.emoji}</span>

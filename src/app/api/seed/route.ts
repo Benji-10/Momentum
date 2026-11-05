@@ -155,6 +155,7 @@ export async function POST() {
           startDate: created.startDate.toISOString(),
           endDate: null,
           archived: false,
+          optional: created.optional,
           createdAt: created.createdAt.toISOString(),
           dones: [],
         }

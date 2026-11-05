@@ -73,6 +73,8 @@ export interface RoutineData {
   startDate: string
   endDate: string | null
   archived: boolean
+  /** extra credit: nice to do, never a penalty when skipped */
+  optional: boolean
   createdAt: string
   dones: RoutineDoneData[]
 }
@@ -99,6 +101,10 @@ export interface SkillNodeData {
   xpValue: number
   /** ids of nodes that must be mastered before this unlocks ([] = previous in path) */
   requiresIds: string[]
+  /** derived checkpoint: source node id whose progress auto-converts into ours */
+  deriveFromId: string | null
+  /** how many source units make 1 of this node's unit (e.g. 300 pages = 1 book) */
+  deriveFactor: number | null
   completedAt: string | null
   createdAt: string
   milestones: SkillMilestoneData[]
@@ -177,6 +183,7 @@ export interface RoutineInput {
   durationMin?: number | null
   startDate?: string | null
   endDate?: string | null
+  optional?: boolean
 }
 
 export interface CreateGoalInput {

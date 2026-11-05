@@ -159,9 +159,11 @@ export function buildQuestLayout(goal: GoalData): QuestLayout {
       y: -(k + 1) * TIER_GAP,
     }))
 
-    // 2. dependencies & statuses
+    // 2. dependencies & statuses — derived checkpoints are meters, never gated
     const depInfo = nodesRaw.map((n, k) =>
-      nodeDependencies(n, k > 0 ? nodesRaw[k - 1] : null, index),
+      n.deriveFromId != null
+        ? { deps: [] as NodeDep[], explicit: false }
+        : nodeDependencies(n, k > 0 ? nodesRaw[k - 1] : null, index),
     )
     const unlockedFlags = depInfo.map(({ deps }) => !depsLocked(deps))
 

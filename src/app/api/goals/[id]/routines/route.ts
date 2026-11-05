@@ -17,6 +17,8 @@ const createRoutineSchema = z.object({
   durationMin: z.number().int().min(1).max(24 * 60).nullable().optional(),
   startDate: z.string().datetime().nullable().optional(),
   endDate: z.string().datetime().nullable().optional(),
+  /** extra credit: nice to do, never a penalty when skipped */
+  optional: z.boolean().optional(),
 })
 
 type Params = { params: Promise<{ id: string }> }
@@ -67,6 +69,7 @@ export async function POST(req: Request, { params }: Params) {
         durationMin: d.durationMin ?? null,
         startDate: d.startDate ? new Date(d.startDate) : new Date(),
         endDate: d.endDate ? new Date(d.endDate) : null,
+        optional: d.optional === true,
       },
     })
     const updated = await ownedGoal(id, auth.user)

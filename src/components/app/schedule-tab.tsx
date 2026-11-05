@@ -15,6 +15,7 @@ import {
   Pencil,
   Plus,
   Repeat,
+  Sparkles,
   Sprout,
   Target,
   Trash2,
@@ -84,6 +85,7 @@ function OccurrenceRow({
 }) {
   const c = goal ? goalColor(goal.color) : goalColor('emerald')
   const open = occ.state === 'open'
+  const extra = occ.routine.optional
   const linked = routineNode(goal, occ.routine)
   return (
     <div
@@ -144,12 +146,17 @@ function OccurrenceRow({
               </span>
             </span>
           )}
-          {open && (
+          {extra ? (
+            <span className="inline-flex items-center gap-0.5 text-violet-600 dark:text-violet-400" title="Extra credit — skipping this never counts against you">
+              <Sparkles className="h-2.5 w-2.5" />
+              extra credit — no pressure
+            </span>
+          ) : open ? (
             <span className="inline-flex items-center gap-0.5 text-amber-600 dark:text-amber-400">
               <Feather className="h-2.5 w-2.5" />
               still open — no rush
             </span>
-          )}
+          ) : null}
         </div>
       </div>
       <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full" style={{ background: c.hex }} aria-hidden />
@@ -197,7 +204,15 @@ function RoutineManageRow({
         </div>
       </div>
       <div className="hidden shrink-0 items-center gap-2 sm:flex">
-        {stats.openCount > 0 && (
+        {routine.optional && (
+          <span
+            className="inline-flex items-center gap-1 rounded-full bg-violet-500/12 px-2 py-0.5 text-[11px] font-semibold text-violet-600 tabular-nums dark:text-violet-400"
+            title="Extra credit — nice to do, skipping it never counts against you"
+          >
+            <Sparkles className="h-3 w-3" /> extra credit
+          </span>
+        )}
+        {!routine.optional && stats.openCount > 0 && (
           <span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[11px] font-semibold text-amber-600 tabular-nums dark:text-amber-400">
             {stats.openCount} open
           </span>
@@ -207,7 +222,7 @@ function RoutineManageRow({
             <Flame className="h-3 w-3" /> {stats.streak}x
           </span>
         )}
-        {stats.adherencePct != null && (
+        {stats.adherencePct != null && !routine.optional && (
           <span
             className="rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums"
             style={{
@@ -220,9 +235,9 @@ function RoutineManageRow({
               color:
                 stats.adherencePct >= 70 ? '#10b981' : stats.adherencePct >= 40 ? '#f59e0b' : '#64748b',
             }}
-            title="Recent adherence — forgiven sessions don't count against you"
+            title={routine.optional ? 'Extra credit — nothing to adhere to' : 'Recent adherence — forgiven sessions don\'t count against you'}
           >
-            {stats.adherencePct}%
+            {routine.optional ? '—' : `${stats.adherencePct}%`}
           </span>
         )}
       </div>
@@ -325,7 +340,10 @@ export function ScheduleTab({
 
   // flexible routines live outside the day columns — they're a weekly quota
   const flexRoutines = allRoutines.filter(({ routine }) => routine.cadence === 'flexible')
-  const flexLeft = flexRoutines.reduce((s, { routine }) => s + weekFlexProgress(routine, weekStart).left, 0)
+  // “left” only counts real commitments — extra-credit sessions are never “to do”
+  const flexLeft = flexRoutines
+    .filter(({ routine }) => !routine.optional)
+    .reduce((s, { routine }) => s + weekFlexProgress(routine, weekStart).left, 0)
 
   function toggle({ goal, routine, date, undo }: { goal: GoalData; routine: RoutineData; date?: Date; undo?: boolean }) {
     toggleDone.mutate(
@@ -428,7 +446,6 @@ export function ScheduleTab({
                   ? 'Next week'
                   : `${weekOffset > 0 ? '+' : ''}${weekOffset} weeks`}
             {allWeek.length > 0 && ` · ${weekDone} done`}
-            {weekOpen > 0 && ` · ${weekOpen} open`}
             {weekOffset === 0 && flexLeft > 0 && ` · ${flexLeft} flex left`}
           </div>
         </div>
@@ -476,21 +493,21 @@ export function ScheduleTab({
           <div className="min-w-0 flex-1">
             {weekTodayLeft > 0 ? (
               <>
-                {weekOpen > 0 ? `${weekOpen} session${weekOpen === 1 ? '' : 's'} from the last few days are still open — ` : ''}
-                {weekTodayLeft === 1 ? "there's one session up for today." : `there are ${weekTodayLeft} sessions up for today.`}{' '}
-                <span className="font-semibold">One check-in today keeps everything rolling.</span>
+                {weekOpen > 0 ? `${weekOpen} session${weekOpen === 1 ? '' : 's'} from the last few days are still catch-up-able — ` : ''}
+                {weekTodayLeft === 1 ? "one session is up for today, whenever it suits you. " : `${weekTodayLeft} sessions are up for today, whenever they suit you. `}
+                Anything you tick counts; the rest quietly forgives itself after 3 days.
               </>
             ) : weekOpen > 0 ? (
               <>
-                {weekOpen} session{weekOpen === 1 ? '' : 's'} from the last few days are still open. No pressure — they
-                stay catch-up-able for 3 days, then they quietly forgive themselves.
+                {weekOpen} session{weekOpen === 1 ? '' : 's'} from the last few days are still catch-up-able. No pressure — they
+                stay that way for 3 days, then they quietly forgive themselves.
               </>
             ) : (
               <>All caught up on the open items — anything older has been quietly forgiven.</>
             )}
             {weekForgiven > 0 && (
               <span className="mt-0.5 block text-xs text-muted-foreground">
-                🌿 {weekForgiven} missed session{weekForgiven === 1 ? '' : 's'} from further back have been forgiven —
+                🌿 {weekForgiven} session{weekForgiven === 1 ? '' : 's'} from further back have been quietly forgiven —
                 they don&apos;t count against you.
               </span>
             )}
@@ -527,7 +544,11 @@ export function ScheduleTab({
                   key={routine.id}
                   className={cn(
                     'flex items-center gap-2 rounded-lg border bg-card p-2',
-                    weekOffset === 0 && prog.left > 0 && 'border-primary/30',
+                    weekOffset === 0 && prog.left > 0
+                      ? routine.optional
+                        ? 'border-violet-500/25'
+                        : 'border-primary/30'
+                      : undefined,
                   )}
                 >
                   <button
@@ -545,7 +566,17 @@ export function ScheduleTab({
                     {doneToday && <Check className="h-3.5 w-3.5" strokeWidth={3} />}
                   </button>
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-semibold">{routine.title}</div>
+                    <div className="truncate text-xs font-semibold">
+                      {routine.title}
+                      {routine.optional && (
+                        <span
+                          className="ml-1.5 rounded-full bg-violet-500/15 px-1.5 py-px align-middle text-[9px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400"
+                          title="Extra credit — no penalty when skipped"
+                        >
+                          extra
+                        </span>
+                      )}
+                    </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-muted-foreground">
                       <button
                         type="button"

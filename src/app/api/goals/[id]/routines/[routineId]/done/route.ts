@@ -6,6 +6,7 @@ import { ownedGoal } from '@/lib/api-helpers'
 import { serializeGoal } from '@/lib/goal-serialize'
 import { syncMilestoneReached } from '@/lib/milestones'
 import { nodeDependencies, buildNodeIndex, nodeStatus } from '@/lib/skill-tree'
+import { propagateDerived } from '@/lib/derive'
 
 const doneSchema = z.object({
   /**
@@ -140,6 +141,8 @@ export async function POST(req: Request, { params }: Params) {
             data: { currentValue: next, completedAt: masteredNow ? (node.completedAt ?? new Date()) : null },
           })
           await syncMilestoneReached(node.id, next)
+          // derived checkpoints give back their share of the conversion too
+          await propagateDerived(id, node.id, -existing.creditedValue)
         }
       }
       // …and remove the log entry the check-off created
@@ -163,6 +166,9 @@ export async function POST(req: Request, { params }: Params) {
               data: { currentValue: next, completedAt: masteredNow ? (node.completedAt ?? new Date()) : null },
             })
             await syncMilestoneReached(node.id, next)
+            // derived checkpoints convert their share automatically (e.g. the
+            // pages checkpoint moved → the books checkpoint advances by Δ/300)
+            await propagateDerived(id, node.id, creditedValue)
           } else {
             creditSkipped = true // done, but its checkpoint is still gated
           }

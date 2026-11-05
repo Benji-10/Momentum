@@ -120,13 +120,15 @@ function ensureSqliteReady(): Promise<void> {
       for (const m of PG_MIGRATIONS) {
         if (!m.column) continue // table-creating migrations don't apply: db push made the tables
         // PRAGMA can't take bind parameters — the identifiers below come from
-        // our own constant migration list (never user input), so raw is safe
+        // our own constant migration list (never user input), so raw is safe.
+        // sqliteType carries the real column type (INTEGER/REAL vs TEXT) so
+        // booleans and floats survive a local upgrade.
         const rows = await db.$queryRawUnsafe<Array<{ name: string }>>(
           `PRAGMA table_info("${m.table}")`,
         )
         if (rows.some((r) => r.name === m.column)) continue
         try {
-          await db.$executeRawUnsafe(`ALTER TABLE "${m.table}" ADD COLUMN "${m.column}" TEXT`)
+          await db.$executeRawUnsafe(`ALTER TABLE "${m.table}" ADD COLUMN "${m.column}" ${m.sqliteType ?? 'TEXT'}`)
         } catch {
           // racing request or already added — re-check below
           const recheck = await db.$queryRawUnsafe<Array<{ name: string }>>(

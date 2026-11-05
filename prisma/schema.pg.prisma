@@ -139,6 +139,7 @@ model RoutineItem {
   startDate    DateTime     @default(now())
   endDate      DateTime? // null = repeat until the goal deadline / forever
   archived     Boolean      @default(false)
+  optional     Boolean      @default(false) // extra credit: no penalty when skipped
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
   dones        RoutineDone[]
@@ -200,8 +201,13 @@ model SkillNode {
   // csv of node ids that must be mastered before this one unlocks.
   // null/empty = the default ladder: the previous node in the same path
   // (HSK2 → HSK3). Explicit ids may cross paths ("Reading HSK3 needs
-  // Vocabulary HSK2").
+  // Vocabulary HSK2"). Ignored for derived checkpoints (they are meters).
   requiresIds  String?
+  // derived checkpoint: source node + how many of its units make 1 of ours
+  deriveFromId String?
+  deriveFrom   SkillNode? @relation("DeriveLink", fields: [deriveFromId], references: [id], onDelete: SetNull)
+  derived      SkillNode[] @relation("DeriveLink")
+  deriveFactor Float? // e.g. 300 = every 300 pages of the source = 1 book
   completedAt  DateTime?
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt

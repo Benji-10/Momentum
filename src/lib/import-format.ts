@@ -149,6 +149,11 @@ function canonNode(n: unknown): unknown {
   else if (milestones != null) out.milestones = [canonMilestone(milestones)]
   else delete out.milestones
   if (out.mastered === 'true' || out.mastered === 1) out.mastered = true
+  // derived checkpoint: which checkpoint's progress converts into ours
+  const deriveFrom = pick(n, ['deriveFrom', 'derivesFrom', 'autoFrom', 'convertsFrom', 'derive'])
+  if (typeof deriveFrom === 'string' && deriveFrom.trim()) out.deriveFrom = deriveFrom.trim()
+  const derivePer = toNum(pick(n, ['derivePer', 'sourcePer', 'perSource', 'convertPer', 'unitsPer', 'pagesPer']))
+  if (derivePer != null) out.derivePer = derivePer
   return out
 }
 
@@ -197,6 +202,10 @@ function canonRoutine(r: unknown): unknown {
       .map((d) => (typeof d === 'string' ? d : isPlainObject(d) ? pick(d, ['date', 'day']) : null))
       .filter((d): d is string => typeof d === 'string' && d.trim() !== '')
   }
+  // extra credit: nice to do, never a penalty when skipped
+  const optionalRaw = pick(r, ['optional', 'extraCredit', 'extra', 'bonus', 'niceToHave', 'nice'])
+  if (optionalRaw === true || optionalRaw === 'true' || optionalRaw === 1) out.optional = true
+  else if (optionalRaw === false || optionalRaw === 'false' || optionalRaw === 0) out.optional = false
   return out
 }
 
@@ -322,6 +331,12 @@ const skillNodeSchema = z.object({
   milestones: z.array(milestoneSchema).max(30).nullish(),
   /** checkpoint titles (or "Path › Node") that must be mastered first */
   requires: z.array(z.string().min(1).max(160)).max(8).nullish(),
+  /** make this a derived checkpoint: title (or "Path › Node") of the source
+   *  checkpoint whose progress auto-converts into this node's unit */
+  deriveFrom: z.string().min(1).max(160).nullish(),
+  /** how many of the source's units make 1 of this node's unit
+   *  (e.g. 300 = every 300 pages of the source = 1 book here) */
+  derivePer: z.number().positive().max(1_000_000).nullish(),
 })
 
 const skillPathSchema = z.object({
@@ -351,6 +366,8 @@ const routineSchema = z.object({
   endDate: z.string().nullish(), // YYYY-MM-DD
   /** completion history: ["2026-01-05", …] — restored on import */
   dones: z.array(z.string()).nullish(),
+  /** extra credit: nice to do — skipping it never counts against you */
+  optional: z.boolean().nullish(),
 })
 
 const logSchema = z.object({
@@ -421,6 +438,10 @@ export interface NormalizedSkillNode {
   xpValue: number
   /** raw dependency refs (node titles or "Path › Node"), resolved on create */
   requires: string[]
+  /** raw source ref for derived checkpoints ("Path › Node"), resolved on create */
+  deriveFromRef: string | null
+  /** derived checkpoints: how many source units make 1 of ours */
+  deriveFactor: number | null
   milestones: NormalizedMilestone[]
 }
 export interface NormalizedSkillPath {
@@ -445,6 +466,8 @@ export interface NormalizedRoutine {
   endDate: string | null
   /** completion history (ISO dates) */
   doneDates: string[]
+  /** extra credit: nice to do, never a penalty when skipped */
+  optional: boolean
 }
 export interface NormalizedLog {
   amount: number
@@ -538,6 +561,8 @@ export function normalizeGoal(g: ImportGoalRaw): NormalizedGoal {
         unit: n.unit?.trim() || null,
         xpValue: n.xp ?? 20,
         requires: [...new Set(n.requires ?? [])].slice(0, 8),
+        deriveFromRef: n.deriveFrom?.trim() || null,
+        deriveFactor: n.derivePer ?? null,
         milestones: [...byValue.entries()]
           .sort((a, b) => a[0] - b[0])
           .map(([value, label]) => ({ value, label })),
@@ -570,6 +595,7 @@ export function normalizeGoal(g: ImportGoalRaw): NormalizedGoal {
       doneDates: (r.dones ?? [])
         .map((d) => isoFromFlexibleDate(d))
         .filter((d): d is string => d !== null),
+      optional: r.optional === true,
     }
   })
 
@@ -832,7 +858,10 @@ export const IMPORT_EXAMPLE_JSON = `{
               "requires": ["HSK2"], "milestones": [200, 400] },
             { "title": "Newspapers", "target": 30, "xp": 50, "unit": "articles",
               "requires": ["Reading › HSK3"],
-              "description": "Unit override — this checkpoint counts articles, not pages" }
+              "description": "Unit override — this checkpoint counts articles, not pages" },
+            { "title": "Books finished", "target": 6, "unit": "books", "xp": 50,
+              "deriveFrom": "Reading › HSK3", "derivePer": 300,
+              "description": "Auto-derived meter — every 300 pages on HSK3 reading = 1 book, no per-session math" }
           ]
         }
       ],
@@ -848,8 +877,8 @@ export const IMPORT_EXAMPLE_JSON = `{
           "node": "Speaking › HSK2", "credit": 20,
           "notes": "Any 2 days a week — flexible cadence" },
         { "title": "Leech review", "everyDays": 3, "durationMin": 10,
-          "startDate": "2026-01-10", "endDate": "2026-03-31",
-          "notes": "Every 3rd day until the end of March" }
+          "startDate": "2026-01-10", "endDate": "2026-03-31", "optional": true,
+          "notes": "Every 3rd day until the end of March — extra credit, no penalty when skipped" }
       ],
       "pbs": [
         { "name": "Reading speed", "unit": "chars/min", "direction": "up",

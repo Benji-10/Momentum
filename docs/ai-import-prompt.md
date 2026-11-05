@@ -85,7 +85,9 @@ Either a plain string (`"Buy running shoes"`) or an object:
 | `xp` | integer | 1–500 | 20 | XP awarded when the node is cleared. |
 | `mastered` | boolean | — | false | Shortcut for already-cleared: sets `current` = `target`. |
 | `milestones` | array | ≤30 | [] | Sub-checkpoints on the way to `target`. Each is a bare number (`300`) or `{ "value": 300, "label": "Halfway!" }` (label ≤60). **Must satisfy 0 < value < target** — values ≥ target are dropped; they're sorted and deduplicated automatically. |
-| `requires` | array of strings | ≤8, each 1–160 | previous node in the same path | Gates: checkpoint titles (e.g. `"HSK3"`) or qualified `"Path › Node"` refs (e.g. `"Vocabulary › HSK3"`) that must be cleared before this node unlocks. Only needed for cross-path gates or non-linear orders — otherwise the natural in-path ladder (node *n* requires node *n−1*) applies. |
+| `requires` | array of strings | ≤8, each 1–160 | previous node in the same path | Gates: checkpoint titles (e.g. `"HSK3"`) or qualified `"Path › Node"` refs (e.g. `"Vocabulary › HSK3"`) that must be cleared before this node unlocks. Only needed for cross-path gates or non-linear orders — otherwise the natural in-path ladder (node *n* requires node *n−1*) applies. Ignored on derived checkpoints (they never lock). |
+| `deriveFrom` | string | 1–160 | null | Makes this a **derived checkpoint** — a passive meter that auto-converts another checkpoint's progress into this node's unit: a node title or qualified `"Path › Node"` ref (resolved like `requires`). E.g. `"Books finished"` with `deriveFrom: "Reading › HSK3"` — every progress entry on the source automatically advances this node by `current/derivePer`. Use it to track a second unit of the same activity without per-session math (pages → books). One level only: the source must not itself be derived. |
+| `derivePer` | number | >0, ≤1,000,000 | null | The conversion factor for `deriveFrom`: how many of the source's units make **1** of this node's unit (300 pages = 1 book → `derivePer: 300`). Required with `deriveFrom` — the pair is silently dropped if either half is missing or the ref doesn't resolve. |
 
 ### 2.5 Routine (a recurring session)
 
@@ -103,6 +105,7 @@ Either a plain string (`"Buy running shoes"`) or an object:
 | `startDate` | string | date | today | First possible day, `"YYYY-MM-DD"`. |
 | `endDate` | string | date | null | Optional last day (e.g. a 12-week block). |
 | `dones` | array of strings | — | [] | Completion history to restore: `["2026-01-05", "2026-01-08", …]`, dates ≤ today, deduped per day. |
+| `optional` | boolean | — | false | **Extra credit**: nice to do, but a skipped session never counts against the user — it is forgiven on the spot, never appears as "open", and has no adherence score to fall. Use it for bonus sessions (e.g. a third weekly volleyball session): ticking it still logs progress and advances its `node`. |
 
 ### 2.6 PB (personal-best metric)
 
@@ -140,18 +143,18 @@ With `cadence` omitted: `timesPerWeek` present → **flexible**; else `everyDays
 
 - `requires` and routine `node` refs are written as **titles**, resolved at import. Accepted separators for qualified refs: `›` `>` `/` `:` `|` ` — ` ` – ` (canonical: `"Path › Node"`). Matching is case-insensitive, whitespace-normalized.
 - A **bare title** matches a unique node in the same path first, then the first match anywhere. If the same title appears in several paths (e.g. `"HSK3"` under Vocabulary, Grammar, Speaking), a bare ref is ambiguous — **always qualify cross-path refs**.
-- Unresolved `requires` refs are quietly dropped. Unresolved routine `node` → the routine is still created but unlinked and `credit` is discarded. Self-references and edges that would create a dependency cycle are dropped automatically.
+- Unresolved `requires` refs are quietly dropped. Unresolved routine `node` → the routine is still created but unlinked and `credit` is discarded. Self-references and edges that would create a dependency cycle are dropped automatically. `deriveFrom` resolves the same way (and is dropped quietly if the ref is unknown, self-referential, or points at a node that is itself derived — one level only).
 
 ### 3.4 Forgiving parsing (for humans — don't rely on it as a generator)
 
-The parser also accepts aliases (`name`→`title`, `checkpoints`→`nodes`, `subCheckpoints`→`milestones`, `everyNDays`→`everyDays`, `perWeek`→`timesPerWeek`, `dependsOn`/`unlockAfter`→`requires`, `targetValue`→`target`, …), numbers as strings, `null` anywhere, and unknown keys are ignored (which is why exported files — which contain ids and an `exportedAt` stamp — re-import cleanly). **You must still emit canonical field names, correct JSON types and no extra keys.**
+The parser also accepts aliases (`name`→`title`, `checkpoints`→`nodes`, `subCheckpoints`→`milestones`, `everyNDays`→`everyDays`, `perWeek`→`timesPerWeek`, `dependsOn`/`unlockAfter`→`requires`, `targetValue`→`target`, `extraCredit`/`extra`/`bonus`→`optional`, `derivesFrom`/`autoFrom`/`convertsFrom`→`deriveFrom`, `sourcePer`/`convertPer`/`pagesPer`→`derivePer`, …), numbers as strings, `null` anywhere, and unknown keys are ignored (which is why exported files — which contain ids and an `exportedAt` stamp — re-import cleanly). **You must still emit canonical field names, correct JSON types and no extra keys.**
 
 ### 3.5 Merge mode (re-importing an updated roadmap)
 
 The app can import a file in two modes: **create** (everything fresh, importing twice duplicates) and **merge** (upsert by name). When the user asks you to *update*, *extend*, *regenerate* or *upgrade* an existing roadmap — especially when they paste a previous export back — produce the file assuming it will be merged, and say so in your summary. Merge rules the AI should know:
 
 - **Matching keys:** goal by `title`, branch by path `title`, checkpoint by node `title` (within its path), step by `title`, routine by `title`, PB by `name` — case-insensitive. **Keep titles stable between versions** when you want progress preserved; renaming creates a new item instead of updating the old one (the old one is kept, progress and all).
-- **Definitions follow the file:** description, emoji, color, category, type, targetValue, unit, weeklyTarget, deadline, icons, xp, milestones (synced by value, keeping reached dates), `requires` (re-resolved, cycle-safe), routine cadence/duration/node/credit/endDate, PB unit/direction.
+- **Definitions follow the file:** description, emoji, color, category, type, targetValue, unit, weeklyTarget, deadline, icons, xp, milestones (synced by value, keeping reached dates), `requires` (re-resolved, cycle-safe), routine cadence/duration/node/credit/endDate/optional, PB unit/direction. **Derivation follows too:** `deriveFrom` + `derivePer` re-link the meter to (possibly) a new source/factor, and the meter is then re-synced so it reflects the source's progress so far — upward only, never taking existing progress away. Omitting both fields keeps the stored link; `null` clears it (the meter keeps its progress and becomes hand-entered again).
 - **Progress survives:** node `current` becomes `max(existing, incoming)` — a stale file never rolls progress back; `completedAt` dates are kept; step `done` is OR-ed in; routine `dones`, PB `records`, `logs` and `notes` are appended with dedupe (day+value / day+amount+note / exact content). Re-importing the same file twice is a no-op.
 - **What the file omits is kept:** branches, checkpoints, steps, routines and PBs not mentioned in the new file stay exactly as they are (progress included). To *remove* something the user must delete it in the app — so when regenerating, either include everything or tell the user what you left out.
 - **A partial file is fine:** omitting a field on a matched item keeps that field's current value; `null` clears it.
@@ -165,11 +168,13 @@ The app can import a file in two modes: **create** (everything fresh, importing 
 3. **XP ladder:** 20 for small checkpoints, 40–60 for mid, 90–100 for major (cap 500).
 4. **Milestones celebrate,** they don't gate: 1–3 per node, strictly below target, labels like `"First 100"`, `"Halfway!"`.
 5. **Cadence chooser:** fixed weekdays → `weekly`; week-aligned count → `flexible` (`timesPerWeek`); non-week-aligned rhythm → `interval` (`everyDays`). With a known end date set `endDate`.
-6. **PBs are for metrics you compete with yourself on** (times, speeds, maxes) — direction `down` for times, `up` for distances/counts. Always include real or realistic seeded records.
-7. **Dates:** absolute `"YYYY-MM-DD"` preferred; `daysAgo` only for relative history. `deadline`/`endDate` should be in the future; `dones`/log dates in the past.
-8. **Colors/emoji:** pick from the 8 color keys; match emoji to the domain (🏃 fitness, 📚 language, 💻 coding, 💰 money…).
-9. **Don't fabricate the user's history.** If the user didn't give current progress, start nodes at `current: 0`, no `dones`, no records — or ask. When they *did* give progress, encode it (`current`, `mastered`, `dones`, `records`, `logs`) so the app opens up-to-date.
-10. **Editing an export:** exported files contain extra fields (`ids`, `completedAt`, `exportedAt`, per-record ids). Keep the user's existing titles and values, change only what they asked for; unknown fields are ignored on re-import. To *add* steps/paths/routines to one existing goal, a scoped file `{ "paths": [...], "steps": [...], "routines": [...] }` (or a full single-goal object) works too — and when the user wants the changes applied over their live data without losing progress, recommend importing with **Merge into existing** (§3.5): titles match, definitions update, progress stays.
+6. **Second units come free with `deriveFrom`** — don't make the user do per-session math. When one activity feeds two measures (pages read → books finished, minutes practised → songs learned, km run → miles for a race), model the primary measure as the checkpoint the user logs into, then add a second checkpoint in the same path with `deriveFrom` pointing at it and an honest `derivePer` (e.g. 300 pages per book). Never derive from a node that is itself derived; pick the source the user actually logs into.
+7. **Bonus sessions are `optional`**, not extra quota. A third weekly session the user enjoys but shouldn't be penalized for skipping gets `optional: true` — it still logs progress when done. Don't mark the core sessions optional; that would drain the schedule of meaning.
+8. **PBs are for metrics you compete with yourself on** (times, speeds, maxes) — direction `down` for times, `up` for distances/counts. Always include real or realistic seeded records.
+9. **Dates:** absolute `"YYYY-MM-DD"` preferred; `daysAgo` only for relative history. `deadline`/`endDate` should be in the future; `dones`/log dates in the past.
+10. **Colors/emoji:** pick from the 8 color keys; match emoji to the domain (🏃 fitness, 📚 language, 💻 coding, 💰 money…).
+11. **Don't fabricate the user's history.** If the user didn't give current progress, start nodes at `current: 0`, no `dones`, no records — or ask. When they *did* give progress, encode it (`current`, `mastered`, `dones`, `records`, `logs`) so the app opens up-to-date. A derived checkpoint's `current` may stay 0 — import syncs it to the source's progress automatically.
+12. **Editing an export:** exported files contain extra fields (`ids`, `completedAt`, `exportedAt`, per-record ids). Keep the user's existing titles and values, change only what they asked for; unknown fields are ignored on re-import. To *add* steps/paths/routines to one existing goal, a scoped file `{ "paths": [...], "steps": [...], "routines": [...] }` (or a full single-goal object) works too — and when the user wants the changes applied over their live data without losing progress, recommend importing with **Merge into existing** (§3.5): titles match, definitions update, progress stays.
 
 ---
 
@@ -179,8 +184,8 @@ The app can import a file in two modes: **create** (everything fresh, importing 
 - [ ] Top level `{ "version": 1, "goals": [...] }`; 1–50 goals, every goal has `title`.
 - [ ] `type` matches content; quantitative goals have `targetValue` > 0 and a `unit`; log amounts are in that unit.
 - [ ] Every node: `target` > 0; all `milestones` strictly between 0 and `target`; `current` ≤ `target` unless `mastered`.
-- [ ] Every `requires` and routine `node` ref resolves: titles spelled exactly as defined, **qualified `"Path › Node"` whenever the title repeats across paths**, ≤ 8 per node.
-- [ ] Routines: cadence input matches cadence (weekdays / everyDays / timesPerWeek); `credit` only with `node`; `durationMin` 1–1440.
+- [ ] Every `requires` and routine `node` ref resolves: titles spelled exactly as defined, **qualified `"Path › Node"` whenever the title repeats across paths**, ≤ 8 per node. Same for `deriveFrom` — and `derivePer` (>0) present whenever `deriveFrom` is, with a source that is **not itself derived**.
+- [ ] Routines: cadence input matches cadence (weekdays / everyDays / timesPerWeek); `credit` only with `node`; `durationMin` 1–1440; `optional` only on genuine bonus sessions.
 - [ ] PBs have ≥ 1 record; `direction` is `"up"` or `"down"`; record values > 0.
 - [ ] All dates `"YYYY-MM-DD"`; future dates only for deadline/endDate/startDate, past dates only for dones/logs/records.
 - [ ] Counts within caps: paths ≤ 12, nodes 1–40 per path, steps ≤ 100, routines ≤ 30, pbs ≤ 20, records ≤ 500, logs ≤ 1000, milestones ≤ 30 per node, notes ≤ 50.
@@ -250,7 +255,10 @@ One of *every* customizable field, in a realistic shape — mirror this style (v
               "requires": ["HSK2"], "milestones": [200, 400] },
             { "title": "Newspapers", "target": 30, "xp": 50, "unit": "articles",
               "requires": ["Reading › HSK3"],
-              "description": "Unit override — this checkpoint counts articles, not pages" }
+              "description": "Unit override — this checkpoint counts articles, not pages" },
+            { "title": "Books finished", "target": 6, "unit": "books", "xp": 50,
+              "deriveFrom": "Reading › HSK3", "derivePer": 300,
+              "description": "Auto-derived meter — every 300 pages on HSK3 reading = 1 book, no per-session math" }
           ]
         }
       ],
@@ -265,9 +273,9 @@ One of *every* customizable field, in a realistic shape — mirror this style (v
         { "title": "Language exchange call", "timesPerWeek": 2, "durationMin": 30,
           "node": "Speaking › HSK2", "credit": 20,
           "notes": "Any 2 days a week — flexible cadence" },
-        { "title": "Leech review", "everyDays": 3, "durationMin": 10,
+        { "title": "Leech review", "everyDays": 3, "durationMin": 10, "optional": true,
           "startDate": "2026-01-10", "endDate": "2026-03-31",
-          "notes": "Every 3rd day until the end of March" }
+          "notes": "Every 3rd day until the end of March — extra credit, no penalty when skipped" }
       ],
       "pbs": [
         { "name": "Reading speed", "unit": "chars/min", "direction": "up",

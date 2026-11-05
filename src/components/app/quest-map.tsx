@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Crosshair, Eye, EyeOff, Lock, Maximize2, Minus, Plus, Sparkles, Trophy, Zap } from 'lucide-react'
+import { Crosshair, Eye, EyeOff, Lock, Maximize2, Minus, Plus, Sparkles, Trophy, Wand2, Zap } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData } from '@/lib/types'
 import { buildSkillMap } from '@/lib/skill-tree'
@@ -359,6 +359,22 @@ function NodeLogPopover({
                 {m.data.label ? ` · ${m.data.label}` : ''}
               </span>
             ))}
+          </div>
+        )}
+
+        {/* derived checkpoint: a passive meter fed by its source */}
+        {n.deriveFromId && n.deriveFactor != null && (
+          <div className="mt-2.5 rounded-lg border border-violet-500/25 bg-violet-500/8 px-2.5 py-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-violet-600 dark:text-violet-400">
+              <Wand2 className="h-3 w-3 shrink-0" />
+              Auto-advances from {((): string => {
+                const src = goal.skillPaths.flatMap((p) => p.nodes).find((x) => x.id === n.deriveFromId)
+                return src ? src.title : 'its source'
+              })()}
+            </div>
+            <div className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
+              Every {formatNumber(n.deriveFactor)} of the source = 1 {unit || 'unit'} here — no per-session math.
+            </div>
           </div>
         )}
 

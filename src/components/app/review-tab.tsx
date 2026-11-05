@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { CalendarClock, Clock, Flame, Gauge, Plus, Timer, Trash2, Trophy, X } from 'lucide-react'
+import { Activity, CalendarClock, Clock, Flame, Gauge, Plus, Timer, Trash2, Trophy, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData, PersonalBestData } from '@/lib/types'
 import { computeGoalStats, formatDateShort, formatHours, formatNumber, weeklyHistory } from '@/lib/goal-math'
@@ -9,7 +9,7 @@ import { goalColor } from '@/lib/goal-colors'
 import { currentPb, formatPbValue, pbDelta, pbSeries, sortedRecords } from '@/lib/pb-math'
 import { timeSpent } from '@/lib/goal-math'
 import { useDeletePb, useDeletePbRecord } from '@/hooks/use-goals'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -162,6 +162,232 @@ function PbMetricBlock({
   )
 }
 
+/**
+ * One goal's review — a single card with a switch: the rhythm view (what you
+ * logged each week vs pace) or the bests view (PB metrics and their charts),
+ * collapsed into the same section instead of a separate one below it.
+ */
+function GoalReviewCard({
+  goal,
+  onOpen,
+  onAddPb,
+  onRecord,
+}: {
+  goal: GoalData
+  onOpen: (g: GoalData) => void
+  onAddPb: (g: GoalData) => void
+  onRecord: (pb: PersonalBestData) => void
+}) {
+  const [view, setView] = useState<'rhythm' | 'bests'>('rhythm')
+  const stats = computeGoalStats(goal)
+  const c = goalColor(goal.color)
+  const weekly = weeklyHistory(goal.logs, 8)
+  const requirement =
+    goal.type === 'quantitative' ? (stats.idealWeeklyPace ?? goal.weeklyTarget) : goal.weeklyTarget
+  const weeksMet = weekly.filter(
+    (w) => (requirement != null ? w.amount >= requirement * 0.99 : w.amount > 0),
+  ).length
+  const avg = weekly.reduce((s, w) => s + w.amount, 0) / (weekly.length || 1)
+  const time = timeSpent(goal)
+  const pbs = goal.pbs
+  const hasBests = pbs.length > 0
+
+  return (
+    <Card
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(goal)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpen(goal)
+        }
+      }}
+      className="cursor-pointer p-5 transition-all hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-2 focus-visible:outline-ring"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div
+            className="flex h-10 w-10 items-center justify-center rounded-xl text-lg"
+            style={{ background: c.soft }}
+          >
+            {goal.emoji}
+          </div>
+          <div>
+            <h3 className="font-semibold leading-tight">{goal.title}</h3>
+            <div className="mt-0.5 text-xs text-muted-foreground">
+              {goal.type === 'quantitative'
+                ? `${formatNumber(stats.currentValue)} / ${formatNumber(stats.targetValue ?? 0)} ${goal.unit ?? ''} · ${stats.progressPct}%`
+                : `${stats.stepsDone}/${stats.stepsTotal} steps · ${stats.progressPct}%`}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+          {/* rhythm ⇄ bests switch — one section, two views */}
+          <div role="radiogroup" aria-label="Review view" className="flex rounded-full border p-0.5">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={view === 'rhythm'}
+              onClick={() => setView('rhythm')}
+              className={cn(
+                'flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-colors',
+                view === 'rhythm' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <Activity className="h-3.5 w-3.5" /> Rhythm
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={view === 'bests'}
+              onClick={() => setView('bests')}
+              className={cn(
+                'flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-colors',
+                view === 'bests' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <Trophy className={cn('h-3.5 w-3.5', view === 'bests' && 'text-amber-400')} /> Bests
+              {hasBests && view !== 'bests' && (
+                <span className="rounded-full bg-primary/15 px-1 text-[9px] font-bold tabular-nums text-primary">
+                  {pbs.length}
+                </span>
+              )}
+            </button>
+          </div>
+          <StatusBadge status={stats.status} />
+        </div>
+      </div>
+
+      {view === 'rhythm' ? (
+        <>
+          <div className="mt-4 grid gap-5 lg:grid-cols-[1fr_260px]">
+            <WeeklyBars
+              data={weekly}
+              color={c.hex}
+              unit={goal.unit}
+              requirement={requirement}
+              height={150}
+            />
+            <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
+              <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
+                <Gauge className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <div className="text-xs">
+                  <span className="font-semibold tabular-nums">{formatNumber(Math.round(avg * 10) / 10)}</span>{' '}
+                  <span className="text-muted-foreground">
+                    avg {goal.unit || 'sessions'}/week (8w)
+                  </span>
+                </div>
+              </div>
+              {time && (
+                <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
+                  <Clock className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="text-xs">
+                    <span className="font-semibold tabular-nums">{formatHours(time.total)}</span>{' '}
+                    <span className="text-muted-foreground">invested · {formatHours(time.thisWeek)} this week</span>
+                  </div>
+                </div>
+              )}
+              <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
+                <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <div className="text-xs">
+                  <span className="font-semibold tabular-nums">
+                    {weeksMet}/{weekly.length}
+                  </span>{' '}
+                  <span className="text-muted-foreground">weeks kept pace</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
+                <Flame className="h-4 w-4 shrink-0 text-orange-500" />
+                <div className="text-xs">
+                  <span className="font-semibold tabular-nums">{stats.streakWeeks} week</span>{' '}
+                  <span className="text-muted-foreground">current streak</span>
+                </div>
+              </div>
+              {goal.type === 'quantitative' && stats.projectedFinishDate && goal.deadline && (
+                <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
+                  <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="text-xs">
+                    <span className="text-muted-foreground">projected finish </span>{' '}
+                    <span
+                      className="font-semibold tabular-nums"
+                      style={{
+                        color:
+                          stats.projectedFinishDate.getTime() <= new Date(goal.deadline).getTime()
+                            ? '#10b981'
+                            : '#f59e0b',
+                      }}
+                    >
+                      {stats.projectedFinishDate.toLocaleDateString('en-GB', {
+                        day: 'numeric',
+                        month: 'short',
+                      })}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {time && time.series.length > 1 && (
+            <div className="mt-4 border-t pt-4">
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-sm font-semibold">
+                  <Timer className="h-4 w-4" style={{ color: c.hex }} /> Time spent
+                </span>
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {formatHours(time.total)} total · {formatHours(time.thisWeek)} this week
+                </span>
+              </div>
+              <TimeAreaChart data={time.series} color={c.hex} />
+            </div>
+          )}
+        </>
+      ) : (
+        /* bests view — the PB metrics live inside the same card */
+        <div className="mt-4" onClick={(e) => e.stopPropagation()}>
+          {hasBests ? (
+            <div className="grid gap-3 md:grid-cols-2">
+              {pbs.map((pb) => (
+                <PbMetricBlock key={pb.id} goal={goal} pb={pb} onRecord={onRecord} />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed p-6 text-center">
+              <Trophy className="mx-auto h-5 w-5 text-muted-foreground/60" />
+              <p className="mt-2 text-sm text-muted-foreground">
+                No metrics yet — track a personal best (WPM, 5K time, heaviest lift…).
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3 gap-1.5"
+                onClick={() => onAddPb(goal)}
+                aria-label={`Track a personal best for ${goal.title}`}
+              >
+                <Plus className="h-3.5 w-3.5" /> Track a metric
+              </Button>
+            </div>
+          )}
+          {hasBests && (
+            <div className="mt-3 flex justify-center">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 text-xs text-muted-foreground"
+                onClick={() => onAddPb(goal)}
+                aria-label={`Track another personal best for ${goal.title}`}
+              >
+                <Plus className="h-3 w-3" /> Track another metric
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  )
+}
+
 export function ReviewTab({ goals, onOpen }: { goals: GoalData[]; onOpen: (g: GoalData) => void }) {
   const [pbGoal, setPbGoal] = useState<GoalData | null>(null)
   const [recordPb, setRecordPb] = useState<PersonalBestData | null>(null)
@@ -178,173 +404,19 @@ export function ReviewTab({ goals, onOpen }: { goals: GoalData[]; onOpen: (g: Go
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
         A friendly look at your rhythm — what you actually logged each week, with the dashed line showing your goal&apos;s
-        pace. Gaps are just information, not verdicts.
+        pace. Gaps are just information, not verdicts. Flip a card to <span className="font-medium text-foreground">Bests</span> for
+        its personal-best metrics.
       </p>
 
-      {goals.map((goal) => {
-        const stats = computeGoalStats(goal)
-        const c = goalColor(goal.color)
-        const weekly = weeklyHistory(goal.logs, 8)
-        const requirement =
-          goal.type === 'quantitative' ? (stats.idealWeeklyPace ?? goal.weeklyTarget) : goal.weeklyTarget
-        const weeksMet = weekly.filter(
-          (w) => (requirement != null ? w.amount >= requirement * 0.99 : w.amount > 0),
-        ).length
-        const avg = weekly.reduce((s, w) => s + w.amount, 0) / (weekly.length || 1)
-        const time = timeSpent(goal)
-        const pbs = goal.pbs
-
-        return (
-          <div key={goal.id} className="space-y-3">
-            <Card
-              role="button"
-              tabIndex={0}
-              onClick={() => onOpen(goal)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  onOpen(goal)
-                }
-              }}
-              className="cursor-pointer p-5 transition-all hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-2 focus-visible:outline-ring"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div
-                    className="flex h-10 w-10 items-center justify-center rounded-xl text-lg"
-                    style={{ background: c.soft }}
-                  >
-                    {goal.emoji}
-                  </div>
-                  <div>
-                    <h3 className="font-semibold leading-tight">{goal.title}</h3>
-                    <div className="mt-0.5 text-xs text-muted-foreground">
-                      {goal.type === 'quantitative'
-                        ? `${formatNumber(stats.currentValue)} / ${formatNumber(stats.targetValue ?? 0)} ${goal.unit ?? ''} · ${stats.progressPct}%`
-                        : `${stats.stepsDone}/${stats.stepsTotal} steps · ${stats.progressPct}%`}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 gap-1 px-2.5 text-xs"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setPbGoal(goal)
-                    }}
-                    aria-label={`Track a personal best for ${goal.title}`}
-                  >
-                    <Trophy className="h-3.5 w-3.5 text-amber-500" /> PB
-                  </Button>
-                  <StatusBadge status={stats.status} />
-                </div>
-              </div>
-
-              <div className="mt-4 grid gap-5 lg:grid-cols-[1fr_260px]">
-                <WeeklyBars
-                  data={weekly}
-                  color={c.hex}
-                  unit={goal.unit}
-                  requirement={requirement}
-                  height={150}
-                />
-                <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
-                  <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
-                    <Gauge className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <div className="text-xs">
-                      <span className="font-semibold tabular-nums">{formatNumber(Math.round(avg * 10) / 10)}</span>{' '}
-                      <span className="text-muted-foreground">
-                        avg {goal.unit || 'sessions'}/week (8w)
-                      </span>
-                    </div>
-                  </div>
-                  {time && (
-                    <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
-                      <Clock className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <div className="text-xs">
-                        <span className="font-semibold tabular-nums">{formatHours(time.total)}</span>{' '}
-                        <span className="text-muted-foreground">invested · {formatHours(time.thisWeek)} this week</span>
-                      </div>
-                    </div>
-                  )}
-                  <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
-                    <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <div className="text-xs">
-                      <span className="font-semibold tabular-nums">
-                        {weeksMet}/{weekly.length}
-                      </span>{' '}
-                      <span className="text-muted-foreground">weeks kept pace</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
-                    <Flame className="h-4 w-4 shrink-0 text-orange-500" />
-                    <div className="text-xs">
-                      <span className="font-semibold tabular-nums">{stats.streakWeeks} week</span>{' '}
-                      <span className="text-muted-foreground">current streak</span>
-                    </div>
-                  </div>
-                  {goal.type === 'quantitative' && stats.projectedFinishDate && goal.deadline && (
-                    <div className="flex items-center gap-2.5 rounded-lg bg-muted/50 px-3 py-2">
-                      <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <div className="text-xs">
-                        <span className="text-muted-foreground">projected finish </span>{' '}
-                        <span
-                          className="font-semibold tabular-nums"
-                          style={{
-                            color:
-                              stats.projectedFinishDate.getTime() <= new Date(goal.deadline).getTime()
-                                ? '#10b981'
-                                : '#f59e0b',
-                          }}
-                        >
-                          {stats.projectedFinishDate.toLocaleDateString('en-GB', {
-                            day: 'numeric',
-                            month: 'short',
-                          })}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {time && time.series.length > 1 && (
-                <div className="mt-4 border-t pt-4">
-                  <div className="mb-1.5 flex items-center justify-between">
-                    <span className="flex items-center gap-1.5 text-sm font-semibold">
-                      <Timer className="h-4 w-4" style={{ color: c.hex }} /> Time spent
-                    </span>
-                    <span className="text-xs text-muted-foreground tabular-nums">
-                      {formatHours(time.total)} total · {formatHours(time.thisWeek)} this week
-                    </span>
-                  </div>
-                  <TimeAreaChart data={time.series} color={c.hex} />
-                </div>
-              )}
-            </Card>
-
-            {pbs.length > 0 && (
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Trophy className="h-4 w-4 text-amber-500" /> Personal bests
-                  </CardTitle>
-                  <p className="text-xs text-muted-foreground">
-                    Every attempt is a dot; the line is your PB moving. Tap a metric&apos;s chip to delete a typo.
-                  </p>
-                </CardHeader>
-                <CardContent className="grid gap-3 pb-4 md:grid-cols-2">
-                  {pbs.map((pb) => (
-                    <PbMetricBlock key={pb.id} goal={goal} pb={pb} onRecord={setRecordPb} />
-                  ))}
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        )
-      })}
+      {goals.map((goal) => (
+        <GoalReviewCard
+          key={goal.id}
+          goal={goal}
+          onOpen={onOpen}
+          onAddPb={setPbGoal}
+          onRecord={setRecordPb}
+        />
+      ))}
 
       {/* dialogs (portal-rendered, outside the clickable cards) */}
       {pbGoal && (

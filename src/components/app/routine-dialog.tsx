@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { CalendarDays, Dumbbell, Repeat, Target } from 'lucide-react'
+import { CalendarDays, Dumbbell, Repeat, Sparkles, Target } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData, RoutineData } from '@/lib/types'
 import { buildSkillMap } from '@/lib/skill-tree'
@@ -65,6 +65,7 @@ export function RoutineDialog({
   const [nodeId, setNodeId] = useState<string>(routine?.nodeId ?? 'none')
   const [credit, setCredit] = useState(routine?.credit != null ? String(routine.credit) : '')
   const [duration, setDuration] = useState(routine?.durationMin != null ? String(routine.durationMin) : '')
+  const [extra, setExtra] = useState(routine?.optional ?? false)
   const [startDate, setStartDate] = useState(toDateString(routine?.startDate ?? new Date().toISOString()))
 
   const [endDate, setEndDate] = useState(toDateString(routine?.endDate))
@@ -112,6 +113,7 @@ export function RoutineDialog({
       durationMin: duration ? parseInt(duration, 10) : null,
       startDate: startDate ? isoForDayKey(startDate, '12:00') : null,
       endDate: endDate ? isoForDayKey(endDate, '23:59:59') : null,
+      optional: extra,
     }
     if (isEdit && routine) {
       updateRoutine.mutate(
@@ -263,6 +265,42 @@ export function RoutineDialog({
               </div>
             </div>
           )}
+
+          {/* extra credit — nice to do, never a penalty when skipped */}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={extra}
+            onClick={() => setExtra(!extra)}
+            className={cn(
+              'flex items-center gap-3 rounded-xl border-2 p-3 text-left transition-colors',
+              extra
+                ? 'border-violet-500/50 bg-violet-500/8'
+                : 'border-border hover:border-muted-foreground/40',
+            )}
+          >
+            <Sparkles className={cn('h-4 w-4 shrink-0', extra ? 'text-violet-500' : 'text-muted-foreground')} />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] font-semibold leading-tight">Extra credit</span>
+              <span className="block text-[11px] leading-tight text-muted-foreground">
+                Nice to do — skipping it never counts against you
+              </span>
+            </span>
+            <span
+              className={cn(
+                'flex h-6 w-11 shrink-0 items-center rounded-full border-2 transition-colors',
+                extra ? 'justify-end border-violet-500 bg-violet-500/20' : 'justify-start border-muted-foreground/30',
+              )}
+              aria-hidden
+            >
+              <span
+                className={cn(
+                  'block h-4 w-4 rounded-full transition-colors',
+                  extra ? 'bg-violet-500' : 'bg-muted-foreground/40',
+                )}
+              />
+            </span>
+          </button>
 
           {/* what it advances in the skill tree */}
           {hasNodes && (

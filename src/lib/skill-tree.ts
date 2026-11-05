@@ -23,6 +23,17 @@ export interface NodeDep {
   mastered: boolean
 }
 
+export interface NodeDerivedView {
+  /** the source checkpoint this meter converts from */
+  sourceTitle: string
+  sourceIcon: string
+  sourcePathTitle: string
+  /** how many of the source's units make 1 of this node's unit */
+  factor: number
+  /** effective unit of the source (for the "1 book per 300 pages" line) */
+  sourceUnit: string | null
+}
+
 export interface SkillNodeView {
   node: SkillNodeData
   path: SkillPathData
@@ -38,6 +49,9 @@ export interface SkillNodeView {
   locked: boolean
   /** true = requiresIds was set explicitly (vs the default in-path ladder) */
   explicitDeps: boolean
+  /** set for derived checkpoints: a passive meter converting another
+   *  checkpoint's progress into this node's unit (never locked, never gated) */
+  derived: NodeDerivedView | null
 }
 
 export interface SkillPathView {
@@ -83,7 +97,7 @@ export function nodeStatus(n: { currentValue: number; targetValue: number }): Sk
   return 'not_started'
 }
 
-export function nodeUnit(n: SkillNodeData, p: SkillPathData): string | null {
+export function nodeUnit(n: { unit?: string | null }, p: { unit?: string | null }): string | null {
   return n.unit ?? p.unit ?? null
 }
 
@@ -99,6 +113,7 @@ export interface DepNodeShape {
   id: string
   title: string
   icon: string
+  unit?: string | null
   currentValue: number
   targetValue: number
   requiresIds?: string | string[] | null
@@ -106,6 +121,7 @@ export interface DepNodeShape {
 export interface DepPathShape {
   title: string
   icon: string
+  unit?: string | null
   nodes: DepNodeShape[]
 }
 
@@ -188,6 +204,21 @@ export function buildSkillMap(goal: GoalData, now: Date = new Date()): SkillMap 
     const sortedNodes = [...p.nodes].sort((a, b) => a.order - b.order || a.createdAt.localeCompare(b.createdAt))
     const nodes = sortedNodes.map<SkillNodeView>((n, k) => {
       const { deps, explicit } = nodeDependencies(n, k > 0 ? sortedNodes[k - 1] : null, index)
+      // a derived checkpoint is a meter, not a tier: gating never applies to it
+      const derived: NodeDerivedView | null = n.deriveFromId
+        ? (() => {
+            const src = index.get(n.deriveFromId)
+            if (!src || !n.deriveFactor) return null
+            return {
+              sourceTitle: src.node.title,
+              sourceIcon: src.node.icon,
+              sourcePathTitle: src.path.title,
+              factor: n.deriveFactor,
+              sourceUnit: nodeUnit(src.node, src.path),
+            }
+          })()
+        : null
+      const locked = derived == null && depsLocked(deps)
       return {
         node: n,
         path: p,
@@ -202,9 +233,10 @@ export function buildSkillMap(goal: GoalData, now: Date = new Date()): SkillMap 
             t: n.targetValue > 0 ? Math.min(0.92, Math.max(0.08, m.value / n.targetValue)) : 0.5,
           })),
         reachedMilestones: n.milestones.filter((m) => n.currentValue >= m.value).length,
-        deps,
-        locked: depsLocked(deps),
+        deps: derived == null ? deps : [],
+        locked,
         explicitDeps: explicit,
+        derived,
       }
     })
     const current = nodes.reduce((s, v) => s + v.node.currentValue, 0)

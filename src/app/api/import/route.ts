@@ -7,6 +7,7 @@ import { parseImportFile, parseImportFileRaw } from '@/lib/import-format'
 import { mergeImportGoals } from '@/lib/merge-import'
 import { goalInclude, serializeGoal } from '@/lib/goal-serialize'
 import { buildRequiresIds, resolveNodeRef, idsCsv, type NodeRefEntry } from '@/lib/resolve-refs'
+import { setNodeDerivation } from '@/lib/derive'
 
 /**
  * POST /api/import — import goals from a roadmap JSON file.
@@ -135,9 +136,24 @@ export async function POST(req: Request) {
             await db.skillNode.update({ where: { id: nodeId }, data: { requiresIds: idsCsv(deps) } })
           }
         }
+
+        // derived checkpoints: link each "Books finished"-style meter to its
+        // source and give it the source's progress so far (never downward).
+        // Refs may point forward, so this runs after every node exists.
+        let dcursor = 0
+        for (const p of g.paths) {
+          for (const n of p.nodes) {
+            const created = createdNodes[dcursor++]
+            if (!created || !n.deriveFromRef || !n.deriveFactor) continue
+            const src = resolveNodeRef(n.deriveFromRef, null, createdNodes)
+            if (!src || src === created.id) continue
+            // silently dropped when the source is itself derived / not in this goal
+            await setNodeDerivation(goal.id, created.id, src, n.deriveFactor)
+          }
+        }
       }
 
-      // routines (with node links, credit, flexible cadence)
+      // routines (with node links, credit, flexible cadence, extra-credit flag)
       for (const r of g.routines) {
         let nodeId: string | null = null
         if (r.nodeRef) nodeId = resolveNodeRef(r.nodeRef, null, createdNodes)
@@ -155,6 +171,7 @@ export async function POST(req: Request) {
             durationMin: r.durationMin,
             startDate: r.startDate ? new Date(r.startDate) : new Date(),
             endDate: r.endDate ? new Date(r.endDate) : null,
+            optional: r.optional,
           },
         })
         if (r.doneDates.length) {

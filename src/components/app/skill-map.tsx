@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, ChevronDown, Crown, Lock, Pencil, Plus, Sparkles, Trash2, X } from 'lucide-react'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, ChevronDown, Crown, Lock, Pencil, Plus, Sparkles, Trash2, Wand2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData, SkillPathData } from '@/lib/types'
 import { buildSkillMap, type SkillNodeView, type SkillPathView } from '@/lib/skill-tree'
@@ -19,6 +19,15 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -92,6 +101,24 @@ function NodePopover({
   const [editTitle, setEditTitle] = useState(n.title)
   const [editTarget, setEditTarget] = useState(String(n.targetValue))
   const [editXp, setEditXp] = useState(String(n.xpValue))
+  // derivation: source id ('none' = off) + how many source units make 1 of ours
+  const [editSource, setEditSource] = useState<string>(n.deriveFromId ?? 'none')
+  const [editFactor, setEditFactor] = useState(n.deriveFactor != null ? String(n.deriveFactor) : '')
+
+  // candidates: any checkpoint in this goal, except itself and other derived
+  // meters (a meter can't be a source — one level only)
+  const sourceGroups = goal.skillPaths
+    .slice()
+    .sort((a, b) => a.order - b.order)
+    .map((p) => ({
+      title: p.title,
+      icon: p.icon,
+      nodes: p.nodes
+        .slice()
+        .sort((a, b) => a.order - b.order)
+        .filter((x) => x.id !== n.id && x.deriveFromId == null)
+        .map((x) => ({ id: x.id, title: x.title, unit: x.unit ?? p.unit ?? null })),
+    }))
 
   const remaining = Math.max(0, n.targetValue - n.currentValue)
 
@@ -160,6 +187,20 @@ function NodePopover({
           <p className="mt-2 rounded-md bg-muted/60 p-2 text-xs leading-relaxed text-muted-foreground">
             {n.description}
           </p>
+        )}
+
+        {/* derived meter: what converts into this checkpoint */}
+        {view.derived && (
+          <div className="mt-2 rounded-lg border border-violet-500/25 bg-violet-500/8 p-2.5">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-violet-600 dark:text-violet-400">
+              <Wand2 className="h-3.5 w-3.5 shrink-0" />
+              Auto-advances from {view.derived.sourceIcon} {view.derived.sourceTitle}
+            </div>
+            <div className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+              Every {formatNumber(view.derived.factor)} {view.derived.sourceUnit ?? 'source units'} on the source = 1{' '}
+              {view.unit ?? 'unit'} here — no per-session math. Manual entries still work too.
+            </div>
+          </div>
         )}
 
         {/* progress bar */}
@@ -285,6 +326,50 @@ function NodePopover({
                   title="XP"
                 />
               </div>
+              <div className="space-y-1.5 rounded-lg border border-dashed bg-muted/30 p-2">
+                <Label className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                  <Wand2 className="h-3 w-3 text-violet-500" /> Auto-advance from another checkpoint
+                </Label>
+                <Select value={editSource} onValueChange={setEditSource}>
+                  <SelectTrigger className="h-8 w-full text-xs" aria-label="Derivation source">
+                    <SelectValue placeholder="Pick a source checkpoint…" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-56">
+                    <SelectItem value="none">Off — enter progress by hand</SelectItem>
+                    {sourceGroups.map((g) => (
+                      <SelectGroup key={g.title}>
+                        <SelectLabel>
+                          {g.icon} {g.title}
+                        </SelectLabel>
+                        {g.nodes.map((x) => (
+                          <SelectItem key={x.id} value={x.id}>
+                            {x.title}
+                            {x.unit ? ` (${x.unit})` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {editSource !== 'none' && (
+                  <div className="flex items-center gap-2">
+                    <span className="shrink-0 text-[11px] leading-tight text-muted-foreground">Every</span>
+                    <Input
+                      value={editFactor}
+                      onChange={(e) => setEditFactor(e.target.value)}
+                      type="number"
+                      min={0.01}
+                      step="any"
+                      className="h-8 w-20 text-xs"
+                      aria-label="Source units per 1 of this checkpoint"
+                      placeholder="e.g. 300"
+                    />
+                    <span className="min-w-0 text-[11px] leading-tight text-muted-foreground">
+                      of the source = 1 {view.unit ?? 'unit'} here
+                    </span>
+                  </div>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-1.5">
                 <Button
                   size="sm"
@@ -316,12 +401,22 @@ function NodePopover({
                   onClick={() => {
                     const t = parseFloat(editTarget)
                     const x = parseInt(editXp, 10)
+                    const src = editSource === 'none' ? null : editSource
+                    const f = editSource === 'none' ? null : parseFloat(editFactor)
+                    if (src && (!f || f <= 0)) {
+                      toast.error('Enter how many source units make 1 of these')
+                      return
+                    }
+                    const deriveChanged =
+                      (n.deriveFromId ?? null) !== (src ?? null) ||
+                      (n.deriveFactor ?? null) !== (f ?? null)
                     updateNode.mutate({
                       nodeId: n.id,
                       patch: {
                         title: editTitle.trim(),
                         ...(t > 0 ? { targetValue: t } : {}),
                         ...(x > 0 ? { xpValue: x } : {}),
+                        ...(deriveChanged ? { deriveFromId: src, deriveFactor: f } : {}),
                       },
                     })
                   }}
@@ -382,7 +477,14 @@ function NodeCell({
           <span className={cn('min-w-0 flex-1 truncate text-sm font-semibold', view.status === 'mastered' && 'text-white')}>
             {n.title}
           </span>
-          {view.locked && view.status !== 'mastered' ? (
+          {view.derived ? (
+            <span
+              className="flex shrink-0 items-center gap-1 rounded-full border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-violet-600 dark:text-violet-400"
+              title={`Auto-advances from ${view.derived.sourceTitle} — every ${formatNumber(view.derived.factor)} ${view.derived.sourceUnit ?? 'source units'} = 1 ${view.unit ?? 'unit'} here`}
+            >
+              <Wand2 className="h-2.5 w-2.5" /> auto
+            </span>
+          ) : view.locked && view.status !== 'mastered' ? (
             <span
               className="flex shrink-0 items-center gap-1 rounded-full border border-dashed px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-muted-foreground"
               title={`Locked until ${view.deps.filter((d) => !d.mastered).map((d) => d.title).join(' + ')} cleared`}

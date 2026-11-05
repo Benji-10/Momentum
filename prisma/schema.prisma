@@ -105,6 +105,8 @@ model GoalNote {
 // A routine may point at a skill node (nodeId): "what this session works on",
 // e.g. Tuesday's session is grammar, Sunday's is speaking. Checking it off
 // can add `credit` progress to that node automatically.
+// `optional` marks an extra-credit session: nice to do, but skipping it never
+// counts against adherence, streaks or the "open" catch-up list.
 model RoutineItem {
   id           String       @id @default(cuid())
   goalId       String
@@ -122,6 +124,7 @@ model RoutineItem {
   startDate    DateTime     @default(now())
   endDate      DateTime? // null = repeat until the goal deadline / forever
   archived     Boolean      @default(false)
+  optional     Boolean      @default(false) // extra credit: no penalty when skipped
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
   dones        RoutineDone[]
@@ -166,6 +169,10 @@ model SkillPath {
 
 // One tier of a path, with measurable progress (e.g. "HSK3 · 30/600 words").
 // Status is derived: not_started (0) / in_progress / mastered (current >= target).
+// A node with deriveFromId/deriveFactor is a *derived* checkpoint — a passive
+// meter that converts another checkpoint's progress into its own unit (e.g.
+// "Books finished": every 300 pages on "Pages read" = 1 book). Its progress
+// updates automatically whenever the source does, and it ignores gating.
 model SkillNode {
   id           String     @id @default(cuid())
   goalId       String
@@ -183,8 +190,13 @@ model SkillNode {
   // csv of node ids that must be mastered before this one unlocks.
   // null/empty = the default ladder: the previous node in the same path
   // (HSK2 → HSK3). Explicit ids may cross paths ("Reading HSK3 needs
-  // Vocabulary HSK2").
+  // Vocabulary HSK2"). Ignored for derived checkpoints (they are meters).
   requiresIds  String?
+  // derived checkpoint: source node + how many of its units make 1 of ours
+  deriveFromId String?
+  deriveFrom   SkillNode? @relation("DeriveLink", fields: [deriveFromId], references: [id], onDelete: SetNull)
+  derived      SkillNode[] @relation("DeriveLink")
+  deriveFactor Float? // e.g. 300 = every 300 pages of the source = 1 book
   completedAt  DateTime?
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt

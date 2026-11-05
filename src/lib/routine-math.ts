@@ -205,7 +205,9 @@ export interface Occurrence {
  */
 export const GRACE_DAYS = 3
 
-/** All occurrences of a set of routines within [from, to] (inclusive), per day. */
+/** All occurrences of a set of routines within [from, to] (inclusive), per day.
+ *  Extra-credit (optional) routines: a skipped occurrence is forgiven the
+ *  moment it's past — it never shows as "open", never counts as a miss. */
 export function occurrencesInRange(
   routines: RoutineData[],
   goalDeadline: string | null,
@@ -223,7 +225,7 @@ export function occurrencesInRange(
         const isToday = sameDay(d, today)
         const isPast = d < today
         const daysAgo = isPast ? Math.round((today.getTime() - d.getTime()) / DAY_MS) : 0
-        const forgiven = isPast && !done && daysAgo > GRACE_DAYS
+        const forgiven = isPast && !done && (r.optional || daysAgo > GRACE_DAYS)
         out.push({
           routine: r,
           goalId: r.goalId,
@@ -246,13 +248,16 @@ export interface RoutineStats {
    * Kind adherence: done / scheduled over the trailing `weeks` weeks, where
    * forgiven misses (older than GRACE_DAYS) are excluded from the
    * denominator so old slip-ups never drag your score down forever.
+   * null for extra-credit routines — there is nothing to adhere to.
    */
   adherencePct: number | null
   doneCount: number
   totalCount: number
-  /** unforgiven past occurrences still open (the only "catch-up" there is) */
+  /** unforgiven past occurrences still open (the only "catch-up" there is).
+   *  Always 0 for extra-credit routines. */
   openCount: number
-  /** missed occurrences quietly forgiven within the window */
+  /** missed occurrences quietly forgiven within the window (extra-credit
+   *  skips are forgiven on the spot — they land here too) */
   forgivenCount: number
   /** consecutive completed occurrences ending at the most recent scheduled one */
   streak: number
@@ -287,14 +292,15 @@ export function routineStats(
     }).length
     const flex = weekFlexProgress(r, startOfWeek(today))
     return {
-      adherencePct: totalCount > 0 ? Math.min(100, Math.round((doneCount / totalCount) * 100)) : null,
+      // extra credit has no quota to fall short of — no % to show
+      adherencePct: r.optional ? null : totalCount > 0 ? Math.min(100, Math.round((doneCount / totalCount) * 100)) : null,
       doneCount,
       totalCount,
-      openCount: flex.left,
+      openCount: r.optional ? 0 : flex.left, // an extra-credit session is never "left to do"
       forgivenCount: 0, // flexible sessions never become "missed days"
       streak: flex.done,
       bestStreak: flex.done,
-      next: flex.left > 0 ? today : addDays(startOfWeek(today), 7),
+      next: flex.left > 0 || r.optional ? today : addDays(startOfWeek(today), 7),
     }
   }
 
@@ -313,7 +319,7 @@ export function routineStats(
       totalCount++
     } else {
       const daysAgo = Math.round((today.getTime() - d.getTime()) / DAY_MS)
-      if (daysAgo > GRACE_DAYS) {
+      if (daysAgo > GRACE_DAYS || r.optional) {
         forgivenCount++ // excluded from the denominator on purpose
       } else {
         totalCount++
@@ -355,7 +361,11 @@ export function routineStats(
   }
 
   return {
-    adherencePct: totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : null,
+    adherencePct: r.optional
+      ? null
+      : totalCount > 0
+        ? Math.round((doneCount / totalCount) * 100)
+        : null,
     doneCount,
     totalCount,
     openCount,

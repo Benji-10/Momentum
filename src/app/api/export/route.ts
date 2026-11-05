@@ -72,6 +72,19 @@ export async function GET() {
                       const [depPath, depTitle] = ref.split(' › ')
                       return depPath === p.title ? depTitle : ref
                     })
+                  // derived checkpoint: always emit the fully-qualified source
+                  // ref + factor — a bare title could resolve to a same-named
+                  // node in another path, and the meter link must be unambiguous
+                  let derive: { deriveFrom: string; derivePer: number } | undefined
+                  if (n.deriveFromId && n.deriveFactor) {
+                    const full = nodeRef(n.deriveFromId)
+                    if (full) {
+                      derive = {
+                        deriveFrom: full,
+                        derivePer: n.deriveFactor,
+                      }
+                    }
+                  }
                   return {
                     title: n.title,
                     description: n.description,
@@ -81,6 +94,7 @@ export async function GET() {
                     unit: n.unit,
                     xp: n.xpValue,
                     ...(deps.length ? { requires: deps } : {}),
+                    ...(derive ? derive : {}),
                     milestones: [...n.milestones]
                       .sort((a, b) => a.value - b.value)
                       .map((m) => (m.label ? { value: m.value, label: m.label } : m.value)),
@@ -100,6 +114,7 @@ export async function GET() {
             startDate: toDateString(r.startDate),
             endDate: r.endDate ? toDateString(r.endDate) : null,
             dones: r.dones.map((d) => toDateString(d.date)),
+            ...(r.optional ? { optional: true } : {}),
           })),
           notes: g.notes.map((n) => n.content),
           ...(g.pbs.length

@@ -19,6 +19,7 @@ import {
   PinOff,
   Plus,
   Repeat,
+  Sparkles,
   StickyNote,
   Target,
   Trash2,
@@ -886,7 +887,17 @@ function DetailBody({
                             <Repeat className="h-4 w-4" style={{ color: c.hex }} />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-semibold">{r.title}</div>
+                            <div className="truncate text-sm font-semibold">
+                              {r.title}
+                              {r.optional && (
+                                <span
+                                  className="ml-1.5 rounded-full bg-violet-500/15 px-1.5 py-px align-middle text-[9px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400"
+                                  title="Extra credit — nice to do, skipping it never counts against you"
+                                >
+                                  extra
+                                </span>
+                              )}
+                            </div>
                             <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
                               <span>{describeCadence(r)}</span>
                               {r.durationMin != null && <span>· {r.durationMin}m</span>}
@@ -899,23 +910,32 @@ function DetailBody({
                             {r.notes && <div className="mt-1 truncate text-[11px] italic text-muted-foreground/80">{r.notes}</div>}
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
-                            {rs.adherencePct != null && (
+                            {r.optional ? (
                               <span
-                                className="rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums"
-                                style={{
-                                  background:
-                                    rs.adherencePct >= 70
-                                      ? 'rgba(16,185,129,0.12)'
-                                      : rs.adherencePct >= 40
-                                        ? 'rgba(245,158,11,0.14)'
-                                        : 'rgba(100,116,139,0.14)',
-                                  color:
-                                    rs.adherencePct >= 70 ? '#10b981' : rs.adherencePct >= 40 ? '#f59e0b' : '#64748b',
-                                }}
-                                title="Recent adherence — forgiven sessions don't count against you"
+                                className="inline-flex items-center gap-1 rounded-full bg-violet-500/12 px-2 py-0.5 text-[11px] font-semibold text-violet-600 tabular-nums dark:text-violet-400"
+                                title="Extra credit — nice to do, skipping it never counts against you"
                               >
-                                {rs.adherencePct}%
+                                <Sparkles className="h-3 w-3" /> extra credit
                               </span>
+                            ) : (
+                              rs.adherencePct != null && (
+                                <span
+                                  className="rounded-full px-2 py-0.5 text-[11px] font-semibold tabular-nums"
+                                  style={{
+                                    background:
+                                      rs.adherencePct >= 70
+                                        ? 'rgba(16,185,129,0.12)'
+                                        : rs.adherencePct >= 40
+                                          ? 'rgba(245,158,11,0.14)'
+                                          : 'rgba(100,116,139,0.14)',
+                                    color:
+                                      rs.adherencePct >= 70 ? '#10b981' : rs.adherencePct >= 40 ? '#f59e0b' : '#64748b',
+                                  }}
+                                  title="Recent adherence — forgiven sessions don't count against you"
+                                >
+                                  {rs.adherencePct}%
+                                </span>
+                              )
                             )}
                             <Button
                               size="icon"

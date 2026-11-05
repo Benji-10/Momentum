@@ -18,6 +18,8 @@ const updateRoutineSchema = z.object({
   startDate: z.string().datetime().nullable().optional(),
   endDate: z.string().datetime().nullable().optional(),
   archived: z.boolean().optional(),
+  /** extra credit: nice to do, never a penalty when skipped */
+  optional: z.boolean().optional(),
 })
 
 type Params = { params: Promise<{ id: string; routineId: string }> }
@@ -84,6 +86,7 @@ export async function PATCH(req: Request, { params }: Params) {
         ...(d.startDate !== undefined ? { startDate: d.startDate ? new Date(d.startDate) : new Date() } : {}),
         ...(d.endDate !== undefined ? { endDate: d.endDate ? new Date(d.endDate) : null } : {}),
         ...(d.archived !== undefined ? { archived: d.archived } : {}),
+        ...(d.optional !== undefined ? { optional: d.optional } : {}),
       },
     })
     const goal = await ownedGoal(id, auth.user)

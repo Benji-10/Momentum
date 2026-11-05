@@ -95,6 +95,7 @@ CREATE TABLE "RoutineItem" (
     "startDate" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "endDate" TIMESTAMP(3),
     "archived" BOOLEAN NOT NULL DEFAULT false,
+    "optional" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -142,6 +143,8 @@ CREATE TABLE "SkillNode" (
     "unit" TEXT,
     "xpValue" INTEGER NOT NULL DEFAULT 20,
     "requiresIds" TEXT,
+    "deriveFromId" TEXT,
+    "deriveFactor" DOUBLE PRECISION,
     "completedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -215,6 +218,8 @@ ALTER TABLE "RoutineItem" ADD CONSTRAINT "RoutineItem_goalId_fkey" FOREIGN KEY (
 -- AddForeignKey
 ALTER TABLE "RoutineItem" ADD CONSTRAINT "RoutineItem_nodeId_fkey" FOREIGN KEY ("nodeId") REFERENCES "SkillNode"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
+ALTER TABLE "SkillNode" ADD CONSTRAINT "SkillNode_deriveFromId_fkey" FOREIGN KEY ("deriveFromId") REFERENCES "SkillNode"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
 -- AddForeignKey
 ALTER TABLE "RoutineDone" ADD CONSTRAINT "RoutineDone_routineId_fkey" FOREIGN KEY ("routineId") REFERENCES "RoutineItem"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
@@ -267,7 +272,7 @@ ALTER TABLE "PersonalBest" ADD CONSTRAINT "PersonalBest_goalId_fkey" FOREIGN KEY
  *  - { table, column, sql }    — applied when the *column* is missing
  *    (for features that add a column to an existing table)
  */
-export const PG_MIGRATIONS: { table: string; column?: string; sql: string }[] = [
+export const PG_MIGRATIONS: { table: string; column?: string; sql: string; sqliteType?: string }[] = [
   {
     table: 'PersonalBest',
     sql: `-- v1.1: personal-best metrics (PB WPM, PB BLD, …)
@@ -291,5 +296,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS "PersonalBest_goalId_name_key" ON "PersonalBes
     table: 'User',
     column: 'settings',
     sql: `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "settings" TEXT;`,
+  },
+  {
+    // v1.3: extra-credit routines — nice to do, never a penalty when skipped
+    table: 'RoutineItem',
+    column: 'optional',
+    sql: `ALTER TABLE "RoutineItem" ADD COLUMN IF NOT EXISTS "optional" BOOLEAN NOT NULL DEFAULT false;`,
+    sqliteType: 'INTEGER NOT NULL DEFAULT 0',
+  },
+  {
+    // v1.4: derived checkpoints — a node that auto-converts another node's
+    // progress into its own unit (pages → books). Factor: how many source
+    // units make 1 of the derived node's unit.
+    table: 'SkillNode',
+    column: 'deriveFromId',
+    sql: `ALTER TABLE "SkillNode" ADD COLUMN IF NOT EXISTS "deriveFromId" TEXT;`,
+  },
+  {
+    table: 'SkillNode',
+    column: 'deriveFactor',
+    sql: `ALTER TABLE "SkillNode" ADD COLUMN IF NOT EXISTS "deriveFactor" DOUBLE PRECISION;`,
+    sqliteType: 'REAL',
   },
 ]
