@@ -1,12 +1,16 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarDays, ChevronDown, CopyPlus, LayoutDashboard, LogOut, Map as MapIcon, Plus, RefreshCw, Repeat, Settings, UserRound } from 'lucide-react'
 import { toast } from 'sonner'
+import { useTheme } from 'next-themes'
 import type { GoalData } from '@/lib/types'
+import type { UserSettings } from '@/lib/settings'
 import { useGoals, useSeedDemo } from '@/hooks/use-goals'
-import { useLogout, useMe } from '@/hooks/use-auth'
+import { useLogout, useMe, useSettings } from '@/hooks/use-auth'
+import { useQueryClient } from '@tanstack/react-query'
 import { initIdentity } from '@/lib/identity-client'
+import { setAppTimezone } from '@/lib/app-time'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import {
@@ -31,12 +35,44 @@ import { ImportDialog } from '@/components/app/import-dialog'
 import { EmptyState } from '@/components/app/empty-state'
 import { AuthScreen, IdentityUnconfiguredNotice } from '@/components/app/auth-screen'
 import { BrandMark } from '@/components/app/brand-mark'
-import { AccountSettingsDialog } from '@/components/app/account-settings'
+import { SettingsDialog } from '@/components/app/account-settings'
 import { ExportButton, ImportButton, ThemePicker, exportData } from '@/components/app/theme-picker'
+
+/**
+ * Applies the signed-in user's synced settings to this device:
+ *  - the timezone becomes the app timezone (every "today / this week / chart
+ *    day" decision follows it), and
+ *  - a saved theme is applied and cached to localStorage, so the look is
+ *    identical on every device.
+ * Renders nothing — it just reconciles this device with the account.
+ */
+function AppSettingsApplier({ settings }: { settings: UserSettings | null }) {
+  const { theme, setTheme } = useTheme()
+  const lastServerTheme = useRef<string | null>(null)
+
+  // module timezone — set during render so this render pass (and its
+  // children, which read it through the date helpers) already sees it
+  useMemo(() => {
+    setAppTimezone(settings?.timezone ?? null)
+    return null
+  }, [settings?.timezone])
+
+  // theme: apply a server-side change (cross-device sync), but never
+  // clobber a local pick that is still being saved
+  useEffect(() => {
+    const serverTheme = settings?.theme ?? null
+    if (serverTheme === lastServerTheme.current) return
+    lastServerTheme.current = serverTheme
+    if (serverTheme && theme !== serverTheme) setTheme(serverTheme)
+  }, [settings?.theme, theme, setTheme])
+
+  return null
+}
 
 /** Manual sync button — shows freshness, taps to pull the latest from the server. */
 function SyncButton({ goalsQuery }: { goalsQuery: ReturnType<typeof useGoals> }) {
   const [, tick] = useState(0)
+  const qc = useQueryClient()
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 20_000)
     return () => clearInterval(t)
@@ -57,14 +93,19 @@ function SyncButton({ goalsQuery }: { goalsQuery: ReturnType<typeof useGoals> })
       className="h-9 w-9 shrink-0 text-muted-foreground"
       aria-label={`Sync now (last synced ${when})`}
       title={`Synced ${when} — click to refresh`}
-      onClick={() => goalsQuery.refetch()}
+      onClick={() => {
+        // goals + the account row: settings changed on another device — theme,
+        // time zone — land here too, then the applier applies them
+        void goalsQuery.refetch()
+        void qc.invalidateQueries({ queryKey: ['me'] })
+      }}
     >
       <RefreshCw className={cn('h-4 w-4', goalsQuery.isFetching && 'animate-spin')} />
     </Button>
   )
 }
 
-function App({ email, name }: { email: string; name: string | null }) {
+function App({ email, name, settings }: { email: string; name: string | null; settings: UserSettings | null }) {
   const goalsQuery = useGoals()
   const { data: goals, isLoading, isError, error } = goalsQuery
   const seedDemo = useSeedDemo()
@@ -147,7 +188,7 @@ function App({ email, name }: { email: string; name: string | null }) {
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
               <DropdownMenuItem className="gap-2" onClick={() => setAcctOpen(true)}>
-                <Settings className="h-4 w-4" /> Account settings
+                <Settings className="h-4 w-4" /> Settings
               </DropdownMenuItem>
               {/* Export lives here on phones — the header buttons are
                   hidden below sm so the bar fits a 320px screen */}
@@ -290,7 +331,7 @@ function App({ email, name }: { email: string; name: string | null }) {
       />
       <ImportDialog open={importOpen} onOpenChange={setImportOpen} />
       <BulkCreateDialog open={bulkOpen} onOpenChange={setBulkOpen} categories={categories} />
-      <AccountSettingsDialog open={acctOpen} onOpenChange={setAcctOpen} name={name} />
+      <SettingsDialog open={acctOpen} onOpenChange={setAcctOpen} name={name} settings={settings} />
     </div>
   )
 }
@@ -298,11 +339,16 @@ function App({ email, name }: { email: string; name: string | null }) {
 export default function Home() {
   const meQuery = useMe()
   const me = meQuery.data ?? null
+  const settingsQuery = useSettings()
+  const settings = settingsQuery.data ?? null
   const [identityMode, setIdentityMode] = useState<'netlify' | 'preview' | 'unconfigured' | null>(null)
 
   useEffect(() => {
     initIdentity().then((i) => setIdentityMode(i.mode))
   }, [])
+
+  // keep this device in sync with the account's settings (theme + timezone)
+  const applier = <AppSettingsApplier settings={settings} />
 
   if (meQuery.isLoading || identityMode === null) {
     return (
@@ -313,13 +359,25 @@ export default function Home() {
             <UserRound className="h-4 w-4 animate-pulse" /> Checking your account…
           </div>
         </div>
+        {applier}
       </div>
     )
   }
 
-  if (identityMode === 'unconfigured') return <IdentityUnconfiguredNotice />
+  if (identityMode === 'unconfigured') return <>{applier}<IdentityUnconfiguredNotice /></>
 
-  if (!me) return <AuthScreen />
+  if (!me)
+    return (
+      <>
+        {applier}
+        <AuthScreen />
+      </>
+    )
 
-  return <App email={me.email} name={me.name} />
+  return (
+    <>
+      {applier}
+      <App email={me.email} name={me.name} settings={settings} />
+    </>
+  )
 }

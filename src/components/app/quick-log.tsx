@@ -5,22 +5,20 @@ import { CalendarDays, Check, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData } from '@/lib/types'
 import { formatNumber } from '@/lib/goal-math'
+import { dayKeyAgo, isoForDayKey, todayDayKey } from '@/lib/app-time'
 import { useAddLog, useUpdateNode } from '@/hooks/use-goals'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 
+/** Today in the app timezone — back-fills and date pickers key off this. */
 function todayStr(): string {
-  const d = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  return todayDayKey()
 }
 
 function daysAgoStr(n: number): string {
-  const d = new Date(Date.now() - n * 86_400_000)
-  const pad = (x: number) => String(x).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  return dayKeyAgo(n)
 }
 
 /** Quick-add sizes appropriate for the goal's target/unit magnitude. */
@@ -61,13 +59,23 @@ export function QuickLogPopover({
       toast.error('Enter an amount greater than 0')
       return
     }
-    const iso =
-      date === todayStr() ? new Date().toISOString() : new Date(`${date}T12:00:00`).toISOString()
+    // a picked calendar day is stored as ~noon *in the app timezone* so the
+    // entry lands on that day for the user, not whichever clock the device has
+    const iso = date === todayStr() ? new Date().toISOString() : isoForDayKey(date, '12:00')
     addLog.mutate(
       { amount: n, note: note.trim() || null, date: iso },
       {
         onSuccess: () => {
-          const when = date === todayStr() ? '' : ` for ${new Date(`${date}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`
+          // show the *picked day* — the stored instant is app-tz noon, which
+          // can render as a different UTC date on extreme offsets
+          const when =
+            date === todayStr()
+              ? ''
+              : ` for ${new Date(`${date}T00:00:00Z`).toLocaleDateString('en-GB', {
+                  day: 'numeric',
+                  month: 'short',
+                  timeZone: 'UTC',
+                })}`
           toast.success(`Logged ${formatNumber(n)} ${unit || 'progress'}${when}`)
           setAmount('')
           setNote('')

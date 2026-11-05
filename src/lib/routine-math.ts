@@ -1,4 +1,5 @@
 import type { RoutineData } from './types'
+import { dayKeyAdd, dayKeyOf, dayKeyWeekday, getAppTimezone, tzMidnight, zonedWallTimeToUtc } from './app-time'
 
 export const DAY_MS = 86_400_000
 export const WEEK_MS = 7 * DAY_MS
@@ -6,13 +7,22 @@ export const WEEK_MS = 7 * DAY_MS
 export const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 export const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] // Mon-first display order
 
-/** Monday 00:00 of the week containing d. */
+/**
+ * ── Canonical days ────────────────────────────────────────────────────
+ * Every calendar day in this module is the *app-timezone midnight* of a day
+ * in the user's calendar (their chosen zone, or the device clock when set to
+ * automatic — see src/lib/app-time.ts). All comparisons, loops and week math
+ * then happen between midnights of the same timezone, so they agree on every
+ * device. dayStart() is idempotent by construction: canonicalizing an
+ * already-canonical day returns the same day. The midnight cache lives in
+ * app-time and is cleared whenever the zone changes.
+ */
+
+/** Monday 00:00 (app-tz) of the week containing d's day. */
 export function startOfWeek(d: Date): Date {
-  const copy = new Date(d)
-  const day = (copy.getDay() + 6) % 7 // Mon = 0
-  copy.setDate(copy.getDate() - day)
-  copy.setHours(0, 0, 0, 0)
-  return copy
+  const key = dayKeyOf(d)
+  const mon = (dayKeyWeekday(key) + 6) % 7 // Mon = 0
+  return tzMidnight(dayKeyAdd(key, -mon))
 }
 
 export function endOfWeek(d: Date): Date {
@@ -20,30 +30,26 @@ export function endOfWeek(d: Date): Date {
   return new Date(s.getTime() + WEEK_MS - 1)
 }
 
-/** Normalize any date to midnight of its day (local). */
+/** Canonical day (app-tz midnight) of the app-tz calendar day containing d. */
 export function dayStart(d: Date): Date {
-  const copy = new Date(d)
-  copy.setHours(0, 0, 0, 0)
-  return copy
+  return tzMidnight(dayKeyOf(d))
 }
 
 /**
- * Local calendar day as "YYYY-MM-DD". This is the wire format for routine
+ * App-tz calendar day as "YYYY-MM-DD". This is the wire format for routine
  * check-offs: it names a *day in the user's calendar* unambiguously, so the
  * server never has to guess the client's timezone (a full ISO timestamp of
  * local midnight shifts a day for every client outside UTC — the bug behind
  * "it syncs but the checkbox doesn't show ticked").
  */
 export function toDayKey(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  return dayKeyOf(d)
 }
 
 /**
- * Canonical DB instant for a calendar day: UTC midnight. Stored dates are
- * always canonicalized to this, so the same day written from any timezone
- * collides on the (routineId, date) unique index and serializes to the same
- * value — no duplicate check-offs, no cross-device drift.
+ * Canonical DB instant for a calendar day: UTC midnight. Routine dones are
+ * *stored* as this (uniqueness on (routineId, date) across timezones), while
+ * in-memory day math uses the app-tz midnight above.
  */
 export function canonicalDayUtc(dayKey: string): Date {
   return new Date(`${dayKey}T00:00:00Z`)
@@ -51,36 +57,33 @@ export function canonicalDayUtc(dayKey: string): Date {
 
 /**
  * Parse a dones wire date. "YYYY-MM-DD" (the day in the user's calendar) →
- * local midnight of that day, so dayStart() recovers the exact day in every
- * timezone. Legacy full-ISO strings (older exports) → the instant as-is.
+ * app-tz midnight of that day; legacy full-ISO strings (older exports) → the
+ * instant as-is (canonicalized by dayStart when used).
  */
 export function parseDayKey(s: string): Date {
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T00:00:00`) : new Date(s)
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? tzMidnight(s) : new Date(s)
 }
 
+/** Step a *canonical* (app-tz midnight) day by n calendar days — DST-proof. */
 export function addDays(d: Date, n: number): Date {
-  const copy = new Date(d)
-  copy.setDate(copy.getDate() + n)
-  return copy
+  return tzMidnight(dayKeyAdd(dayKeyOf(d), n))
 }
 
+/** Same app-tz calendar day? */
 export function sameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  )
+  return dayKeyOf(a) === dayKeyOf(b)
 }
 
 export function isToday(d: Date): boolean {
   return sameDay(d, new Date())
 }
 
-/** Effective end date for a routine: its own end, the goal deadline, or +2 years. */
+/** Effective end (canonical day): the routine's own end, the goal deadline,
+ *  or +2 years. Includes the end day itself. */
 export function routineEffectiveEnd(r: RoutineData, goalDeadline: string | null): Date {
-  if (r.endDate) return new Date(r.endDate)
-  if (goalDeadline) return new Date(goalDeadline)
-  return new Date(Date.now() + 2 * 365 * DAY_MS)
+  if (r.endDate) return dayStart(new Date(r.endDate))
+  if (goalDeadline) return dayStart(new Date(goalDeadline))
+  return addDays(dayStart(new Date()), 2 * 365)
 }
 
 function parseWeekdays(csv: string | null): number[] {
@@ -111,7 +114,8 @@ export function routineView(r: RoutineData, goalDeadline: string | null): Routin
 /** Does the routine have an occurrence on the given day? (Flexible routines
  *  float: they never pin to a day — see weekFlexProgress.) */
 export function occursOn(rv: RoutineView, day: Date): boolean {
-  const d = dayStart(day)
+  const key = dayKeyOf(day)
+  const d = tzMidnight(key)
   if (d < rv.start || d > rv.end) return false
   if (rv.data.cadence === 'flexible') return false
   if (rv.data.cadence === 'interval') {
@@ -120,15 +124,16 @@ export function occursOn(rv: RoutineView, day: Date): boolean {
     const diff = Math.round((d.getTime() - rv.start.getTime()) / DAY_MS)
     return diff >= 0 && diff % n === 0
   }
-  return rv.weekdays.includes(d.getDay())
+  // the weekday of the *calendar day*, straight from its day key
+  return rv.weekdays.includes(dayKeyWeekday(key))
 }
 
 /** Flexible routines: sessions done vs the weekly target, for one week. */
 export function weekFlexProgress(r: RoutineData, weekStart: Date): { done: number; target: number; left: number } {
   const ws = dayStart(weekStart)
   const we = addDays(ws, 7)
-  const done = r.dones.filter((d) => {
-    const dt = dayStart(parseDayKey(d.date))
+  const done = r.dones.filter((dn) => {
+    const dt = dayStart(parseDayKey(dn.date))
     return dt >= ws && dt < we
   }).length
   const target = r.timesPerWeek ?? 0
@@ -361,13 +366,15 @@ export function routineStats(
   }
 }
 
-/** Relative label for a nearby date: Today / Tomorrow / weekday name / short date. */
-export function relativeDayLabel(d: Date): string {
-  const today = new Date()
-  if (sameDay(d, today)) return 'Today'
-  if (sameDay(d, addDays(today, 1))) return 'Tomorrow'
-  if (sameDay(d, addDays(today, -1))) return 'Yesterday'
-  const diffDays = Math.round((dayStart(d).getTime() - dayStart(today).getTime()) / DAY_MS)
-  if (diffDays > 1 && diffDays <= 6) return WEEKDAY_LABELS[d.getDay()]
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+/** Relative label for a nearby date (app-tz days): Today / Tomorrow / weekday / short date. */
+export function relativeDayLabel(d: Date, now: Date = new Date()): string {
+  const key = dayKeyOf(d)
+  const t = Date.parse(`${key}T00:00:00Z`)
+  const today = Date.parse(`${dayKeyOf(now)}T00:00:00Z`)
+  if (t === today) return 'Today'
+  if (t === today + DAY_MS) return 'Tomorrow'
+  if (t === today - DAY_MS) return 'Yesterday'
+  const diffDays = Math.round((t - today) / DAY_MS)
+  if (diffDays > 1 && diffDays <= 6) return WEEKDAY_LABELS[dayKeyWeekday(key)]
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: getAppTimezone() })
 }

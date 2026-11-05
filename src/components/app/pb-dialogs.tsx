@@ -6,16 +6,16 @@ import { toast } from 'sonner'
 import type { GoalData, PersonalBestData } from '@/lib/types'
 import { formatNumber } from '@/lib/goal-math'
 import { beatsPb, currentPb } from '@/lib/pb-math'
+import { isoForDayKey, todayDayKey, getAppTimezone } from '@/lib/app-time'
 import { useAddPb, useAddPbRecord } from '@/hooks/use-goals'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 
+/** Today in the app timezone. */
 function todayStr(): string {
-  const d = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  return todayDayKey()
 }
 
 /**
@@ -180,7 +180,7 @@ export function RecordPbDialog({
       toast.error('Enter the result')
       return
     }
-    const iso = date === todayStr() ? new Date().toISOString() : new Date(`${date}T12:00:00`).toISOString()
+    const iso = date === todayStr() ? new Date().toISOString() : isoForDayKey(date, '12:00')
     addRecord.mutate(
       { pbId: pb.id, value: n, date: iso, note: note.trim() || null },
       {
@@ -213,7 +213,7 @@ export function RecordPbDialog({
           </DialogTitle>
           <DialogDescription>
             {best
-              ? `Current PB: ${formatNumber(best.value)}${pb.unit ? ` ${pb.unit}` : ''} — ${new Date(best.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`
+              ? `Current PB: ${formatNumber(best.value)}${pb.unit ? ` ${pb.unit}` : ''} — ${new Date(best.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: getAppTimezone() })}`
               : 'Log your first result to set the baseline.'}
           </DialogDescription>
         </DialogHeader>

@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import type { GoalData, RoutineData } from '@/lib/types'
 import { buildSkillMap } from '@/lib/skill-tree'
 import { WEEKDAY_LABELS, WEEKDAY_ORDER, describeCadence } from '@/lib/routine-math'
+import { dayKeyOf, getAppTimezone, isoForDayKey } from '@/lib/app-time'
 import { useAddRoutine, useUpdateRoutine } from '@/hooks/use-goals'
 import {
   Dialog,
@@ -30,11 +31,10 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 
+/** App-tz calendar day of a stored instant, as "YYYY-MM-DD" for date inputs. */
 function toDateString(iso: string | null | undefined): string {
   if (!iso) return ''
-  const d = new Date(iso)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  return dayKeyOf(new Date(iso), getAppTimezone())
 }
 
 type Cadence = 'interval' | 'weekly' | 'flexible'
@@ -66,6 +66,7 @@ export function RoutineDialog({
   const [credit, setCredit] = useState(routine?.credit != null ? String(routine.credit) : '')
   const [duration, setDuration] = useState(routine?.durationMin != null ? String(routine.durationMin) : '')
   const [startDate, setStartDate] = useState(toDateString(routine?.startDate ?? new Date().toISOString()))
+
   const [endDate, setEndDate] = useState(toDateString(routine?.endDate))
 
   // the goal's checkpoints, grouped by path — what this session advances
@@ -109,8 +110,8 @@ export function RoutineDialog({
       nodeId: nodeId === 'none' ? null : nodeId,
       credit: nodeId !== 'none' && credit ? parseFloat(credit) : null,
       durationMin: duration ? parseInt(duration, 10) : null,
-      startDate: startDate ? new Date(`${startDate}T12:00:00`).toISOString() : null,
-      endDate: endDate ? new Date(`${endDate}T23:59:59`).toISOString() : null,
+      startDate: startDate ? isoForDayKey(startDate, '12:00') : null,
+      endDate: endDate ? isoForDayKey(endDate, '23:59:59') : null,
     }
     if (isEdit && routine) {
       updateRoutine.mutate(

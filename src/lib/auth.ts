@@ -20,6 +20,8 @@ export interface SessionUser {
   id: string
   email: string
   name: string | null
+  /** raw app-settings JSON (theme + timezone) — parsed by normalizeSettings */
+  settings: string | null
 }
 
 /** Validate a Netlify Identity JWT; returns the identity user or null. */
@@ -28,7 +30,7 @@ async function verifyIdentityToken(token: string): Promise<SessionUser | null> {
     // preview: shim-issued token
     const claims = verifyAccessToken(token)
     if (claims) {
-      const row = await db.user.findUnique({ where: { id: claims.sub }, select: { id: true, email: true, name: true } })
+      const row = await db.user.findUnique({ where: { id: claims.sub }, select: { id: true, email: true, name: true, settings: true } })
       if (row) return row
     }
     // fall through: maybe the preview is pointed at production data and a
@@ -53,7 +55,21 @@ async function verifyIdentityToken(token: string): Promise<SessionUser | null> {
     }
     if (!u?.id || !u?.email) return null
     const name = u.user_metadata?.full_name ?? u.user_metadata?.name ?? null
-    return { id: u.id, email: u.email, name: typeof name === 'string' && name.trim() ? name.trim() : null }
+    // production rows carry the settings JSON; fetch it (a row that predates
+    // the column reads as null = defaults, which is the right fallback)
+    let settings: string | null = null
+    try {
+      const row = await db.user.findUnique({ where: { id: u.id }, select: { settings: true } })
+      settings = row?.settings ?? null
+    } catch {
+      settings = null // column not migrated yet — defaults until it is
+    }
+    return {
+      id: u.id,
+      email: u.email,
+      name: typeof name === 'string' && name.trim() ? name.trim() : null,
+      settings,
+    }
   } catch {
     return null
   }
@@ -64,16 +80,16 @@ async function verifyIdentityToken(token: string): Promise<SessionUser | null> {
  * adopt any unclaimed goals so nothing built before signing in is lost).
  */
 async function syncUser(user: SessionUser): Promise<SessionUser> {
-  let existing = await db.user.findUnique({ where: { id: user.id }, select: { id: true, email: true, name: true } })
+  let existing = await db.user.findUnique({ where: { id: user.id }, select: { id: true, email: true, name: true, settings: true } })
   if (!existing) {
     try {
       await db.user.create({ data: { id: user.id, email: user.email, name: user.name } })
-      existing = { id: user.id, email: user.email, name: user.name }
+      existing = { id: user.id, email: user.email, name: user.name, settings: null }
     } catch {
       // extremely unlikely (email collision across identity systems) —
       // still let them in as a verified identity user
       console.error('syncUser: could not create the app row for', user.id)
-      existing = { id: user.id, email: user.email, name: user.name }
+      existing = { id: user.id, email: user.email, name: user.name, settings: null }
     }
   }
 
@@ -96,7 +112,12 @@ async function syncUser(user: SessionUser): Promise<SessionUser> {
       })
       .catch(() => undefined)
   }
-  return { id: existing.id, email: user.email, name: user.name ?? existing.name }
+  return {
+    id: existing.id,
+    email: user.email,
+    name: user.name ?? existing.name,
+    settings: user.settings ?? existing.settings,
+  }
 }
 
 /** Guard for API routes: returns the signed-in user or a 401 Response. */

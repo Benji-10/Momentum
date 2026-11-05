@@ -10,6 +10,7 @@ import {
   type NormalizedImport,
 } from '@/lib/import-format'
 import { useImportGoals } from '@/hooks/use-goals'
+import { getAppTimezone } from '@/lib/app-time'
 import {
   Dialog,
   DialogContent,
@@ -255,7 +256,7 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
                         {g.paths.some((p) => p.nodes.some((n) => n.milestones.length > 0)) &&
                           ` · ${g.paths.reduce((s, p) => s + p.nodes.reduce((y, n) => y + n.milestones.length, 0), 0)} sub-★`}
                         {g.routines.length > 0 && ` · ${g.routines.length} routines`}
-                        {g.deadline && ` · by ${new Date(g.deadline).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`}
+                        {g.deadline && ` · by ${new Date(g.deadline).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: getAppTimezone() })}`}
                       </div>
                     </div>
                   </div>

@@ -23,7 +23,6 @@ import { toast } from 'sonner'
 import type { GoalData, RoutineData } from '@/lib/types'
 import {
   addDays,
-  dayStart,
   describeCadence,
   isRoutineDone,
   occurrencesInRange,
@@ -34,6 +33,7 @@ import {
   weekFlexProgress,
   type Occurrence,
 } from '@/lib/routine-math'
+import { getAppTimezone } from '@/lib/app-time'
 import { goalColor } from '@/lib/goal-colors'
 import { formatNumber } from '@/lib/goal-math'
 import { useDeleteRoutine, useToggleRoutineDone } from '@/hooks/use-goals'
@@ -306,7 +306,7 @@ export function ScheduleTab({
     )
     const byDay = new Map<string, { occ: Occurrence; goal: GoalData }[]>()
     for (const o of all) {
-      const key = dayStart(o.occ.date).toDateString()
+      const key = toDayKey(o.occ.date) // app-tz calendar day, stable across devices
       if (!byDay.has(key)) byDay.set(key, [])
       byDay.get(key)!.push(o)
     }
@@ -416,8 +416,8 @@ export function ScheduleTab({
         </div>
         <div className="min-w-0">
           <div className="text-sm font-bold">
-            {weekStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} –{' '}
-            {weekEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+            {weekStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: getAppTimezone() })} –{' '}
+            {weekEnd.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: getAppTimezone() })}
           </div>
           <div className="text-xs text-muted-foreground">
             {weekOffset === 0
@@ -592,7 +592,7 @@ export function ScheduleTab({
       {/* week grid */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
         {days.map((d, i) => {
-          const list = occurrencesByDay.get(dayStart(d).toDateString()) ?? []
+          const list = occurrencesByDay.get(toDayKey(d)) ?? []
           const visible = list.filter((x) => showForgiven || x.occ.state !== 'forgiven')
           const forgivenCount = list.length - visible.length
           const isToday = sameDay(d, now)
@@ -609,7 +609,7 @@ export function ScheduleTab({
                   {DAY_LABELS[i]}
                 </span>
                 <span className={cn('text-xs tabular-nums', isToday ? 'font-bold text-primary' : 'text-muted-foreground')}>
-                  {d.getDate()}
+                  {Number(toDayKey(d).slice(8, 10))}
                 </span>
               </div>
               {list.length === 0 ? (

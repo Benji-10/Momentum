@@ -1,21 +1,26 @@
 import type { GoalData, GoalStepData, TrackStatus } from './types'
-import { parseDayKey } from './routine-math'
+import {
+  DAY_MS,
+  WEEK_MS,
+  addDays,
+  dayStart,
+  endOfWeek as endOfWeekCanonical,
+  parseDayKey,
+  startOfWeek,
+  toDayKey,
+} from './routine-math'
+import { dayKeyOf, getAppTimezone } from './app-time'
 
-export const DAY_MS = 86_400_000
-export const WEEK_MS = 7 * DAY_MS
+export { DAY_MS, WEEK_MS, startOfWeek, addDays, dayStart, parseDayKey }
 
-/** Monday 00:00 of the week containing d. */
-export function startOfWeek(d: Date): Date {
-  const copy = new Date(d)
-  const day = (copy.getDay() + 6) % 7 // Mon = 0
-  copy.setDate(copy.getDate() - day)
-  copy.setHours(0, 0, 0, 0)
-  return copy
+/** End of the app-tz week containing d (Sunday 23:59:59.999). */
+export function endOfWeek(d: Date): Date {
+  return endOfWeekCanonical(d)
 }
 
-export function endOfWeek(d: Date): Date {
-  const s = startOfWeek(d)
-  return new Date(s.getTime() + WEEK_MS - 1)
+/** App-tz canonical day of a stored log/progress date (full ISO or day key). */
+function logDay(l: { date: string }): number {
+  return dayStart(parseDayKey(l.date)).getTime()
 }
 
 /** Amount logged during the week containing `ref`. */
@@ -24,7 +29,7 @@ export function amountInWeek(logs: GoalData['logs'], ref: Date, weekStartOffset 
   const we = new Date(ws.getTime() + WEEK_MS)
   return logs
     .filter((l) => {
-      const t = new Date(l.date).getTime()
+      const t = logDay(l)
       return t >= ws.getTime() && t < we.getTime()
     })
     .reduce((s, l) => s + l.amount, 0)
@@ -44,13 +49,15 @@ export function weeklyHistory(logs: GoalData['logs'], weeks = 8, ref = new Date(
     const we = new Date(ws.getTime() + WEEK_MS)
     const amount = logs
       .filter((l) => {
-        const t = new Date(l.date).getTime()
+        const t = logDay(l)
         return t >= ws.getTime() && t < we.getTime()
       })
       .reduce((s, l) => s + l.amount, 0)
     out.push({
       weekStart: ws,
-      label: `${ws.getDate()}/${ws.getMonth() + 1}`,
+      // label from the day key — ws is an app-tz midnight, so UTC getters
+      // on it would be off by a day for positive offsets
+      label: `${+dayKeyOf(ws).slice(8, 10)}/${+dayKeyOf(ws).slice(5, 7)}`,
       amount: Math.round(amount * 100) / 100,
     })
   }
@@ -144,7 +151,7 @@ export function computeGoalStats(goal: GoalData, now = new Date()): GoalStats {
   const activeSince = Math.max(created.getTime(), paceWindowStart)
   const paceWeeks = Math.max(1, (now.getTime() - activeSince) / WEEK_MS)
   const paceAmount = logs
-    .filter((l) => new Date(l.date).getTime() >= paceWindowStart)
+    .filter((l) => logDay(l) >= paceWindowStart)
     .reduce((s, l) => s + l.amount, 0)
   const actualPacePerWeek = Math.round((paceAmount / paceWeeks) * 100) / 100
 
@@ -288,7 +295,7 @@ export function cumulativeSeries(goal: GoalData, now = new Date()): CumulativePo
   let cum = 0
   let li = 0
   for (let t = start.getTime(); t <= spanEnd; t += stepDays * DAY_MS) {
-    while (li < logs.length && new Date(logs[li].date).getTime() <= t) {
+    while (li < logs.length && logDay(logs[li]) <= t) {
       cum += logs[li].amount
       li++
     }
@@ -307,11 +314,11 @@ export function formatNumber(n: number): string {
 }
 
 export function formatDateShort(d: Date): string {
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: getAppTimezone() })
 }
 
 export function formatDateLong(d: Date): string {
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: getAppTimezone() })
 }
 
 // ---------------------------------------------------------------------------
@@ -352,14 +359,17 @@ export function timeSpent(goal: GoalData, now = new Date()): TimeSpent | null {
   const timeUnit = isTimeUnitGoal(goal)
   let events: { date: number; hours: number }[]
 
+  // event dates are canonical app-tz days (dayStart∘parseDayKey): the day a
+  // session happened *in the user's timezone*, regardless of which device's
+  // clock stored it
   if (timeUnit === 'hours') {
-    events = goal.logs.map((l) => ({ date: +parseDayKey(l.date), hours: l.amount }))
+    events = goal.logs.map((l) => ({ date: logDay(l), hours: l.amount }))
   } else if (timeUnit === 'minutes') {
-    events = goal.logs.map((l) => ({ date: +parseDayKey(l.date), hours: l.amount / 60 }))
+    events = goal.logs.map((l) => ({ date: logDay(l), hours: l.amount / 60 }))
   } else {
     events = goal.routines
       .filter((r) => !r.archived && r.durationMin != null && r.durationMin > 0)
-      .flatMap((r) => r.dones.map((d) => ({ date: +parseDayKey(d.date), hours: r.durationMin! / 60 })))
+      .flatMap((r) => r.dones.map((d) => ({ date: logDay(d), hours: r.durationMin! / 60 })))
   }
 
   if (events.length === 0) return null
@@ -370,9 +380,7 @@ export function timeSpent(goal: GoalData, now = new Date()): TimeSpent | null {
   // one point per day (several sessions a day stack), then cumulative
   const perDay = new Map<number, number>()
   for (const e of events) {
-    const day = new Date(e.date)
-    day.setHours(0, 0, 0, 0)
-    perDay.set(day.getTime(), (perDay.get(day.getTime()) ?? 0) + e.hours)
+    perDay.set(e.date, (perDay.get(e.date) ?? 0) + e.hours)
   }
   const series: TimeSpentPoint[] = []
   let cum = 0
@@ -381,10 +389,9 @@ export function timeSpent(goal: GoalData, now = new Date()): TimeSpent | null {
     series.push({ date: day, hours: cum })
   }
   // extend the line to today so "time going up" includes the present
-  const today = new Date(now)
-  today.setHours(0, 0, 0, 0)
-  if (today.getTime() > series[series.length - 1].date) {
-    series.push({ date: today.getTime(), hours: series[series.length - 1].hours })
+  const today = dayStart(now).getTime()
+  if (today > series[series.length - 1].date) {
+    series.push({ date: today, hours: series[series.length - 1].hours })
   }
 
   const weekStart = startOfWeek(now).getTime()

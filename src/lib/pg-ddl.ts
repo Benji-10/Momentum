@@ -12,6 +12,7 @@ CREATE TABLE "User" (
     "email" TEXT NOT NULL,
     "name" TEXT,
     "passwordHash" TEXT,
+    "settings" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -260,8 +261,13 @@ ALTER TABLE "PersonalBest" ADD CONSTRAINT "PersonalBest_goalId_fkey" FOREIGN KEY
  * deployment would never receive new tables — each entry here is checked
  * and applied on its own, and is written idempotently (IF NOT EXISTS) so
  * racing cold starts can't fight over it.
+ *
+ * Two shapes:
+ *  - { table, sql }            — applied when the *table* is missing
+ *  - { table, column, sql }    — applied when the *column* is missing
+ *    (for features that add a column to an existing table)
  */
-export const PG_MIGRATIONS: { table: string; sql: string }[] = [
+export const PG_MIGRATIONS: { table: string; column?: string; sql: string }[] = [
   {
     table: 'PersonalBest',
     sql: `-- v1.1: personal-best metrics (PB WPM, PB BLD, …)
@@ -279,5 +285,11 @@ CREATE TABLE IF NOT EXISTS "PersonalBest" (
 );
 CREATE INDEX IF NOT EXISTS "PersonalBest_goalId_idx" ON "PersonalBest"("goalId");
 CREATE UNIQUE INDEX IF NOT EXISTS "PersonalBest_goalId_name_key" ON "PersonalBest"("goalId", "name");`,
+  },
+  {
+    // v1.2: per-account app settings (theme + timezone), synced across devices
+    table: 'User',
+    column: 'settings',
+    sql: `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "settings" TEXT;`,
   },
 ]

@@ -29,11 +29,19 @@ with flexible routines, and watch the log write itself as you check things off.
 - **Accounts** — Netlify Identity behind a custom sign-in / sign-up screen
   (no default identity widget). Every account sees only its own data, on any
   device.
+- **Synced settings** — the theme and the *time zone* the app bases “today”
+  on are saved to your account (`Settings` in the account menu) and applied
+  on every device. Pick `Automatic` and each device follows its own clock,
+  or fix a zone like `America/Chicago` so a laptop still set to London time
+  never shows tomorrow's tasks early — check-offs, schedule weeks, stats
+  and chart dates all follow the same day boundary (see
+  `src/lib/app-time.ts`).
 - **Import / Export** — one-click JSON backup using the versioned `v1`
   schema (see `src/lib/import-format.ts`); the parser is tolerant of multiple
   goals, nullable fields and empty arrays.
 - **Six themes** — Paper, Meadow, Blossom (light) · Charcoal, Forest, Sunset
-  (dark) — plus confetti when a node levels up.
+  (dark) — plus confetti when a node levels up. Picking a theme anywhere
+  (header palette or Settings) syncs it to the account.
 - **Mobile-first fit** — the page never scrolls sideways (tested 320–390 px:
   the header collapses to icon actions, Import/Export move into the menus,
   and any Netlify-injected badge iframe is hidden). Inner strips (tab rows,

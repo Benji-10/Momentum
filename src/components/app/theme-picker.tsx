@@ -4,6 +4,8 @@ import { useState } from 'react'
 import { Check, Download, FileJson, Moon, Palette } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTheme } from 'next-themes'
+import { useUpdateSettings } from '@/hooks/use-auth'
+import { todayDayKey } from '@/lib/app-time'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -29,8 +31,28 @@ export const THEME_OPTIONS: {
   { key: 'sunset', label: 'Sunset', hint: 'Warm amber dark', swatch: ['#2e2620', '#3a3028', '#fbbf24'] },
 ]
 
+/** Picks that live on the account (synced to every device): apply locally
+ *  right away, save in the background. */
+function useThemePick() {
+  const { setTheme } = useTheme()
+  const saveSettings = useUpdateSettings()
+  return (key: string) => {
+    setTheme(key)
+    saveSettings.mutate(
+      { theme: key },
+      {
+        onError: (err) =>
+          toast.error('Could not save your theme', {
+            description: `${err.message} — it still applies on this device.`,
+          }),
+      },
+    )
+  }
+}
+
 export function ThemePicker() {
-  const { theme, setTheme } = useTheme()
+  const { theme } = useTheme()
+  const pick = useThemePick()
 
   return (
     <DropdownMenu>
@@ -47,7 +69,7 @@ export function ThemePicker() {
         {THEME_OPTIONS.map((t) => (
           <DropdownMenuItem
             key={t.key}
-            onClick={() => setTheme(t.key)}
+            onClick={() => pick(t.key)}
             className="gap-2.5"
             aria-checked={theme === t.key}
           >
@@ -79,7 +101,7 @@ export async function exportData() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `momentum-roadmap-${new Date().toISOString().slice(0, 10)}.json`
+    a.download = `momentum-roadmap-${todayDayKey()}.json`
     document.body.appendChild(a)
     a.click()
     a.remove()
@@ -130,7 +152,8 @@ export function ImportButton({ onClick }: { onClick: () => void }) {
 
 /** Small inline theme swatch row (used in the empty state / footer). */
 export function ThemeQuickRow({ className }: { className?: string }) {
-  const { theme, setTheme } = useTheme()
+  const { theme } = useTheme()
+  const pick = useThemePick()
   return (
     <div className={cn('flex items-center gap-1.5', className)} role="radiogroup" aria-label="Theme">
       {THEME_OPTIONS.map((t) => (
@@ -141,7 +164,7 @@ export function ThemeQuickRow({ className }: { className?: string }) {
           aria-checked={theme === t.key}
           aria-label={`${t.label} theme`}
           title={`${t.label} — ${t.hint}`}
-          onClick={() => setTheme(t.key)}
+          onClick={() => pick(t.key)}
           className={cn(
             'h-6 w-6 rounded-full border-2 transition-transform hover:scale-110',
             theme === t.key ? 'border-foreground/70 scale-110' : 'border-transparent',

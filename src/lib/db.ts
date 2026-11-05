@@ -47,16 +47,25 @@ async function tableExists(table: string): Promise<boolean> {
   return !!rows[0]?.has
 }
 
+/** Does a column exist on a table? (Postgres — information_schema) */
+async function columnExists(table: string, column: string): Promise<boolean> {
+  const rows = await db.$queryRaw<Array<{ has: number }>>(
+    Prisma.sql`SELECT COUNT(*)::int as has FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ${table} AND column_name = ${column}`,
+  )
+  return (rows[0]?.has ?? 0) > 0
+}
+
 /**
  * Keeping the database ready, with zero migration steps for the user:
  *
  *  - a brand-new Neon database gets the whole schema on the very first
  *    authenticated request (idempotent: checked via the Goal table), and
- *  - a deployment that predates a feature gets each missing table from
- *    PG_MIGRATIONS — so upgrading is just "deploy the new code".
+ *  - a deployment that predates a feature gets each missing table (and,
+ *    for column additions, each missing column) from PG_MIGRATIONS — so
+ *    upgrading is just "deploy the new code".
  */
 export function ensureDbReady(): Promise<void> {
-  if (!isPostgresMode) return Promise.resolve()
+  if (!isPostgresMode) return ensureSqliteReady()
   if (!globalForPrisma.pgBootstrapped) {
     globalForPrisma.pgBootstrapped = (async () => {
       // 1. fresh database → create the whole schema in one transaction
@@ -71,19 +80,65 @@ export function ensureDbReady(): Promise<void> {
       // 2. existing deployment → apply whatever per-table migrations are missing
       for (const migration of PG_MIGRATIONS) {
         const table = `public."${migration.table}"`
-        if (await tableExists(table)) continue
+        let missing: boolean
+        if (migration.column) {
+          missing = !(await columnExists(migration.table, migration.column))
+        } else {
+          missing = !(await tableExists(table))
+        }
+        if (!missing) continue
         try {
           await db.$transaction(splitStatements(migration.sql).map((sql) => db.$executeRawUnsafe(sql)))
         } catch {
           // the DDL is idempotent (IF NOT EXISTS), so a racing request that
-          // already created the table is the expected "failure"
-          if (!(await tableExists(table))) {
+          // already applied it is the expected "failure"
+          const stillMissing = migration.column
+            ? !(await columnExists(migration.table, migration.column))
+            : !(await tableExists(table))
+          if (stillMissing) {
             throw new Error(`Could not upgrade the database schema (${migration.table})`)
           }
         }
       }
     })().catch((e) => {
       globalForPrisma.pgBootstrapped = undefined // let the next request retry
+      throw e
+    })
+  }
+  return globalForPrisma.pgBootstrapped
+}
+
+/**
+ * SQLite (local dev / preview): the file database is created by
+ * `prisma db push`, but an existing file predating a schema change won't
+ * have new columns. Add them here so local upgrades are also zero-touch.
+ * Mirrors the PG migration list where it applies to SQLite.
+ */
+function ensureSqliteReady(): Promise<void> {
+  if (!globalForPrisma.pgBootstrapped) {
+    globalForPrisma.pgBootstrapped = (async () => {
+      for (const m of PG_MIGRATIONS) {
+        if (!m.column) continue // table-creating migrations don't apply: db push made the tables
+        // PRAGMA can't take bind parameters — the identifiers below come from
+        // our own constant migration list (never user input), so raw is safe
+        const rows = await db.$queryRawUnsafe<Array<{ name: string }>>(
+          `PRAGMA table_info("${m.table}")`,
+        )
+        if (rows.some((r) => r.name === m.column)) continue
+        try {
+          await db.$executeRawUnsafe(`ALTER TABLE "${m.table}" ADD COLUMN "${m.column}" TEXT`)
+        } catch {
+          // racing request or already added — re-check below
+          const recheck = await db.$queryRawUnsafe<Array<{ name: string }>>(
+            `PRAGMA table_info("${m.table}")`,
+          )
+          if (!recheck.some((r) => r.name === m.column)) {
+            throw new Error(`Could not upgrade the local database (${m.table}.${m.column})`)
+          }
+        }
+      }
+    })().catch((e) => {
+      globalForPrisma.pgBootstrapped = undefined
       throw e
     })
   }

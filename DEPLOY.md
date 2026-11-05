@@ -40,7 +40,9 @@ a local SQLite file and a built-in GoTrue-compatible identity shim, so
      their email before first sign-in; the app handles both cases.
    - External providers: none needed (email + password is the custom UX).
 4. Deploy. On the **first** authenticated request the app creates every
-   table it needs on Neon automatically — no migrations to run.
+   table it needs on Neon automatically — no migrations to run. Redeploys
+   that add columns (e.g. `User.settings` for synced theme/time-zone) are
+   applied the same way: each missing column is added on first request.
 
 Sign up from the deployed site, and the same account works from your phone,
 laptop, anywhere.

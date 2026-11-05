@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 import { Check, CopyPlus, Dices, Loader2, Plus, Sparkles, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { TEMPLATES } from '@/lib/templates'
+import { isoForDayKey, todayDayKey } from '@/lib/app-time'
 import { useBulkCreateGoals, type BulkGoalInput } from '@/hooks/use-goals'
 import {
   Dialog,
@@ -128,7 +129,7 @@ export function BulkCreateDialog({
         targetValue: r.type === 'quantitative' ? target : null,
         unit: r.unit.trim() || null,
         weeklyTarget: r.weekly ? parseFloat(r.weekly) || null : null,
-        deadline: r.deadline ? new Date(`${r.deadline}T23:59:59`).toISOString() : null,
+        deadline: r.deadline ? isoForDayKey(r.deadline, '23:59:59') : null,
       })
     }
     if (inputs.length === 0) {
@@ -294,7 +295,7 @@ export function BulkCreateDialog({
                   <Input
                     type="date"
                     value={r.deadline}
-                    min={new Date().toISOString().slice(0, 10)}
+                    min={todayDayKey()}
                     onChange={(e) => patchRow(r.key, { deadline: e.target.value })}
                     className="mt-0.5 h-8"
                   />

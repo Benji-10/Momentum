@@ -38,7 +38,8 @@ import {
 } from '@/lib/goal-math'
 import { goalColor } from '@/lib/goal-colors'
 import { buildSkillMap } from '@/lib/skill-tree'
-import { describeCadence, occurrencesInRange, relativeDayLabel, routineStats, sameDay, toDayKey } from '@/lib/routine-math'
+import { describeCadence, occurrencesInRange, relativeDayLabel, routineStats, sameDay, startOfWeek, addDays, toDayKey } from '@/lib/routine-math'
+import { isoForDayKey, todayDayKey } from '@/lib/app-time'
 import { parseGoalScopeImport } from '@/lib/import-format'
 import {
   useAddLog,
@@ -84,10 +85,9 @@ import { SkillMapGrid } from '@/components/app/skill-map'
 import { RoutineDialog } from '@/components/app/routine-dialog'
 import { cn } from '@/lib/utils'
 
+/** Today in the app timezone. */
 function todayStr(): string {
-  const d = new Date()
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  return todayDayKey()
 }
 
 function quickAmounts(unit: string | null): number[] {
@@ -252,10 +252,8 @@ function DetailBody({
 
   const routines = goal.routines.filter((r) => !r.archived)
   const weekRoutineOccs = useMemo(() => {
-    const now = new Date()
-    const mon = new Date(now)
-    mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7))
-    const sun = new Date(mon.getTime() + 6 * 86_400_000)
+    const mon = startOfWeek(new Date())
+    const sun = addDays(mon, 6)
     return occurrencesInRange(routines, goal.deadline, mon, sun)
   }, [routines, goal.deadline])
 
@@ -265,7 +263,7 @@ function DetailBody({
       toast.error('Enter an amount greater than 0')
       return
     }
-    const iso = date === todayStr() ? new Date().toISOString() : new Date(`${date}T12:00:00`).toISOString()
+    const iso = date === todayStr() ? new Date().toISOString() : isoForDayKey(date, '12:00')
     addLog.mutate(
       { amount: n, note: note.trim() || null, date: iso },
       {

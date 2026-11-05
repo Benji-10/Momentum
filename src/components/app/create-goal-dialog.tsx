@@ -33,25 +33,26 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { WEEK_MS, formatNumber } from '@/lib/goal-math'
+import { dayKeyOf, getAppTimezone, isoForDayKey, todayDayKey } from '@/lib/app-time'
 
 const UNIT_OPTIONS = ['books', 'pages', 'chapters', 'hours', 'sessions', 'km', 'workouts', 'words', 'reps', 'recipes']
 
 function defaultDeadlineISO(): string {
-  const d = new Date(new Date().getFullYear(), 11, 31, 23, 59, 59) // Dec 31, 23:59
-  return d.toISOString()
+  // Dec 31 of the current app-tz year, end of that day in the app timezone
+  return isoForDayKey(`${todayDayKey().slice(0, 4)}-12-31`, '23:59:59')
 }
 
+/** App-tz calendar day of a stored deadline instant, for the date input. */
 function toDateString(iso: string | null | undefined): string {
   if (!iso) return ''
-  const d = new Date(iso)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  return dayKeyOf(new Date(iso), getAppTimezone())
 }
 
+/** Store the picked day as end-of-day in the app timezone. */
 function fromDateString(ds: string): string | null {
   if (!ds) return null
-  const d = new Date(`${ds}T23:59:59`)
-  return isNaN(d.getTime()) ? null : d.toISOString()
+  const iso = isoForDayKey(ds, '23:59:59')
+  return isNaN(Date.parse(iso)) ? null : iso
 }
 
 interface Props {
@@ -529,7 +530,7 @@ export function CreateGoalDialog({ open, onOpenChange, editGoal, categories = []
                 <div className="font-semibold">{title || 'Untitled goal'}</div>
                 <div className="text-xs text-muted-foreground">
                   {type === 'quantitative' ? 'Target goal' : 'Plan goal'}
-                  {deadlineISO ? ` · by ${new Date(deadlineISO).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}
+                  {deadlineISO ? ` · by ${new Date(deadlineISO).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: getAppTimezone() })}` : ''}
                 </div>
               </div>
             </div>
