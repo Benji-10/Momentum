@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Check, ChevronDown, Crown, Lock, Pencil, Plus, Sparkles, Trash2, Wand2, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Crown, Lock, Pencil, Plus, Sparkles, Trash2, Wand2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData, SkillPathData } from '@/lib/types'
 import { buildSkillMap, type SkillNodeView, type SkillPathView } from '@/lib/skill-tree'
@@ -10,24 +10,16 @@ import { formatNumber } from '@/lib/goal-math'
 import {
   useAddNode,
   useAddPath,
-  useDeleteNode,
   useDeletePath,
   useUpdateNode,
   useUpdatePath,
 } from '@/hooks/use-goals'
+import { NodeEditDialog } from '@/components/app/node-edit-dialog'
+import { PathEditDialog } from '@/components/app/path-edit-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -93,32 +85,12 @@ function NodePopover({
   children: React.ReactNode
 }) {
   const updateNode = useUpdateNode(goal.id)
-  const deleteNode = useDeleteNode(goal.id)
   const accent = goalColor(goal.color).hex
   const n = view.node
   const [exact, setExact] = useState('')
+  // full settings dialog (icon/unit/notes/milestones/gating/derivation) —
+  // rendered outside the popover so it survives the popover closing
   const [editOpen, setEditOpen] = useState(false)
-  const [editTitle, setEditTitle] = useState(n.title)
-  const [editTarget, setEditTarget] = useState(String(n.targetValue))
-  const [editXp, setEditXp] = useState(String(n.xpValue))
-  // derivation: source id ('none' = off) + how many source units make 1 of ours
-  const [editSource, setEditSource] = useState<string>(n.deriveFromId ?? 'none')
-  const [editFactor, setEditFactor] = useState(n.deriveFactor != null ? String(n.deriveFactor) : '')
-
-  // candidates: any checkpoint in this goal, except itself and other derived
-  // meters (a meter can't be a source — one level only)
-  const sourceGroups = goal.skillPaths
-    .slice()
-    .sort((a, b) => a.order - b.order)
-    .map((p) => ({
-      title: p.title,
-      icon: p.icon,
-      nodes: p.nodes
-        .slice()
-        .sort((a, b) => a.order - b.order)
-        .filter((x) => x.id !== n.id && x.deriveFromId == null)
-        .map((x) => ({ id: x.id, title: x.title, unit: x.unit ?? p.unit ?? null })),
-    }))
 
   const remaining = Math.max(0, n.targetValue - n.currentValue)
 
@@ -144,19 +116,9 @@ function NodePopover({
     setExact('')
   }
 
-  function handleDelete() {
-    deleteNode.mutate(
-      { nodeId: n.id },
-      {
-        onSuccess: () => toast.success('Node removed'),
-        onError: (e) => toast.error('Could not remove node', { description: e.message }),
-      },
-    )
-    onOpenChange(false)
-  }
-
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
+    <>
+      <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent
         align="center"
@@ -290,154 +252,34 @@ function NodePopover({
           </Button>
         )}
 
-        {/* edit / delete — tucked away so the default view stays simple */}
+        {/* settings — one tap opens the full editor dialog (icon, unit,
+            sub-checkpoints, unlock gating, derivation, move, delete) */}
         <div className="mt-3 border-t pt-2">
           <button
             type="button"
-            onClick={() => setEditOpen(!editOpen)}
-            className="flex w-full items-center justify-between gap-2 rounded-md px-1 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-            aria-expanded={editOpen}
+            onClick={() => {
+              setEditOpen(true)
+              onOpenChange(false)
+            }}
+            className="flex w-full items-center justify-center gap-1.5 rounded-md px-1 py-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
           >
-            <span className="inline-flex items-center gap-1.5">
-              <Pencil className="h-3 w-3" /> Edit checkpoint
-            </span>
-            <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', editOpen && 'rotate-180')} />
+            <Pencil className="h-3 w-3" /> Edit checkpoint
           </button>
-          {editOpen && (
-            <div className="mt-2 space-y-2">
-              <div className="grid grid-cols-[1fr_70px_60px] gap-1.5">
-                <Input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} className="h-8 text-xs" aria-label="Node title" />
-                <Input
-                  value={editTarget}
-                  onChange={(e) => setEditTarget(e.target.value)}
-                  type="number"
-                  min={1}
-                  className="h-8 text-xs"
-                  aria-label="Target value"
-                  title="Target"
-                />
-                <Input
-                  value={editXp}
-                  onChange={(e) => setEditXp(e.target.value)}
-                  type="number"
-                  min={1}
-                  className="h-8 text-xs"
-                  aria-label="XP value"
-                  title="XP"
-                />
-              </div>
-              <div className="space-y-1.5 rounded-lg border border-dashed bg-muted/30 p-2">
-                <Label className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-                  <Wand2 className="h-3 w-3 text-violet-500" /> Auto-advance from another checkpoint
-                </Label>
-                <Select value={editSource} onValueChange={setEditSource}>
-                  <SelectTrigger className="h-8 w-full text-xs" aria-label="Derivation source">
-                    <SelectValue placeholder="Pick a source checkpoint…" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-56">
-                    <SelectItem value="none">Off — enter progress by hand</SelectItem>
-                    {sourceGroups.map((g) => (
-                      <SelectGroup key={g.title}>
-                        <SelectLabel>
-                          {g.icon} {g.title}
-                        </SelectLabel>
-                        {g.nodes.map((x) => (
-                          <SelectItem key={x.id} value={x.id}>
-                            {x.title}
-                            {x.unit ? ` (${x.unit})` : ''}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {editSource !== 'none' && (
-                  <div className="flex items-center gap-2">
-                    <span className="shrink-0 text-[11px] leading-tight text-muted-foreground">Every</span>
-                    <Input
-                      value={editFactor}
-                      onChange={(e) => setEditFactor(e.target.value)}
-                      type="number"
-                      min={0.01}
-                      step="any"
-                      className="h-8 w-20 text-xs"
-                      aria-label="Source units per 1 of this checkpoint"
-                      placeholder="e.g. 300"
-                    />
-                    <span className="min-w-0 text-[11px] leading-tight text-muted-foreground">
-                      of the source = 1 {view.unit ?? 'unit'} here
-                    </span>
-                  </div>
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-1.5">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="h-8"
-                  disabled={updateNode.isPending}
-                  onClick={() => updateNode.mutate({ nodeId: n.id, patch: { move: 'up' } })}
-                  title="Swap with the checkpoint above"
-                >
-                  <ArrowUp className="h-3.5 w-3.5" /> Up
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="h-8"
-                  disabled={updateNode.isPending}
-                  onClick={() => updateNode.mutate({ nodeId: n.id, patch: { move: 'down' } })}
-                  title="Swap with the checkpoint below"
-                >
-                  <ArrowDown className="h-3.5 w-3.5" /> Down
-                </Button>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="h-8 flex-1"
-                  disabled={updateNode.isPending || !editTitle.trim()}
-                  onClick={() => {
-                    const t = parseFloat(editTarget)
-                    const x = parseInt(editXp, 10)
-                    const src = editSource === 'none' ? null : editSource
-                    const f = editSource === 'none' ? null : parseFloat(editFactor)
-                    if (src && (!f || f <= 0)) {
-                      toast.error('Enter how many source units make 1 of these')
-                      return
-                    }
-                    const deriveChanged =
-                      (n.deriveFromId ?? null) !== (src ?? null) ||
-                      (n.deriveFactor ?? null) !== (f ?? null)
-                    updateNode.mutate({
-                      nodeId: n.id,
-                      patch: {
-                        title: editTitle.trim(),
-                        ...(t > 0 ? { targetValue: t } : {}),
-                        ...(x > 0 ? { xpValue: x } : {}),
-                        ...(deriveChanged ? { deriveFromId: src, deriveFactor: f } : {}),
-                      },
-                    })
-                  }}
-                >
-                  Save
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="h-8 w-8 text-destructive"
-                  aria-label="Delete node"
-                  onClick={handleDelete}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </div>
-          )}
         </div>
       </PopoverContent>
-    </Popover>
+      </Popover>
+
+      {/* full editor — outside the popover so closing the popover keeps it alive */}
+      {editOpen && (
+        <NodeEditDialog
+          key={n.id}
+          goal={goal}
+          view={view}
+          open
+          onOpenChange={setEditOpen}
+        />
+      )}
+    </>
   )
 }
 
@@ -568,6 +410,7 @@ function PathColumn({
   const accent = goalColor(goal.color).hex
   const [newNodeOpen, setNewNodeOpen] = useState(false)
   const [nt, setNt] = useState('')
+  const [editOpen, setEditOpen] = useState(false)
 
   function addTier() {
     const raw = nt.trim()
@@ -617,6 +460,9 @@ function PathColumn({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setEditOpen(true)}>
+                <Pencil className="h-3.5 w-3.5" /> Edit path
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => updatePath.mutate({ pathId: pv.path.id, patch: { move: 'left' } })}>
                 <ArrowLeft className="h-3.5 w-3.5" /> Move left
               </DropdownMenuItem>
@@ -649,6 +495,11 @@ function PathColumn({
           />
         </div>
       </div>
+
+      {/* path editor */}
+      {editOpen && (
+        <PathEditDialog key={pv.path.id} goal={goal} pv={pv} open onOpenChange={setEditOpen} />
+      )}
 
       {/* nodes */}
       <div className="flex flex-col gap-2">

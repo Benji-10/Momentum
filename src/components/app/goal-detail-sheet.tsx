@@ -116,6 +116,7 @@ function StepRow({
   onCycle,
   onMove,
   onDelete,
+  onEdit,
   busy,
 }: {
   step: GoalStepData
@@ -123,8 +124,13 @@ function StepRow({
   onCycle: () => void
   onMove: (dir: 'up' | 'down') => void
   onDelete: () => void
+  onEdit: (patch: { title: string; notes: string | null }) => void
   busy: boolean
 }) {
+  const [editing, setEditing] = useState(false)
+  const [title, setTitle] = useState(step.title)
+  const [notes, setNotes] = useState(step.notes ?? '')
+
   const icon =
     step.status === 'done' ? (
       <CheckCircle2 className="h-5 w-5 text-emerald-500" />
@@ -137,39 +143,97 @@ function StepRow({
   return (
     <div
       className={cn(
-        'group flex items-center gap-2.5 rounded-lg border p-2.5 transition-colors',
+        'group rounded-lg border p-2.5 transition-colors',
         isNext && 'border-primary/40 bg-primary/5',
         step.status === 'done' && 'opacity-70',
       )}
     >
-      <button
-        type="button"
-        onClick={onCycle}
-        disabled={busy}
-        aria-label={`Mark step "${step.title}" as ${step.status === 'pending' ? 'in progress' : step.status === 'in_progress' ? 'done' : 'pending'}`}
-        className="shrink-0 transition-transform hover:scale-110 disabled:opacity-50"
-      >
-        {icon}
-      </button>
-      <div className="min-w-0 flex-1">
-        <div className={cn('text-sm font-medium leading-snug', step.status === 'done' && 'line-through')}>
-          {step.title}
+      <div className="flex items-center gap-2.5">
+        <button
+          type="button"
+          onClick={onCycle}
+          disabled={busy}
+          aria-label={`Mark step "${step.title}" as ${step.status === 'pending' ? 'in progress' : step.status === 'in_progress' ? 'done' : 'pending'}`}
+          className="shrink-0 transition-transform hover:scale-110 disabled:opacity-50"
+        >
+          {icon}
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className={cn('text-sm font-medium leading-snug', step.status === 'done' && 'line-through')}>
+            {step.title}
+          </div>
+          {step.notes && !editing && (
+            <div className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground">{step.notes}</div>
+          )}
+          {isNext && step.status !== 'done' && !editing && (
+            <div className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-primary">Next up</div>
+          )}
         </div>
-        {isNext && step.status !== 'done' && (
-          <div className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-primary">Next up</div>
-        )}
+        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            aria-label={`Edit step "${step.title}"`}
+            title="Rename or add notes"
+            onClick={() => {
+              setTitle(step.title)
+              setNotes(step.notes ?? '')
+              setEditing(!editing)
+            }}
+            disabled={busy}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Move up" onClick={() => onMove('up')} disabled={busy}>
+            <ArrowUp className="h-3.5 w-3.5" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Move down" onClick={() => onMove('down')} disabled={busy}>
+            <ArrowDown className="h-3.5 w-3.5" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" aria-label="Delete step" onClick={onDelete} disabled={busy}>
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       </div>
-      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-        <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Move up" onClick={() => onMove('up')} disabled={busy}>
-          <ArrowUp className="h-3.5 w-3.5" />
-        </Button>
-        <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Move down" onClick={() => onMove('down')} disabled={busy}>
-          <ArrowDown className="h-3.5 w-3.5" />
-        </Button>
-        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" aria-label="Delete step" onClick={onDelete} disabled={busy}>
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
-      </div>
+      {editing && (
+        <div className="mt-2 space-y-1.5 border-t pt-2">
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Step title"
+            maxLength={200}
+            className="h-8 text-xs"
+            aria-label="Step title"
+            autoFocus
+          />
+          <Textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Notes (optional) — how to do this step well"
+            maxLength={2000}
+            rows={2}
+            className="text-xs"
+            aria-label="Step notes"
+          />
+          <div className="flex justify-end gap-1.5">
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              className="h-7 text-xs"
+              disabled={!title.trim() || busy}
+              onClick={() => {
+                onEdit({ title: title.trim(), notes: notes.trim() || null })
+                setEditing(false)
+              }}
+            >
+              Save
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -661,6 +725,15 @@ function DetailBody({
                       updateStep.mutate({ stepId: step.id, patch: { move: dir } }, {
                         onError: (e) => toast.error('Could not move step', { description: e.message }),
                       })
+                    }
+                    onEdit={(patch) =>
+                      updateStep.mutate(
+                        { stepId: step.id, patch },
+                        {
+                          onSuccess: () => toast.success('Step updated'),
+                          onError: (e) => toast.error('Could not update step', { description: e.message }),
+                        },
+                      )
                     }
                     onDelete={() =>
                       deleteStep.mutate(step.id, {

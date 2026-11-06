@@ -151,9 +151,16 @@ function App({ email, name, settings }: { email: string; name: string | null; se
   const initial = (name || email).trim().charAt(0).toUpperCase() || '·'
 
   return (
-    <div className="flex min-h-screen flex-col">
+    // the header is `fixed`, not `sticky`: opening any Radix overlay
+    // (dropdown, popover, dialog) locks body scroll with
+    // `overflow:hidden; position:relative`, which turns <body> into a scroll
+    // container and silently un-sticks a sticky header — it would scroll out
+    // of view (and on iOS it stays gone until the next scroll event). A
+    // fixed header is viewport-relative and immune to that; `pt-16` below
+    // reserves its space (h-16 includes the bottom border).
+    <div className="flex min-h-screen flex-col pt-16">
       {/* header */}
-      <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur">
+      <header className="fixed inset-x-0 top-0 z-40 border-b bg-background/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center gap-1.5 px-3 min-[420px]:gap-2 sm:gap-3 sm:px-6">
           <BrandMark className="h-9 w-9" />
           <div className="mr-auto min-w-0">

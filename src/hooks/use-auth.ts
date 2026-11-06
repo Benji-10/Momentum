@@ -1,6 +1,7 @@
 'use client'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { apiFetch } from '@/lib/api-client'
 import {
   completeRecovery,
@@ -25,7 +26,19 @@ async function fetchMe(): Promise<{ user: SessionUser | null; settings: UserSett
   if (!identity) return { user: null, settings: { theme: null, timezone: null } }
   // confirms the token server-side; also creates the app row (and adopts
   // unclaimed goals) on the very first sign-in
-  return apiFetch<{ user: SessionUser | null; settings: UserSettings }>('/api/auth/me')
+  try {
+    return await apiFetch<{ user: SessionUser | null; settings: UserSettings }>('/api/auth/me')
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : ''
+    if (/no longer exists/i.test(msg)) {
+      // the stored session points at an account that has since been deleted —
+      // say so, so it isn't mistaken for "login is broken"
+      toast.error('Your account no longer exists — please create it again', {
+        description: 'The server database was reset, so your previous sign-in can no longer be verified.',
+      })
+    }
+    throw e
+  }
 }
 
 /** Who is signed in (null = nobody). */

@@ -24,17 +24,26 @@ export interface SessionUser {
   settings: string | null
 }
 
-/** Validate a Netlify Identity JWT; returns the identity user or null. */
-async function verifyIdentityToken(token: string): Promise<SessionUser | null> {
+/** Outcome of verifying an identity token: the user, "gone" (the token is
+ * valid but the account row no longer exists — e.g. the database was reset),
+ * or null (not a valid token for this deployment). */
+type VerifiedIdentity = { user: SessionUser } | { gone: true } | null
+
+async function verifyIdentityToken(token: string): Promise<VerifiedIdentity> {
   if (!isPostgresMode) {
     // preview: shim-issued token
     const claims = verifyAccessToken(token)
     if (claims) {
       const row = await db.user.findUnique({ where: { id: claims.sub }, select: { id: true, email: true, name: true, settings: true } })
-      if (row) return row
+      if (row) return { user: row }
+      // A shim token that verifies but has no row = the account was deleted
+      // (the preview database was reset/wiped). Say so directly — falling
+      // through to /.netlify/identity/user here just 404s, which looks in the
+      // network tab like "every endpoint is broken".
+      return { gone: true }
     }
-    // fall through: maybe the preview is pointed at production data and a
-    // real Netlify Identity token was pasted — let the /user check try
+    // shim verification failed: maybe the preview is pointed at production
+    // data and a real Netlify Identity token was pasted — let the /user check try
   }
 
   // production: ask Netlify Identity to validate the JWT
@@ -65,10 +74,12 @@ async function verifyIdentityToken(token: string): Promise<SessionUser | null> {
       settings = null // column not migrated yet — defaults until it is
     }
     return {
-      id: u.id,
-      email: u.email,
-      name: typeof name === 'string' && name.trim() ? name.trim() : null,
-      settings,
+      user: {
+        id: u.id,
+        email: u.email,
+        name: typeof name === 'string' && name.trim() ? name.trim() : null,
+        settings,
+      },
     }
   } catch {
     return null
@@ -139,5 +150,13 @@ export async function requireUser(): Promise<{ user: SessionUser } | { error: Re
       error: Response.json({ error: 'Your sign-in has expired — please sign in again' }, { status: 401 }),
     }
   }
-  return { user: await syncUser(identity) }
+  if ('gone' in identity) {
+    return {
+      error: Response.json(
+        { error: 'Your account no longer exists on this server — please sign up again' },
+        { status: 401 },
+      ),
+    }
+  }
+  return { user: await syncUser(identity.user) }
 }

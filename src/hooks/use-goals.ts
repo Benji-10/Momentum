@@ -266,6 +266,7 @@ export interface SkillNodeInputPayload {
   unit?: string | null
   xpValue?: number
   afterOrder?: number
+  milestones?: (number | { value: number; label?: string | null })[]
 }
 
 export function useAddPath(goalId: string | null) {
@@ -362,6 +363,13 @@ export function useUpdateNode(goalId: string | null) {
         xpValue?: number
         mastered?: boolean
         move?: 'up' | 'down'
+        /** redefine sub-checkpoints: [50, {value: 100, label: "First 100"}] */
+        milestones?: (number | { value: number; label?: string | null })[]
+        /** unlock gating: ids that must be mastered first (null/[] = default ladder) */
+        requiresIds?: string[] | null
+        /** derivation: source node id + source units per 1 of this node */
+        deriveFromId?: string | null
+        deriveFactor?: number | null
       }
     }) =>
       jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/nodes/${nodeId}`, {
@@ -398,6 +406,24 @@ export function useAddPb(goalId: string | null) {
       jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/pbs`, {
         method: 'POST',
         body: JSON.stringify(input),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+  })
+}
+
+export function useUpdatePb(goalId: string | null) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      pbId,
+      patch,
+    }: {
+      pbId: string
+      patch: { name?: string; unit?: string | null; direction?: 'up' | 'down' }
+    }) =>
+      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/pbs/${pbId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
   })

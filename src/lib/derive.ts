@@ -99,7 +99,13 @@ export async function setNodeDerivation(
   if (source.deriveFromId == null) {
     await db.skillNode.update({
       where: { id: node.id },
-      data: { deriveFromId: source.id, deriveFactor },
+      data: {
+        deriveFromId: source.id,
+        deriveFactor,
+        // a meter is never gated — drop any unlock list so it can't
+        // resurface if the derivation is later cleared
+        ...(node.requiresIds ? { requiresIds: null } : {}),
+      },
     })
     // re-sync the meter upward from the source's progress so far
     const next = Math.max(

@@ -101,6 +101,11 @@ export async function POST(req: Request, { params }: Params) {
       if (grant === 'refresh_token') {
         const refreshed = refreshResponse(form.get('refresh_token') ?? '')
         if (!refreshed) return bad('invalid_grant', 'Invalid or expired refresh token')
+        // the account may have been deleted since this refresh token was
+        // issued (e.g. the database was reset) — don't silently hand out
+        // fresh access tokens for a user that no longer exists
+        const row = await findUserById(refreshed.user.id)
+        if (!row) return bad('invalid_grant', 'Invalid or expired refresh token')
         return NextResponse.json(refreshed)
       }
       return bad('unsupported_grant_type', 'Only password and refresh_token grants are supported')

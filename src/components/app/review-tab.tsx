@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Activity, CalendarClock, Clock, Flame, Gauge, Plus, Timer, Trash2, Trophy, X } from 'lucide-react'
+import { Activity, CalendarClock, Clock, Flame, Gauge, Pencil, Plus, Timer, Trash2, Trophy, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData, PersonalBestData } from '@/lib/types'
 import { computeGoalStats, formatDateShort, formatHours, formatNumber, weeklyHistory } from '@/lib/goal-math'
@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { StatusBadge } from '@/components/app/goal-visuals'
 import { PbChart, TimeAreaChart, WeeklyBars } from '@/components/app/charts'
-import { AddPbMetricDialog, RecordPbDialog } from '@/components/app/pb-dialogs'
+import { AddPbMetricDialog, EditPbDialog, RecordPbDialog } from '@/components/app/pb-dialogs'
 import { cn } from '@/lib/utils'
 
 /** One PB metric: current best, the PB-over-time chart, record + manage. */
@@ -43,6 +43,7 @@ function PbMetricBlock({
   const deletePb = useDeletePb(goal.id)
   const deleteRecord = useDeletePbRecord(goal.id)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
 
   const improving = delta == null ? null : pb.direction === 'up' ? delta > 0 : delta < 0
 
@@ -75,6 +76,16 @@ function PbMetricBlock({
         <div className="flex items-center gap-1">
           <Button variant="outline" size="sm" className="h-7 gap-1 px-2.5 text-xs" onClick={() => onRecord(pb)}>
             <Plus className="h-3.5 w-3.5" /> Record
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+            aria-label={`Edit ${pb.name} metric`}
+            title="Rename, change unit or direction"
+            onClick={() => setEditOpen(true)}
+          >
+            <Pencil className="h-3.5 w-3.5" />
           </Button>
           <Button
             variant="ghost"
@@ -130,6 +141,8 @@ function PbMetricBlock({
           </div>
         </>
       )}
+
+      <EditPbDialog key={pb.id} goalId={goal.id} pb={pb} open={editOpen} onOpenChange={setEditOpen} />
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>

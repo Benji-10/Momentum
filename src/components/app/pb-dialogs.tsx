@@ -1,16 +1,17 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowDown, ArrowUp, Check, Loader2, Trophy } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, Loader2, Pencil, Trophy } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData, PersonalBestData } from '@/lib/types'
 import { formatNumber } from '@/lib/goal-math'
-import { beatsPb, currentPb } from '@/lib/pb-math'
+import { beatsPb, currentPb, sortedRecords } from '@/lib/pb-math'
 import { isoForDayKey, todayDayKey, getAppTimezone } from '@/lib/app-time'
-import { useAddPb, useAddPbRecord } from '@/hooks/use-goals'
+import { useAddPb, useAddPbRecord, useUpdatePb } from '@/hooks/use-goals'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 
 /** Today in the app timezone. */
@@ -146,6 +147,128 @@ export function AddPbMetricDialog({
             {addPb.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Track it
           </Button>
         </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** Edit an existing PB metric — rename it, change the unit, or flip which
+ *  direction is better. The logged history is untouched. */
+export function EditPbDialog({
+  goalId,
+  pb,
+  open,
+  onOpenChange,
+}: {
+  goalId: string
+  pb: PersonalBestData | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const [name, setName] = useState(pb?.name ?? '')
+  const [unit, setUnit] = useState(pb?.unit ?? '')
+  const [direction, setDirection] = useState<'up' | 'down'>(pb?.direction ?? 'up')
+  const updatePb = useUpdatePb(goalId)
+
+  if (!pb) return null
+
+  function save() {
+    if (!pb) return
+    const n = name.trim()
+    if (!n) {
+      toast.error('Give the metric a name')
+      return
+    }
+    updatePb.mutate(
+      { pbId: pb.id, patch: { name: n, unit: unit.trim() || null, direction } },
+      {
+        onSuccess: () => {
+          toast.success('Metric updated')
+          onOpenChange(false)
+        },
+        onError: (e) => toast.error('Could not update the metric', { description: e.message }),
+      },
+    )
+  }
+
+  const attempts = sortedRecords(pb).length
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Pencil className="h-4 w-4" /> Edit {pb.name}
+          </DialogTitle>
+          <DialogDescription>
+            Rename the metric, change its unit or which direction is better — the {attempts} logged{' '}
+            {attempts === 1 ? 'attempt stays' : 'attempts stay'} exactly as they are.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <div className="min-w-0 flex-1 space-y-1">
+              <Label htmlFor="pb-edit-name" className="text-xs">Name</Label>
+              <Input
+                id="pb-edit-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Metric, e.g. WPM"
+                maxLength={60}
+                autoFocus
+                onKeyDown={(e) => e.key === 'Enter' && save()}
+              />
+            </div>
+            <div className="w-32 space-y-1">
+              <Label htmlFor="pb-edit-unit" className="text-xs">Unit</Label>
+              <Input
+                id="pb-edit-unit"
+                value={unit}
+                onChange={(e) => setUnit(e.target.value)}
+                placeholder="wpm"
+                maxLength={30}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            {(
+              [
+                { key: 'up', label: 'Higher is better', hint: 'e.g. WPM', icon: ArrowUp },
+                { key: 'down', label: 'Lower is better', hint: 'e.g. BLD time', icon: ArrowDown },
+              ] as const
+            ).map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => setDirection(opt.key)}
+                aria-pressed={direction === opt.key}
+                className={cn(
+                  'flex flex-col items-start gap-0.5 rounded-xl border px-3 py-2.5 text-left transition-colors',
+                  direction === opt.key
+                    ? 'border-primary bg-primary/10'
+                    : 'hover:border-primary/40 text-muted-foreground',
+                )}
+              >
+                <span className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                  <opt.icon className={cn('h-3.5 w-3.5', direction === opt.key && 'text-primary')} />
+                  {opt.label}
+                </span>
+                <span className="text-xs text-muted-foreground">{opt.hint}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={updatePb.isPending}>
+            {updatePb.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Save changes
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   )
