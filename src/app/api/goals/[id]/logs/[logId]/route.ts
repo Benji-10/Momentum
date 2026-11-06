@@ -8,12 +8,15 @@ import { serializeGoal } from '@/lib/goal-serialize'
 const patchSchema = z.object({
   amount: z.number().positive('Amount must be greater than 0').max(1_000_000).optional(),
   note: z.string().max(500).nullable().optional(),
+  /** move the entry to another day (ISO instant, app-tz aware on the client) */
+  date: z.string().datetime().optional(),
 })
 
 type Params = { params: Promise<{ id: string; logId: string }> }
 
 /** PATCH /api/goals/[id]/logs/[logId] — fix up an entry after the fact
- *  (e.g. the routine said 2 hours but you only worked 50 minutes). */
+ *  (e.g. the routine said 2 hours but you only worked 50 minutes, or the
+ *  session actually happened on Tuesday). */
 export async function PATCH(req: Request, { params }: Params) {
   const { id, logId } = await params
   const auth = await requireUser()
@@ -30,7 +33,11 @@ export async function PATCH(req: Request, { params }: Params) {
     const log = await db.progressLog.findFirst({ where: { id: logId, goalId: id } })
     if (!log) return NextResponse.json({ error: 'Log not found' }, { status: 404 })
 
-    await db.progressLog.update({ where: { id: logId }, data: parsed.data })
+    const { date, ...rest } = parsed.data
+    await db.progressLog.update({
+      where: { id: logId },
+      data: { ...rest, ...(date ? { date: new Date(date) } : {}) },
+    })
     const goal = await ownedGoal(id, auth.user)
     return NextResponse.json({ goal: goal ? serializeGoal(goal) : null })
   } catch (e) {

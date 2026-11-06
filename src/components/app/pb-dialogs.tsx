@@ -75,7 +75,9 @@ export function AddPbMetricDialog({
           <DialogTitle className="flex items-center gap-2">
             <Trophy className="h-4 w-4 text-amber-500" /> Track a personal best
           </DialogTitle>
-          <DialogDescription className="truncate">
+          {/* no `truncate` here — nowrap text in a max-w-sm dialog blows out
+              the grid track and every field overflows the dialog edge */}
+          <DialogDescription className="line-clamp-2">
             {goal.emoji} {goal.title}
           </DialogDescription>
         </DialogHeader>

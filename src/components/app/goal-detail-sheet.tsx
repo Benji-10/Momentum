@@ -40,8 +40,9 @@ import {
 import { goalColor } from '@/lib/goal-colors'
 import { buildSkillMap } from '@/lib/skill-tree'
 import { describeCadence, occurrencesInRange, relativeDayLabel, routineStats, sameDay, startOfWeek, addDays, toDayKey } from '@/lib/routine-math'
-import { isoForDayKey, todayDayKey } from '@/lib/app-time'
+import { dayKeyOf, isoForDayKey, todayDayKey } from '@/lib/app-time'
 import { parseGoalScopeImport } from '@/lib/import-format'
+import { EditLogDialog, type EditLogTarget } from '@/components/app/edit-log-dialog'
 import {
   useAddLog,
   useAddNote,
@@ -52,7 +53,6 @@ import {
   useDeleteStep,
   useGoalScopeImport,
   useToggleRoutineDone,
-  useUpdateLog,
   useUpdateNote,
   useUpdateStep,
 } from '@/hooks/use-goals'
@@ -289,12 +289,11 @@ function DetailBody({
   const [editRoutine, setEditRoutine] = useState<RoutineData | null>(null)
   const [scopeJson, setScopeJson] = useState('')
   const [scopeOpen, setScopeOpen] = useState(false)
-  /** inline amount editing in the log history — { id, value } */
-  const [editAmount, setEditAmount] = useState<{ id: string; value: string } | null>(null)
+  /** full editor for one history entry (amount, day, note) */
+  const [editLog, setEditLog] = useState<EditLogTarget | null>(null)
 
   const addLog = useAddLog(goal.id)
   const deleteLog = useDeleteLog(goal.id)
-  const updateLog = useUpdateLog(goal.id)
   const addStep = useAddStep(goal.id)
   const updateStep = useUpdateStep(goal.id)
   const deleteStep = useDeleteStep(goal.id)
@@ -311,6 +310,8 @@ function DetailBody({
   const skillMap = useMemo(() => buildSkillMap(goal), [goal])
   const c = goalColor(goal.color)
   const unit = goal.unit ?? ''
+  // display unit for the log editor (falls back to sessions/units)
+  const logUnit = goal.unit ?? (goal.type === 'plan' ? 'sessions' : 'units')
 
   const weekRequirement =
     goal.type === 'quantitative' ? (stats.idealWeeklyPace ?? null) : goal.weeklyTarget
@@ -457,7 +458,7 @@ function DetailBody({
               </div>
             </div>
           </div>
-          <div className="flex shrink-0 gap-1">
+          <div className="flex shrink-0 gap-1 pr-9">
             <Button variant="outline" size="icon" aria-label="Edit goal" onClick={() => onEdit(goal)}>
               <Pencil className="h-4 w-4" />
             </Button>
@@ -1082,72 +1083,43 @@ function DetailBody({
 
               {goal.logs.length > 0 && (
                 <div className="mt-5">
-                  <h4 className="mb-2 text-sm font-semibold">History</h4>
+                  <div className="mb-2 flex items-baseline justify-between gap-2">
+                    <h4 className="text-sm font-semibold">History</h4>
+                    <span className="text-[11px] text-muted-foreground">tap an entry to edit it</span>
+                  </div>
                   <div className="max-h-72 space-y-1.5 overflow-y-auto nice-scroll pr-1">
                     {goal.logs.map((log) => (
-                      <div key={log.id} className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2 text-sm">
-                        <div className="w-20 shrink-0 text-xs tabular-nums text-muted-foreground">
-                          {formatDateShort(new Date(log.date))}
-                        </div>
-                        {editAmount?.id === log.id ? (
-                          <div className="flex shrink-0 items-center gap-1">
-                            <Input
-                              type="number"
-                              min={0}
-                              step="any"
-                              inputMode="decimal"
-                              value={editAmount.value}
-                              autoFocus
-                              onChange={(e) => setEditAmount({ id: log.id, value: e.target.value })}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  const n = parseFloat(editAmount.value)
-                                  if (!isNaN(n) && n > 0) {
-                                    updateLog.mutate({ logId: log.id, amount: n }, {
-                                      onSuccess: () => toast.success(`Updated — ${formatNumber(n)} ${unit || 'logged'}`),
-                                      onError: (e2) => toast.error('Could not update', { description: e2.message }),
-                                    })
-                                  }
-                                  setEditAmount(null)
-                                } else if (e.key === 'Escape') {
-                                  setEditAmount(null)
-                                }
-                              }}
-                              className="h-7 w-20 px-1.5 text-sm"
-                              aria-label="Adjust amount"
-                            />
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              aria-label="Save amount"
-                              onClick={() => {
-                                const n = parseFloat(editAmount.value)
-                                if (!isNaN(n) && n > 0) {
-                                  updateLog.mutate({ logId: log.id, amount: n }, {
-                                    onSuccess: () => toast.success(`Updated — ${formatNumber(n)} ${unit || 'logged'}`),
-                                    onError: (e2) => toast.error('Could not update', { description: e2.message }),
-                                  })
-                                }
-                                setEditAmount(null)
-                              }}
-                            >
-                              <Check className="h-3.5 w-3.5" />
-                            </Button>
+                      <div
+                        key={log.id}
+                        className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2 text-sm transition-colors hover:border-primary/40"
+                      >
+                        {/* the row itself opens the full editor — amount, day, note */}
+                        <button
+                          type="button"
+                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
+                          aria-label={`Edit entry: ${formatNumber(log.amount)} ${unit || 'logged'}`}
+                          title="Edit amount, day or note"
+                          onClick={() =>
+                            setEditLog({
+                              goalId: goal.id,
+                              logId: log.id,
+                              amount: log.amount,
+                              unit: logUnit,
+                              title: goal.title,
+                              note: log.note,
+                              day: dayKeyOf(new Date(log.date)),
+                            })
+                          }
+                        >
+                          <div className="w-20 shrink-0 text-xs tabular-nums text-muted-foreground">
+                            {formatDateShort(new Date(log.date))}
                           </div>
-                        ) : (
-                          <button
-                            type="button"
-                            className="flex shrink-0 items-center gap-1 font-semibold tabular-nums transition-opacity hover:opacity-75"
-                            style={{ color: c.hex }}
-                            title="Tap to adjust this amount"
-                            onClick={() => setEditAmount({ id: log.id, value: String(log.amount) })}
-                          >
+                          <div className="flex shrink-0 items-center gap-1 font-semibold tabular-nums" style={{ color: c.hex }}>
                             +{formatNumber(log.amount)} {unit}
-                            <Pencil className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-60" />
-                          </button>
-                        )}
-                        <div className="min-w-0 flex-1 truncate text-muted-foreground">{log.note ?? ''}</div>
+                            <Pencil className="h-3 w-3 opacity-30 transition-opacity group-hover:opacity-70" />
+                          </div>
+                          <div className="min-w-0 flex-1 truncate text-muted-foreground">{log.note ?? ''}</div>
+                        </button>
                         <Button
                           variant="ghost"
                           size="icon"
@@ -1271,6 +1243,9 @@ function DetailBody({
           </div>
         </Tabs>
       </div>
+
+      {/* log entry editor — keyed so form state resets for each entry */}
+      <EditLogDialog key={editLog?.logId ?? 'none'} target={editLog} onClose={() => setEditLog(null)} />
 
       {/* routine dialog — keyed so form state resets each time it opens */}
       <RoutineDialog

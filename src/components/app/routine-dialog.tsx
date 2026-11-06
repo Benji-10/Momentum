@@ -286,17 +286,19 @@ export function RoutineDialog({
                 Nice to do — skipping it never counts against you
               </span>
             </span>
+            {/* toggle track — the thumb keeps an even inset on all sides and
+                slides between positions instead of snapping to the edge */}
             <span
               className={cn(
-                'flex h-6 w-11 shrink-0 items-center rounded-full border-2 transition-colors',
-                extra ? 'justify-end border-violet-500 bg-violet-500/20' : 'justify-start border-muted-foreground/30',
+                'relative block h-6 w-11 shrink-0 rounded-full border-2 transition-colors duration-200',
+                extra ? 'border-violet-500 bg-violet-500/20' : 'border-muted-foreground/30',
               )}
               aria-hidden
             >
               <span
                 className={cn(
-                  'block h-4 w-4 rounded-full transition-colors',
-                  extra ? 'bg-violet-500' : 'bg-muted-foreground/40',
+                  'absolute top-1/2 left-[3px] h-4 w-4 -translate-y-1/2 rounded-full transition-all duration-200',
+                  extra ? 'translate-x-[18px] bg-violet-500' : 'bg-muted-foreground/40',
                 )}
               />
             </span>

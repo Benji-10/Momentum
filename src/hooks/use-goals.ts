@@ -130,15 +130,26 @@ export function useDeleteLog(goalId: string | null) {
   })
 }
 
-/** Fix up an amount after the fact — e.g. you checked off "work 2 hours"
- * but only worked 50 minutes. */
+/** Fix up an entry after the fact — e.g. you checked off "work 2 hours"
+ * but only worked 50 minutes, or the session was actually on Tuesday. */
 export function useUpdateLog(goalId: string | null) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ logId, amount }: { logId: string; amount: number }) =>
+    mutationFn: ({
+      logId,
+      amount,
+      note,
+      date,
+    }: {
+      logId: string
+      amount: number
+      note?: string | null
+      /** new ISO instant — only sent when the day actually changed */
+      date?: string
+    }) =>
       jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/logs/${logId}`, {
         method: 'PATCH',
-        body: JSON.stringify({ amount }),
+        body: JSON.stringify({ amount, note: note ?? null, ...(date ? { date } : {}) }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
   })

@@ -30,6 +30,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { GoalCard } from '@/components/app/goal-card'
+import { EditLogDialog, type EditLogTarget } from '@/components/app/edit-log-dialog'
 import { NodeQuickAddPopover, QuickLogPopover } from '@/components/app/quick-log'
 import { cn } from '@/lib/utils'
 
@@ -75,6 +76,7 @@ function XpBadge({ goals }: { goals: GoalData[] }) {
 function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: (g: GoalData, tab?: string) => void }) {
   const toggleDone = useToggleRoutineDone()
   const today = new Date()
+  const [editLog, setEditLog] = useState<EditLogTarget | null>(null)
 
   // computed inline (React Compiler memoizes); `today` changes every render,
   // so a manual useMemo over it could never be preserved anyway
@@ -111,15 +113,28 @@ function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: 
       },
       {
         onSuccess: (res) => {
-          if (!res.autoLog || o.done) return
-          const unit = o.goal.unit ?? (o.goal.type === 'plan' ? 'session' : '')
+          const autoLog = res.autoLog
+          if (!autoLog || o.done) return
+          const unit = o.goal.unit ?? (o.goal.type === 'plan' ? 'session' : 'progress')
           const shown =
             unit === 'session' || unit === 'sessions'
-              ? `${formatNumber(res.autoLog.amount)} ${res.autoLog.amount === 1 ? 'session' : 'sessions'}${o.routine.durationMin ? ` · ${o.routine.durationMin}m` : ''}`
-              : `${formatNumber(res.autoLog.amount)} ${unit || 'progress'}`
+              ? `${formatNumber(autoLog.amount)} ${autoLog.amount === 1 ? 'session' : 'sessions'}${o.routine.durationMin ? ` · ${o.routine.durationMin}m` : ''}`
+              : `${formatNumber(autoLog.amount)} ${unit || 'progress'}`
           toast.success(`${o.routine.title} done`, {
             description: `Logged ${shown} — not quite right?`,
-            action: { label: 'Adjust', onClick: () => onOpenGoal(o.goal, 'log') },
+            action: {
+              label: 'Edit',
+              onClick: () =>
+                setEditLog({
+                  goalId: o.goal.id,
+                  logId: autoLog.id,
+                  amount: autoLog.amount,
+                  unit: unit === 'progress' ? 'unit' : unit,
+                  title: o.routine.title,
+                  note: autoLog.note,
+                  day: toDayKey(o.date),
+                }),
+            },
           })
         },
       },
@@ -256,6 +271,9 @@ function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: 
       </div>
     </>
   )}
+
+      {/* log entry editor — opened from the check-off toast's "Edit" action */}
+      <EditLogDialog key={editLog?.logId ?? 'none'} target={editLog} onClose={() => setEditLog(null)} />
     </section>
   )
 }

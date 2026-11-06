@@ -38,7 +38,7 @@ import { getAppTimezone } from '@/lib/app-time'
 import { goalColor } from '@/lib/goal-colors'
 import { formatNumber } from '@/lib/goal-math'
 import { useDeleteRoutine, useToggleRoutineDone } from '@/hooks/use-goals'
-import { AdjustLogDialog, type AdjustLogTarget } from '@/components/app/adjust-log-dialog'
+import { EditLogDialog, type EditLogTarget } from '@/components/app/edit-log-dialog'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import {
@@ -336,7 +336,7 @@ export function ScheduleTab({
   const weekTodayLeft = allWeek.filter((x) => x.occ.state === 'today').length
   const isPastWeek = weekEnd < now && !sameDay(weekEnd, now) && weekOffset < 0
   const toggleDone = useToggleRoutineDone()
-  const [adjust, setAdjust] = useState<AdjustLogTarget | null>(null)
+  const [editLog, setEditLog] = useState<EditLogTarget | null>(null)
 
   // flexible routines live outside the day columns — they're a weekly quota
   const flexRoutines = allRoutines.filter(({ routine }) => routine.cadence === 'flexible')
@@ -373,24 +373,27 @@ export function ScheduleTab({
           }
           if (res.autoLog) {
             // the check-off logged the routine's defined amount — adjusting
-            // to reality is one tap away
+            // to reality (amount, day, note) is one tap away
+            const autoLog = res.autoLog
             const unit = goal.unit ?? (goal.type === 'plan' ? 'session' : 'progress')
             const dur = routine.durationMin
             const shown =
               unit === 'session' || unit === 'sessions'
-                ? `${formatNumber(res.autoLog.amount)} ${res.autoLog.amount === 1 ? 'session' : 'sessions'}${dur ? ` · ${dur}m` : ''}`
-                : `${formatNumber(res.autoLog.amount)} ${unit}`
+                ? `${formatNumber(autoLog.amount)} ${autoLog.amount === 1 ? 'session' : 'sessions'}${dur ? ` · ${dur}m` : ''}`
+                : `${formatNumber(autoLog.amount)} ${unit}`
             toast.success(`${routine.title} done`, {
               description: `Logged ${shown} — not quite right?`,
               action: {
-                label: 'Adjust',
+                label: 'Edit',
                 onClick: () =>
-                  setAdjust({
+                  setEditLog({
                     goalId: goal.id,
-                    logId: res.autoLog!.id,
-                    amount: res.autoLog!.amount,
+                    logId: autoLog.id,
+                    amount: autoLog.amount,
                     unit: unit === 'progress' ? 'unit' : unit,
                     title: routine.title,
+                    note: autoLog.note,
+                    day: toDayKey(date ?? new Date()),
                   }),
               },
             })
@@ -724,7 +727,7 @@ export function ScheduleTab({
           onOpenChange={(o) => !o && setEditRoutine(null)}
         />
       )}
-      <AdjustLogDialog key={adjust?.logId ?? 'none'} target={adjust} onClose={() => setAdjust(null)} />
+      <EditLogDialog key={editLog?.logId ?? 'none'} target={editLog} onClose={() => setEditLog(null)} />
     </div>
   )
 }
