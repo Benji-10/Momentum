@@ -25,6 +25,7 @@ import { buildSkillMap, computeXp, xpToReachLevel } from '@/lib/skill-tree'
 import { occurrencesInRange, routineStats, sameDay, startOfWeek, toDayKey, weekFlexProgress, isRoutineDone } from '@/lib/routine-math'
 import { goalColor } from '@/lib/goal-colors'
 import { useToggleRoutineDone } from '@/hooks/use-goals'
+import { checkoffDisplayUnit, logAmountLabel } from '@/lib/recording'
 import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -115,11 +116,11 @@ function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: 
         onSuccess: (res) => {
           const autoLog = res.autoLog
           if (!autoLog || o.done) return
-          const unit = o.goal.unit ?? (o.goal.type === 'plan' ? 'session' : 'progress')
+          const unit = checkoffDisplayUnit(o.goal, o.routine)
+          const timeish = ['h', 'hr', 'hrs', 'hour', 'hours', 'm', 'min', 'mins', 'minute', 'minutes'].includes(unit.toLowerCase())
           const shown =
-            unit === 'session' || unit === 'sessions'
-              ? `${formatNumber(autoLog.amount)} ${autoLog.amount === 1 ? 'session' : 'sessions'}${o.routine.durationMin ? ` · ${o.routine.durationMin}m` : ''}`
-              : `${formatNumber(autoLog.amount)} ${unit || 'progress'}`
+            logAmountLabel(autoLog.amount, unit) +
+            (o.routine.durationMin && !timeish ? ` · ${o.routine.durationMin}m` : '')
           toast.success(`${o.routine.title} done`, {
             description: `Logged ${shown} — not quite right?`,
             action: {
@@ -129,7 +130,7 @@ function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: 
                   goalId: o.goal.id,
                   logId: autoLog.id,
                   amount: autoLog.amount,
-                  unit: unit === 'progress' ? 'unit' : unit,
+                  unit,
                   title: o.routine.title,
                   note: autoLog.note,
                   day: toDayKey(o.date),

@@ -5,6 +5,10 @@ const nextConfig: NextConfig = {
   // On Netlify the build is handled by @netlify/plugin-nextjs, which wants
   // the regular build output instead.
   ...(process.env.NETLIFY === "true" ? {} : { output: "standalone" as const }),
+  // verification runs a second dev server against a throwaway /tmp database
+  // (scripts/verify-env.sh) — its own dist dir keeps the two servers' locks
+  // and build caches apart
+  ...(process.env.NEXT_DIST_DIR ? { distDir: process.env.NEXT_DIST_DIR } : {}),
   typescript: {
     ignoreBuildErrors: true,
   },

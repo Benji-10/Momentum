@@ -7,6 +7,7 @@ import { serializeGoal } from '@/lib/goal-serialize'
 import { syncMilestoneReached } from '@/lib/milestones'
 import { nodeDependencies, buildNodeIndex, nodeStatus } from '@/lib/skill-tree'
 import { propagateDerived } from '@/lib/derive'
+import { autoLogAmount } from '@/lib/recording'
 
 const doneSchema = z.object({
   /**
@@ -25,29 +26,6 @@ type Params = { params: Promise<{ id: string; routineId: string }> }
 
 const HOUR_UNITS = ['h', 'hr', 'hrs', 'hour', 'hours']
 const MINUTE_UNITS = ['m', 'min', 'mins', 'minute', 'minutes']
-const SESSION_UNITS = ['session', 'sessions']
-
-/**
- * The amount a check-off logs, expressed in the goal's unit:
- *  - hour/minute goals get the routine's duration (90m → 1.5 hours)
- *  - session-counting goals (and unit-less plan goals) log one session —
- *    the note keeps the duration visible ("Shooting drills · 45m")
- *  - other units (km, books, words…) only log when the routine defines a
- *    per-session credit — minutes can't be conjured into books
- */
-function autoLogAmount(
-  goal: { type: string; unit: string | null },
-  routine: { durationMin: number | null; credit: number | null },
-): number | null {
-  const unit = (goal.unit ?? '').toLowerCase()
-  const hasDur = routine.durationMin != null && routine.durationMin > 0
-  const credit = routine.credit != null && routine.credit > 0 ? routine.credit : null
-  if (SESSION_UNITS.includes(unit)) return 1
-  if (HOUR_UNITS.includes(unit)) return hasDur ? Math.round((routine.durationMin! / 60) * 100) / 100 : credit
-  if (MINUTE_UNITS.includes(unit)) return hasDur ? routine.durationMin! : credit
-  if (!unit && goal.type === 'plan') return 1
-  return credit
-}
 
 /** Note for the auto log — keeps the duration visible unless the amount
  *  already expresses it (then it would just repeat itself). */
@@ -152,30 +130,44 @@ export async function POST(req: Request, { params }: Params) {
       }
       await db.routineDone.delete({ where: { id: existing.id } })
     } else if (!d.undo && !existing) {
-      // credit the linked checkpoint, if the routine points at one that is unlocked
-      let creditedValue: number | null = null
-      if (routine.nodeId && routine.credit && routine.credit > 0) {
-        const node = await db.skillNode.findUnique({ where: { id: routine.nodeId } })
-        if (node && nodeStatus(node) !== 'mastered') {
-          if (await nodeUnlocked(node.id)) {
-            const next = Math.min(node.targetValue, node.currentValue + routine.credit)
-            creditedValue = next - node.currentValue
-            const masteredNow = next >= node.targetValue && node.targetValue > 0
-            await db.skillNode.update({
-              where: { id: node.id },
-              data: { currentValue: next, completedAt: masteredNow ? (node.completedAt ?? new Date()) : null },
-            })
-            await syncMilestoneReached(node.id, next)
-            // derived checkpoints convert their share automatically (e.g. the
-            // pages checkpoint moved → the books checkpoint advances by Δ/300)
-            await propagateDerived(id, node.id, creditedValue)
-          } else {
-            creditSkipped = true // done, but its checkpoint is still gated
-          }
+      // the linked checkpoint (if any), resolved up-front: its unit decides
+      // what the check-off records ("25 words"), and crediting defaults to
+      // one session = `credit` (default 1) of that unit
+      let node: { id: string; currentValue: number; targetValue: number; completedAt: Date | null } | null = null
+      let nodeUnit: string | null = null
+      if (routine.nodeId) {
+        const found = await db.skillNode.findUnique({
+          where: { id: routine.nodeId },
+          include: { path: { select: { unit: true } } },
+        })
+        if (found) {
+          node = found
+          nodeUnit = found.unit ?? found.path.unit ?? null
         }
       }
-      // log the defined amount automatically ("read 20 minutes" → log entry)
-      const amount = autoLogAmount(goalRow, routine)
+      // credit the linked checkpoint (if unlocked and not yet mastered)
+      let creditedValue: number | null = null
+      if (node && nodeStatus(node) !== 'mastered') {
+        const perSession = routine.credit != null && routine.credit > 0 ? routine.credit : 1
+        if (await nodeUnlocked(node.id)) {
+          const next = Math.min(node.targetValue, node.currentValue + perSession)
+          creditedValue = next - node.currentValue
+          const masteredNow = next >= node.targetValue && node.targetValue > 0
+          await db.skillNode.update({
+            where: { id: node.id },
+            data: { currentValue: next, completedAt: masteredNow ? (node.completedAt ?? new Date()) : null },
+          })
+          await syncMilestoneReached(node.id, next)
+          // derived checkpoints convert their share automatically (e.g. the
+          // pages checkpoint moved → the books checkpoint advances by Δ/300)
+          await propagateDerived(id, node.id, creditedValue)
+        } else {
+          creditSkipped = true // done, but its checkpoint is still gated
+        }
+      }
+      // log the defined amount automatically — in the unit the check-off
+      // records (the checkpoint's unit when linked, else the goal's own)
+      const amount = autoLogAmount(goalRow, routine, nodeUnit)
       const done = await db.routineDone.create({
         data: { routineId, date: day, creditedValue, logId: null },
       })

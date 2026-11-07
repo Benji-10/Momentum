@@ -118,6 +118,9 @@ export function serializeGoal(goal: GoalWithRelations): GoalData {
         // (Stored canonically as UTC midnight of that day.)
         date: d.date.toISOString().slice(0, 10),
         creditedValue: d.creditedValue,
+        // the auto-log this check-off created (its amount is progress in the
+        // linked checkpoint's unit — the client uses the link for labels)
+        logId: d.logId,
       })),
     })),
     pbs: goal.pbs.map((pb) => ({

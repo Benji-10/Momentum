@@ -53,6 +53,8 @@ export interface RoutineDoneData {
   date: string
   /** progress that was auto-added to the linked skill node (for undo) */
   creditedValue: number | null
+  /** the auto-created progress log entry (amount edits flow into the node) */
+  logId: string | null
 }
 
 export interface RoutineData {

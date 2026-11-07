@@ -39,6 +39,7 @@ import { goalColor } from '@/lib/goal-colors'
 import { formatNumber } from '@/lib/goal-math'
 import { useDeleteRoutine, useToggleRoutineDone } from '@/hooks/use-goals'
 import { EditLogDialog, type EditLogTarget } from '@/components/app/edit-log-dialog'
+import { checkoffDisplayUnit, logAmountLabel } from '@/lib/recording'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import {
@@ -372,15 +373,14 @@ export function ScheduleTab({
             return
           }
           if (res.autoLog) {
-            // the check-off logged the routine's defined amount — adjusting
-            // to reality (amount, day, note) is one tap away
+            // the check-off logged the routine's defined amount — in the unit
+            // it records (the linked checkpoint's unit when there is one) —
+            // adjusting to reality is one tap away
             const autoLog = res.autoLog
-            const unit = goal.unit ?? (goal.type === 'plan' ? 'session' : 'progress')
+            const unit = checkoffDisplayUnit(goal, routine)
             const dur = routine.durationMin
-            const shown =
-              unit === 'session' || unit === 'sessions'
-                ? `${formatNumber(autoLog.amount)} ${autoLog.amount === 1 ? 'session' : 'sessions'}${dur ? ` · ${dur}m` : ''}`
-                : `${formatNumber(autoLog.amount)} ${unit}`
+            const timeish = ['h', 'hr', 'hrs', 'hour', 'hours', 'm', 'min', 'mins', 'minute', 'minutes'].includes(unit.toLowerCase())
+            const shown = logAmountLabel(autoLog.amount, unit) + (dur && !timeish ? ` · ${dur}m` : '')
             toast.success(`${routine.title} done`, {
               description: `Logged ${shown} — not quite right?`,
               action: {
@@ -390,7 +390,7 @@ export function ScheduleTab({
                     goalId: goal.id,
                     logId: autoLog.id,
                     amount: autoLog.amount,
-                    unit: unit === 'progress' ? 'unit' : unit,
+                    unit,
                     title: routine.title,
                     note: autoLog.note,
                     day: toDayKey(date ?? new Date()),

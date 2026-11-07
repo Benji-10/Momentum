@@ -41,18 +41,26 @@ export interface WeekBucket {
   amount: number
 }
 
-/** Weekly totals for the last `weeks` weeks (oldest first, current week last). */
-export function weeklyHistory(logs: GoalData['logs'], weeks = 8, ref = new Date()): WeekBucket[] {
+/** Weekly totals for the last `weeks` weeks (oldest first, current week last).
+ *
+ *  Session-counting plan goals (unit "sessions"/blank) count *sessions* —
+ *  check-off dones plus manually logged entries — because the log entries
+ *  of linked routines record checkpoint units ("25 words") instead. Every
+ *  other goal sums its log amounts (km, hours, books…). */
+export function weeklyHistory(goal: GoalData, weeks = 8, ref = new Date()): WeekBucket[] {
+  const sessionCounting = isSessionCountingGoal(goal)
   const out: WeekBucket[] = []
   for (let i = weeks - 1; i >= 0; i--) {
     const ws = new Date(startOfWeek(ref).getTime() - i * WEEK_MS)
     const we = new Date(ws.getTime() + WEEK_MS)
-    const amount = logs
-      .filter((l) => {
-        const t = logDay(l)
-        return t >= ws.getTime() && t < we.getTime()
-      })
-      .reduce((s, l) => s + l.amount, 0)
+    const amount = sessionCounting
+      ? sessionsInWeek(goal, ref, -i)
+      : goal.logs
+          .filter((l) => {
+            const t = logDay(l)
+            return t >= ws.getTime() && t < we.getTime()
+          })
+          .reduce((s, l) => s + l.amount, 0)
     out.push({
       weekStart: ws,
       // label from the day key — ws is an app-tz midnight, so UTC getters
@@ -62,6 +70,49 @@ export function weeklyHistory(logs: GoalData['logs'], weeks = 8, ref = new Date(
     })
   }
   return out
+}
+
+// ---------------------------------------------------------------------------
+// Session counting — what a "session" is for plan goals that count sessions
+// ---------------------------------------------------------------------------
+
+/** Plan goals whose own unit is blank or session-ish track their weekly
+ *  commitment in sessions, not in raw log amounts. */
+export function isSessionCountingGoal(goal: GoalData): boolean {
+  if (goal.type !== 'plan') return false
+  const u = (goal.unit ?? '').toLowerCase()
+  if (HOUR_UNITS.includes(u) || MINUTE_UNITS.includes(u)) return false
+  return u === '' || u === 'session' || u === 'sessions'
+}
+
+/** Every "session" the goal knows about: one per routine check-off done,
+ *  plus manually logged entries (their amount — usually 1 each). Auto-logs
+ *  created by a check-off are excluded: their amount is checkpoint progress
+ *  ("25 words"), already represented by the done mark. */
+function sessionEvents(goal: GoalData): { date: number; n: number }[] {
+  const autoLogIds = new Set<string>()
+  for (const r of goal.routines) {
+    for (const d of r.dones) {
+      if (d.logId) autoLogIds.add(d.logId)
+    }
+  }
+  const events: { date: number; n: number }[] = goal.routines.flatMap((r) =>
+    r.dones.map((d) => ({ date: dayStart(parseDayKey(d.date)).getTime(), n: 1 })),
+  )
+  for (const l of goal.logs) {
+    if (autoLogIds.has(l.id)) continue
+    events.push({ date: logDay(l), n: l.amount })
+  }
+  return events
+}
+
+/** Sessions completed during the week containing `ref`. */
+export function sessionsInWeek(goal: GoalData, ref: Date, weekStartOffset = 0): number {
+  const ws = new Date(startOfWeek(ref).getTime() + weekStartOffset * WEEK_MS)
+  const we = new Date(ws.getTime() + WEEK_MS)
+  return sessionEvents(goal)
+    .filter((e) => e.date >= ws.getTime() && e.date < we.getTime())
+    .reduce((s, e) => s + e.n, 0)
 }
 
 export interface GoalStats {
@@ -105,13 +156,16 @@ export interface GoalStats {
 
 export function computeGoalStats(goal: GoalData, now = new Date()): GoalStats {
   const logs = [...goal.logs].sort((a, b) => +new Date(a.date) - +new Date(b.date))
+  const sessionCounting = isSessionCountingGoal(goal)
   const currentValue = Math.round(logs.reduce((s, l) => s + l.amount, 0) * 100) / 100
   const created = new Date(goal.createdAt)
   const deadline = goal.deadline ? new Date(goal.deadline) : null
   const hasDeadline = !!deadline
   const daysLeft = deadline ? Math.max(0, Math.ceil((deadline.getTime() - now.getTime()) / DAY_MS)) : null
   const weeksLeft = deadline ? Math.max(0, (deadline.getTime() - now.getTime()) / WEEK_MS) : null
-  const thisWeekLogged = Math.round(amountInWeek(goal.logs, now) * 100) / 100
+  const thisWeekLogged = Math.round(
+    (sessionCounting ? sessionsInWeek(goal, now) : amountInWeek(goal.logs, now)) * 100,
+  ) / 100
 
   const steps = [...goal.steps].sort((a, b) => a.order - b.order)
   const stepsTotal = steps.length
@@ -150,9 +204,13 @@ export function computeGoalStats(goal: GoalData, now = new Date()): GoalStats {
   const paceWindowStart = startOfWeek(now).getTime() - 3 * WEEK_MS
   const activeSince = Math.max(created.getTime(), paceWindowStart)
   const paceWeeks = Math.max(1, (now.getTime() - activeSince) / WEEK_MS)
-  const paceAmount = logs
-    .filter((l) => logDay(l) >= paceWindowStart)
-    .reduce((s, l) => s + l.amount, 0)
+  const paceAmount = sessionCounting
+    ? sessionEvents(goal)
+        .filter((e) => e.date >= paceWindowStart)
+        .reduce((s, e) => s + e.n, 0)
+    : logs
+        .filter((l) => logDay(l) >= paceWindowStart)
+        .reduce((s, l) => s + l.amount, 0)
   const actualPacePerWeek = Math.round((paceAmount / paceWeeks) * 100) / 100
 
   const projectedFinishDate =
@@ -200,7 +258,9 @@ export function computeGoalStats(goal: GoalData, now = new Date()): GoalStats {
   // ---- streak ----
   let streakWeeks = 0
   for (let i = 0; i < 52; i++) {
-    const amount = amountInWeek(goal.logs, now, -i)
+    const amount = sessionCounting
+      ? sessionsInWeek(goal, now, -i)
+      : amountInWeek(goal.logs, now, -i)
     const met = weeklyRequirement != null ? amount >= weeklyRequirement * 0.99 : amount > 0
     if (met) streakWeeks++
     else if (i === 0) continue // current week still in progress — don't break the streak

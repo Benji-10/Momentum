@@ -109,6 +109,48 @@ export function ensureDbReady(): Promise<void> {
 }
 
 /**
+ * Once a day, copy the live SQLite database into db/backups/ (VACUUM INTO —
+ * safe to run while the server holds the file open). This preview's
+ * database has been lost before to a misplaced wipe; a rolling snapshot
+ * (newest 7 kept) makes that recoverable. Runs at most once per process.
+ */
+let snapshotAttempted = false
+async function snapshotSqliteDaily(): Promise<void> {
+  if (snapshotAttempted) return
+  snapshotAttempted = true
+
+  const url = process.env.DATABASE_URL ?? ''
+  if (!url.startsWith('file:')) return
+  const dbFile = url.slice('file:'.length).replace(/\?.*$/, '')
+  if (dbFile.includes('/tmp/') || !dbFile.endsWith('.db')) return // throwaway verify dbs: skip
+
+  const fs = await import('fs')
+  const path = await import('path')
+  if (!fs.existsSync(path.dirname(dbFile))) return
+  const backupDir = path.join(path.dirname(dbFile), 'backups')
+  fs.mkdirSync(backupDir, { recursive: true })
+
+  const DAY_MS = 24 * 60 * 60 * 1000
+  const existing = fs.readdirSync(backupDir).filter((f) => f.endsWith('.db')).sort()
+  const newest = existing.length ? path.join(backupDir, existing[existing.length - 1]) : null
+  if (newest && Date.now() - fs.statSync(newest).mtimeMs < DAY_MS) return // today's exists
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const target = path.join(backupDir, `custom-${stamp}.db`)
+  await db.$executeRawUnsafe(`VACUUM INTO '${target.replace(/'/g, "''")}'`)
+
+  // keep the newest 7 snapshots
+  const all = fs.readdirSync(backupDir).filter((f) => f.endsWith('.db')).sort()
+  for (const stale of all.slice(0, Math.max(0, all.length - 7))) {
+    try {
+      fs.unlinkSync(path.join(backupDir, stale))
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
+/**
  * SQLite (local dev / preview): the file database is created by
  * `prisma db push`, but an existing file predating a schema change won't
  * have new columns. Add them here so local upgrades are also zero-touch.
@@ -139,6 +181,9 @@ function ensureSqliteReady(): Promise<void> {
           }
         }
       }
+      // schema verified — take the daily safety snapshot (insurance, never
+      // blocks or fails boot)
+      await snapshotSqliteDaily().catch(() => undefined)
     })().catch((e) => {
       globalForPrisma.pgBootstrapped = undefined
       throw e

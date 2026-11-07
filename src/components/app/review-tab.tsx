@@ -194,7 +194,7 @@ function GoalReviewCard({
   const [view, setView] = useState<'rhythm' | 'bests'>('rhythm')
   const stats = computeGoalStats(goal)
   const c = goalColor(goal.color)
-  const weekly = weeklyHistory(goal.logs, 8)
+  const weekly = weeklyHistory(goal, 8)
   const requirement =
     goal.type === 'quantitative' ? (stats.idealWeeklyPace ?? goal.weeklyTarget) : goal.weeklyTarget
   const weeksMet = weekly.filter(

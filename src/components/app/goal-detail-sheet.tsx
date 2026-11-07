@@ -38,6 +38,7 @@ import {
   weeklyHistory,
 } from '@/lib/goal-math'
 import { goalColor } from '@/lib/goal-colors'
+import { linkedLogUnits, logAmountLabel } from '@/lib/recording'
 import { buildSkillMap } from '@/lib/skill-tree'
 import { describeCadence, occurrencesInRange, relativeDayLabel, routineStats, sameDay, startOfWeek, addDays, toDayKey } from '@/lib/routine-math'
 import { dayKeyOf, isoForDayKey, todayDayKey } from '@/lib/app-time'
@@ -342,12 +343,14 @@ function DetailBody({
 
   const stats = useMemo(() => computeGoalStats(goal), [goal])
   const series = useMemo(() => cumulativeSeries(goal), [goal])
-  const weekly = useMemo(() => weeklyHistory(goal.logs, 8), [goal])
+  const weekly = useMemo(() => weeklyHistory(goal, 8), [goal])
   const skillMap = useMemo(() => buildSkillMap(goal), [goal])
   const c = goalColor(goal.color)
   const unit = goal.unit ?? ''
-  // display unit for the log editor (falls back to sessions/units)
+  // display unit for the log editor (falls back to sessions/units); entries
+  // written by a linked check-off override it with the checkpoint's unit
   const logUnit = goal.unit ?? (goal.type === 'plan' ? 'sessions' : 'units')
+  const linkedUnits = useMemo(() => linkedLogUnits(goal), [goal])
 
   const weekRequirement =
     goal.type === 'quantitative' ? (stats.idealWeeklyPace ?? null) : goal.weeklyTarget
@@ -1163,7 +1166,11 @@ function DetailBody({
                     <span className="text-[11px] text-muted-foreground">tap an entry to edit it</span>
                   </div>
                   <div className="max-h-72 space-y-1.5 overflow-y-auto nice-scroll pr-1">
-                    {goal.logs.map((log) => (
+                    {goal.logs.map((log) => {
+                      // linked check-off entries speak the checkpoint's unit
+                      // ("10 words"), everything else the goal's own
+                      const rowUnit = linkedUnits.get(log.id) ?? logUnit
+                      return (
                       <div
                         key={log.id}
                         className="group flex items-center gap-3 rounded-lg border bg-card px-3 py-2 text-sm transition-colors hover:border-primary/40"
@@ -1172,14 +1179,14 @@ function DetailBody({
                         <button
                           type="button"
                           className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
-                          aria-label={`Edit entry: ${formatNumber(log.amount)} ${unit || 'logged'}`}
+                          aria-label={`Edit entry: ${logAmountLabel(log.amount, rowUnit)}`}
                           title="Edit amount, day or note"
                           onClick={() =>
                             setEditLog({
                               goalId: goal.id,
                               logId: log.id,
                               amount: log.amount,
-                              unit: logUnit,
+                              unit: rowUnit,
                               title: goal.title,
                               note: log.note,
                               day: dayKeyOf(new Date(log.date)),
@@ -1190,7 +1197,7 @@ function DetailBody({
                             {formatDateShort(new Date(log.date))}
                           </div>
                           <div className="flex shrink-0 items-center gap-1 font-semibold tabular-nums" style={{ color: c.hex }}>
-                            +{formatNumber(log.amount)} {unit}
+                            +{logAmountLabel(log.amount, rowUnit)}
                             <Pencil className="h-3 w-3 opacity-30 transition-opacity group-hover:opacity-70" />
                           </div>
                           <div className="min-w-0 flex-1 truncate text-muted-foreground">{log.note ?? ''}</div>
@@ -1211,7 +1218,8 @@ function DetailBody({
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </div>
               )}

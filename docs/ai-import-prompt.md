@@ -101,7 +101,7 @@ Either a plain string (`"Buy running shoes"`) or an object:
 | `timesPerWeek` | integer | 1–14 | 2 | **Flexible** cadence: N sessions per week on any days (e.g. badminton, language exchange). |
 | `durationMin` | integer | 1–1440 | null | Session length in minutes — feeds time-spent stats. |
 | `node` | string | 1–160 | null | Which checkpoint this session advances, as a node title or `"Path › Node"` ref. **Always qualify** (`"Vocabulary › HSK3"`) unless the title is unique across all paths. |
-| `credit` | number | >0, ≤100,000 | null | Progress auto-added to that node's `current` per completed session. Only stored if `node` is set **and** resolves. |
+| `credit` | number | >0, ≤100,000 | null | Progress one session adds to that node's `current` (defaults to 1 when omitted). Only stored if `node` is set **and** resolves. On check-off the amount is logged in the node's unit ("25 words") and can be edited afterwards — the node follows the edit. |
 | `startDate` | string | date | today | First possible day, `"YYYY-MM-DD"`. |
 | `endDate` | string | date | null | Optional last day (e.g. a 12-week block). |
 | `dones` | array of strings | — | [] | Completion history to restore: `["2026-01-05", "2026-01-08", …]`, dates ≤ today, deduped per day. |

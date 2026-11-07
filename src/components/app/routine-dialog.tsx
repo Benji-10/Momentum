@@ -349,7 +349,7 @@ export function RoutineDialog({
                     inputMode="decimal"
                   />
                   <span className="text-[11px] leading-tight text-muted-foreground">
-                    progress added to {selectedNode?.label ?? 'the checkpoint'} each time you check it off
+                    progress added to {selectedNode?.label ?? 'the checkpoint'} per check-off — defaults to 1, and the real amount can be edited right after checking off
                   </span>
                 </div>
               )}

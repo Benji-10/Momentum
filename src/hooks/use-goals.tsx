@@ -351,7 +351,7 @@ export function useToggleRoutineDone() {
               ? dones // already ticked (double-tap) — nothing to add
               : [
                   ...dones,
-                  { id: `optimistic-${routineId}-${dayKey}`, routineId, date: dayKey, creditedValue: null },
+                  { id: `optimistic-${routineId}-${dayKey}`, routineId, date: dayKey, creditedValue: null, logId: null },
                 ],
         )
       })
