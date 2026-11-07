@@ -10,6 +10,27 @@ const nextConfig: NextConfig = {
   },
   reactStrictMode: false,
   devIndicators: false,
+  async headers() {
+    return [
+      {
+        // the service worker must always be revalidated (a stale SW pins a
+        // stale shell), and the manifest needs its JSON content type
+        source: "/sw.js",
+        headers: [
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Service-Worker-Allowed", value: "/" },
+          { key: "Content-Type", value: "application/javascript; charset=utf-8" },
+        ],
+      },
+      {
+        source: "/manifest.webmanifest",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=3600" },
+          { key: "Content-Type", value: "application/manifest+json" },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

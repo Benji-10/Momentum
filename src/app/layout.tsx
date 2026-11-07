@@ -19,6 +19,15 @@ export const metadata: Metadata = {
   description:
     "Set measurable goals with deadlines, break skills into step-by-step plans, and see exactly what you need to do each week to stay on track.",
   keywords: ["goals", "habits", "tracking", "planning", "progress"],
+  // installable PWA: boots offline (service worker + cached shell),
+  // lists your synced to-dos from the on-device snapshot
+  manifest: "/manifest.webmanifest",
+  applicationName: "Momentum",
+  appleWebApp: {
+    capable: true,
+    title: "Momentum",
+    statusBarStyle: "default",
+  },
   icons: {
     // the Momentum mark: M as an ascending progress line (see public/favicon.svg)
     icon: [

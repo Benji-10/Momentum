@@ -1,12 +1,14 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { CalendarDays, ChevronDown, CopyPlus, LayoutDashboard, LogOut, Map as MapIcon, Plus, RefreshCw, Repeat, Settings, UserRound } from 'lucide-react'
+import { CalendarDays, ChevronDown, CloudOff, CloudUpload, CopyPlus, LayoutDashboard, Loader2, LogOut, Map as MapIcon, Plus, RefreshCw, Repeat, Settings, UserRound } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTheme } from 'next-themes'
 import type { GoalData } from '@/lib/types'
 import type { UserSettings } from '@/lib/settings'
 import { useGoals, useSeedDemo } from '@/hooks/use-goals'
+import { useSyncState } from '@/hooks/use-sync'
+import { replaySyncQueue } from '@/lib/offline'
 import { useLogout, useMe, useSettings } from '@/hooks/use-auth'
 import { useQueryClient } from '@tanstack/react-query'
 import { initIdentity } from '@/lib/identity-client'
@@ -69,10 +71,17 @@ function AppSettingsApplier({ settings }: { settings: UserSettings | null }) {
   return null
 }
 
-/** Manual sync button — shows freshness, taps to pull the latest from the server. */
+/** Manual sync button — doubles as the live sync status indicator.
+ *
+ *  - offline: a grey cloud with an amber "offline" tint; clicking retries
+ *  - N pending offline changes: amber cloud-up badge with the count
+ *  - replaying the queue: spinning arrow
+ *  - normal: freshness ("12s ago"); click refreshes
+ */
 function SyncButton({ goalsQuery }: { goalsQuery: ReturnType<typeof useGoals> }) {
   const [, tick] = useState(0)
   const qc = useQueryClient()
+  const sync = useSyncState()
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 20_000)
     return () => clearInterval(t)
@@ -86,22 +95,82 @@ function SyncButton({ goalsQuery }: { goalsQuery: ReturnType<typeof useGoals> })
         : secs < 3600
           ? `${Math.floor(secs / 60)}m ago`
           : `${Math.floor(secs / 3600)}h ago`
+  const busy = sync.syncing || goalsQuery.isFetching
+  const label = !sync.online
+    ? 'You are offline — changes are saved on this device'
+    : sync.pending > 0
+      ? `${sync.pending} offline change${sync.pending === 1 ? '' : 's'} waiting to sync — click to sync now`
+      : `Sync now (last synced ${when})`
   return (
     <Button
       variant="ghost"
       size="icon"
-      className="h-9 w-9 shrink-0 text-muted-foreground"
-      aria-label={`Sync now (last synced ${when})`}
-      title={`Synced ${when} — click to refresh`}
+      className={cn(
+        'relative h-9 w-9 shrink-0',
+        sync.online ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400',
+      )}
+      aria-label={label}
+      title={
+        !sync.online
+          ? 'Offline — your list is loaded from this device and changes sync when you reconnect'
+          : sync.pending > 0
+            ? `${sync.pending} change${sync.pending === 1 ? '' : 's'} made offline — click to sync now`
+            : `Synced ${when} — click to refresh`
+      }
       onClick={() => {
-        // goals + the account row: settings changed on another device — theme,
-        // time zone — land here too, then the applier applies them
+        // online: pull latest goals + settings; if the offline queue has
+        // anything stuck, drain it first (e.g. the browser missed the
+        // `online` event) — the replay refreshes goals itself when done
+        void replaySyncQueue()
         void goalsQuery.refetch()
         void qc.invalidateQueries({ queryKey: ['me'] })
       }}
     >
-      <RefreshCw className={cn('h-4 w-4', goalsQuery.isFetching && 'animate-spin')} />
+      {!sync.online ? (
+        <CloudOff className="h-4 w-4" />
+      ) : sync.pending > 0 ? (
+        <CloudUpload className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+      ) : (
+        <RefreshCw className={cn('h-4 w-4', busy && 'animate-spin')} />
+      )}
+      {sync.pending > 0 && (
+        <span
+          className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-bold leading-none text-white"
+          aria-hidden
+        >
+          {sync.pending > 9 ? '9+' : sync.pending}
+        </span>
+      )}
     </Button>
+  )
+}
+
+/** The strip under the header that explains offline reality: what you're
+ *  looking at (the last synced snapshot) and what happens to new taps (they
+ *  stay on this device until the connection returns). */
+function OfflineBanner() {
+  const sync = useSyncState()
+  if (sync.online && !sync.fromCache) return null
+  return (
+    <div
+      role="status"
+      className="mb-4 flex items-center gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-sm text-amber-800 dark:text-amber-200"
+    >
+      <CloudOff className="h-4 w-4 shrink-0" />
+      <div className="min-w-0 flex-1">
+        {sync.online ? (
+          <>
+            Back online{sync.pending > 0 ? ` — syncing ${sync.pending} saved change${sync.pending === 1 ? '' : 's'}…` : ' — restoring your live list…'}
+          </>
+        ) : (
+          <>
+            You&apos;re offline — showing your last synced list. Anything you check off or edit is saved on
+            this device and syncs automatically when you reconnect.
+          </>
+        )}
+      </div>
+      {sync.syncing && <Loader2 className="h-4 w-4 shrink-0 animate-spin" />}
+    </div>
   )
 }
 
@@ -245,6 +314,9 @@ function App({ email, name, settings }: { email: string; name: string | null; se
 
       {/* main */}
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 sm:py-8">
+        {/* explains what you're looking at when the network is gone (or just
+            came back and the queue is draining) */}
+        <OfflineBanner />
         {isLoading ? (
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">

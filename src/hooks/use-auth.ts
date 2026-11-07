@@ -13,13 +13,19 @@ import {
   initIdentity,
   requestRecovery,
 } from '@/lib/identity-client'
+import { handleUserSwitch, isNetworkError, loadSettingsCache, saveSettingsCache } from '@/lib/offline'
 import type { SessionUser } from '@/lib/auth'
 import type { UserSettings } from '@/lib/settings'
 
 /** The shared ['me'] fetch: verifies the identity token with the server on
  *  load, then re-checks on window focus so a sign-out on another device is
  *  picked up when you come back. Also returns the user's synced app settings
- *  (theme + timezone) that every device applies. */
+ *  (theme + timezone) that every device applies.
+ *
+ *  When the network is down the local session still identifies the user (and
+ *  the cached settings keep theme/timezone alive), so the offline list stays
+ *  reachable — the next successful poll re-verifies, and a real 401 signs
+ *  out properly. */
 async function fetchMe(): Promise<{ user: SessionUser | null; settings: UserSettings }> {
   await initIdentity()
   const identity = await currentIdentityUser()
@@ -27,7 +33,9 @@ async function fetchMe(): Promise<{ user: SessionUser | null; settings: UserSett
   // confirms the token server-side; also creates the app row (and adopts
   // unclaimed goals) on the very first sign-in
   try {
-    return await apiFetch<{ user: SessionUser | null; settings: UserSettings }>('/api/auth/me')
+    const res = await apiFetch<{ user: SessionUser | null; settings: UserSettings }>('/api/auth/me')
+    saveSettingsCache(res.settings, res.user?.id ?? identity.id)
+    return res
   } catch (e) {
     const msg = e instanceof Error ? e.message : ''
     if (/no longer exists/i.test(msg)) {
@@ -36,6 +44,18 @@ async function fetchMe(): Promise<{ user: SessionUser | null; settings: UserSett
       toast.error('Your account no longer exists — please create it again', {
         description: 'The server database was reset, so your previous sign-in can no longer be verified.',
       })
+    }
+    if (isNetworkError(e)) {
+      // offline (or the server is unreachable): stay locally signed in
+      return {
+        user: {
+          id: identity.id,
+          email: identity.email,
+          name: (identity.user_metadata?.name as string | undefined) ?? null,
+          settings: null,
+        },
+        settings: loadSettingsCache() ?? { theme: null, timezone: null },
+      }
     }
     throw e
   }
@@ -73,6 +93,7 @@ export function useLogin() {
   return useMutation({
     mutationFn: ({ email, password }: { email: string; password: string }) => identityLogin(email, password),
     onSuccess: async (user) => {
+      handleUserSwitch(user.id)
       qc.setQueryData(['me'], {
         user: { id: user.id, email: user.email, name: (user.user_metadata?.name as string) ?? null, settings: null },
         settings: { theme: null, timezone: null },
@@ -89,6 +110,7 @@ export function useSignup() {
     mutationFn: ({ email, password, name }: { email: string; password: string; name?: string }) =>
       identitySignup(email, password, name),
     onSuccess: async (user) => {
+      handleUserSwitch(user.id)
       qc.setQueryData(['me'], {
         user: { id: user.id, email: user.email, name: (user.user_metadata?.name as string) ?? null, settings: null },
         settings: { theme: null, timezone: null },
@@ -104,6 +126,7 @@ export function useLogout() {
   return useMutation({
     mutationFn: () => identityLogout(),
     onSuccess: () => {
+      handleUserSwitch(null)
       qc.setQueryData(['me'], { user: null })
       qc.setQueryData(['goals'], { goals: [] })
     },

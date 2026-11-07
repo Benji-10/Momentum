@@ -46,6 +46,14 @@ with flexible routines, and watch the log write itself as you check things off.
   never shows tomorrow's tasks early — check-offs, schedule weeks, stats
   and chart dates all follow the same day boundary (see
   `src/lib/app-time.ts`).
+- **Works offline** — a dropped connection never blocks you. Ticks and edits
+  apply instantly (optimistic UI), get saved to an on-device queue, and the
+  last synced list stays readable — even after an offline reload, because
+  the app installs as a PWA with a cached shell. Everything syncs by itself
+  the moment you're back online (see **Offline support** below).
+- **Instant check-offs** — tapping a routine shows the tick immediately and
+  the server reconciles in the background; only a real rejection (not a
+  slow network) rolls it back with a toast.
 - **Import / Export** — one-click JSON backup using the versioned `v1`
   schema (see `src/lib/import-format.ts`); the parser is tolerant of multiple
   goals, nullable fields and empty arrays.
@@ -91,6 +99,31 @@ the API routes deploy as Netlify Functions. Full walkthrough in
 
 To move existing data, use **Export** (header → ⬇) on the old build and
 **Import** (header → ⬆) on the new one while signed in.
+
+## Offline support
+
+Always-online apps die with the Wi-Fi. Momentum keeps three layers so the
+network is a nice-to-have (all in `src/lib/offline.tsx` + `public/sw.js`):
+
+1. **Optimistic reads & writes.** Every check-off updates the UI instantly
+   and syncs in the background. If the server actually rejects it, only that
+   routine rolls back with a message — a slow connection never feels broken.
+2. **On-device snapshot + queue.** Every successful load is snapshotted to
+   `localStorage`; when a fetch can't reach the server, the app serves that
+   snapshot (banner: “You're offline — showing your last synced list”).
+   Mutations that can't be sent are queued locally — strictly in order, with
+   the account id recorded so user A's pending edits can never replay under
+   user B's session — and replayed automatically on the `online` event, on
+   window focus, and on the next launch. Destructive actions (danger zone,
+   imports) are never queued: they fail normally and loudly.
+3. **Installable PWA.** A service worker caches the app shell and the
+   manifest makes Momentum installable to the home screen, so even a full
+   *reload* with no connection boots into your list (production builds).
+
+The header cloud button is the live indicator: grey cloud = offline, amber
+badge = N changes waiting to sync, spinner = syncing. `/api/*` and
+`/.netlify/*` traffic is never intercepted by the service worker — auth and
+data still come from the network (or the snapshot) honestly.
 
 ## Repo layout
 

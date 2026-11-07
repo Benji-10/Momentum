@@ -1,12 +1,25 @@
 'use client'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { CloudOff } from 'lucide-react'
 import { toast } from 'sonner'
 import type { CreateGoalInput, GoalData, MergeSummary, RoutineDoneData, StepStatus } from '@/lib/types'
 import type { NormalizedImport } from '@/lib/import-format'
 import { dayKeyOf, todayDayKey } from '@/lib/app-time'
 import { parseDayKey } from '@/lib/routine-math'
 import { apiFetch } from '@/lib/api-client'
+import {
+  currentIdentityUser,
+} from '@/lib/identity-client'
+import {
+  applyQueuedDones,
+  isNetworkError,
+  isOfflineQueuedError,
+  loadGoalsCache,
+  queuedOps,
+  saveGoalsCache,
+  setServingFromCache,
+} from '@/lib/offline'
 
 function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   return apiFetch<T>(url, init)
@@ -15,7 +28,32 @@ function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
 export function useGoals() {
   return useQuery({
     queryKey: ['goals'],
-    queryFn: () => jsonFetch<{ goals: GoalData[] }>('/api/goals'),
+    queryFn: async () => {
+      // whatever data we show, the queued check-offs layer on top so the
+      // list reflects "what will sync" — a tick made offline survives an
+      // offline reload instead of vanishing until the connection returns
+      const overlay = (goals: GoalData[]) => applyQueuedDones(goals, queuedOps())
+      try {
+        const d = await jsonFetch<{ goals: GoalData[] }>('/api/goals')
+        // snapshot for offline use — the list survives a dropped connection
+        const user = await currentIdentityUser()
+        saveGoalsCache(d.goals, user?.id ?? null)
+        setServingFromCache(false)
+        return { goals: overlay(d.goals) }
+      } catch (e) {
+        if (isNetworkError(e)) {
+          const cached = loadGoalsCache()
+          if (cached) {
+            // no connection: serve the last synced snapshot (with the
+            // pending queue applied) — the schedule and dashboard keep
+            // working, and check-offs queue up
+            setServingFromCache(true)
+            return { goals: overlay(cached.goals) }
+          }
+        }
+        throw e
+      }
+    },
     select: (d) => d.goals,
   })
 }
@@ -320,6 +358,15 @@ export function useToggleRoutineDone() {
       return { prev }
     },
     onError: (e, { goalId, routineId }, ctx) => {
+      if (isOfflineQueuedError(e)) {
+        // no connection, but the tap counts: keep the optimistic tick on
+        // screen — the queued op replays when the network returns
+        toast('Checked off offline', {
+          icon: <CloudOff className="h-4 w-4 text-amber-500" />,
+          description: 'It will sync to your account when you reconnect.',
+        })
+        return
+      }
       // roll back just this routine's dones to the pre-tap snapshot — other
       // goals / routines that changed meanwhile stay as they are
       if (ctx?.prev) {
