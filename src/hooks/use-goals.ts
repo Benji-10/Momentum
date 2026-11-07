@@ -1,8 +1,11 @@
 'use client'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { CreateGoalInput, GoalData, MergeSummary, StepStatus } from '@/lib/types'
+import { toast } from 'sonner'
+import type { CreateGoalInput, GoalData, MergeSummary, RoutineDoneData, StepStatus } from '@/lib/types'
 import type { NormalizedImport } from '@/lib/import-format'
+import { dayKeyOf, todayDayKey } from '@/lib/app-time'
+import { parseDayKey } from '@/lib/routine-math'
 import { apiFetch } from '@/lib/api-client'
 
 function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
@@ -249,6 +252,34 @@ export function useDeleteRoutine(goalId: string | null) {
   })
 }
 
+type GoalsCache = { goals: GoalData[] }
+
+/** Rewrite a routine's dones array inside the ['goals'] cache. */
+function withRoutineDones(
+  cache: GoalsCache,
+  goalId: string,
+  routineId: string,
+  next: (dones: RoutineDoneData[]) => RoutineDoneData[],
+): GoalsCache {
+  return {
+    ...cache,
+    goals: cache.goals.map((g) =>
+      g.id !== goalId
+        ? g
+        : {
+            ...g,
+            routines: g.routines.map((r) => (r.id !== routineId ? r : { ...r, dones: next(r.dones) })),
+          },
+    ),
+  }
+}
+
+/** Does this done mark belong to the given calendar day? (wire format is
+ * "YYYY-MM-DD"; legacy full-ISO rows are normalized before comparing.) */
+function doneIsOnDay(d: RoutineDoneData, dayKey: string): boolean {
+  return dayKeyOf(parseDayKey(d.date)) === dayKey
+}
+
 export function useToggleRoutineDone() {
   const qc = useQueryClient()
   return useMutation({
@@ -262,7 +293,60 @@ export function useToggleRoutineDone() {
         method: 'POST',
         body: JSON.stringify({ date, undo }),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+    /**
+     * Optimistic check-off: the tick (or untick) shows immediately and the
+     * server syncs in the background. If the save fails we roll this one
+     * routine back and say so — the user should never wait on the network
+     * to see their own tap.
+     */
+    onMutate: async ({ goalId, routineId, date, undo }) => {
+      await qc.cancelQueries({ queryKey: ['goals'] })
+      const prev = qc.getQueryData<GoalsCache>(['goals'])
+      if (!prev) return { prev: null }
+      const dayKey = date ?? todayDayKey()
+      qc.setQueryData<GoalsCache>(['goals'], (cur) => {
+        if (!cur) return cur
+        return withRoutineDones(cur, goalId, routineId, (dones) =>
+          undo
+            ? dones.filter((d) => !doneIsOnDay(d, dayKey))
+            : dones.some((d) => doneIsOnDay(d, dayKey))
+              ? dones // already ticked (double-tap) — nothing to add
+              : [
+                  ...dones,
+                  { id: `optimistic-${routineId}-${dayKey}`, routineId, date: dayKey, creditedValue: null },
+                ],
+        )
+      })
+      return { prev }
+    },
+    onError: (e, { goalId, routineId }, ctx) => {
+      // roll back just this routine's dones to the pre-tap snapshot — other
+      // goals / routines that changed meanwhile stay as they are
+      if (ctx?.prev) {
+        const before = ctx.prev.goals
+          .find((g) => g.id === goalId)
+          ?.routines.find((r) => r.id === routineId)?.dones
+        if (before) {
+          qc.setQueryData<GoalsCache>(['goals'], (cur) =>
+            cur ? withRoutineDones(cur, goalId, routineId, () => before) : cur,
+          )
+        }
+      }
+      toast.error("Couldn't save that", {
+        description: e instanceof Error ? `${e.message} — your check-off was undone, try again.` : 'The check-off was undone — try again.',
+      })
+    },
+    /** Server truth replaces the optimistic state (real done id, auto-log
+     * entry, skill-tree credit) without a refetch round-trip flicker. */
+    onSuccess: (res) => {
+      if (res.goal) {
+        qc.setQueryData<GoalsCache>(['goals'], (cur) =>
+          cur ? { ...cur, goals: cur.goals.map((g) => (g.id === res.goal!.id ? res.goal! : g)) } : cur,
+        )
+      } else {
+        qc.invalidateQueries({ queryKey: ['goals'] })
+      }
+    },
   })
 }
 
@@ -458,6 +542,32 @@ export function useAddPbRecord(goalId: string | null) {
       jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/pbs/${pbId}/records`, {
         method: 'POST',
         body: JSON.stringify({ value, date, note: note || null }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+  })
+}
+
+/** Fix one attempt after the fact — "I actually jumped 1.82, not 1.28". */
+export function useUpdatePbRecord(goalId: string | null) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      pbId,
+      recordId,
+      value,
+      date,
+      note,
+    }: {
+      pbId: string
+      recordId: string
+      value: number
+      /** new ISO instant — only sent when the day actually changed */
+      date?: string
+      note?: string | null
+    }) =>
+      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/pbs/${pbId}/records/${recordId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ value, note: note ?? null, ...(date ? { date } : {}) }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
   })

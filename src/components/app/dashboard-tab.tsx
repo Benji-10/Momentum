@@ -366,6 +366,9 @@ function FocusItem({ goal, onOpen }: { goal: GoalData; onOpen: (g: GoalData, tab
       tabIndex={0}
       onClick={() => onOpen(goal, tab)}
       onKeyDown={(e) => {
+        // only when the row itself is focused — keydowns from the quick-log
+        // popover's inputs bubble here and must not open the goal
+        if (e.target !== e.currentTarget) return
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
           onOpen(goal, tab)

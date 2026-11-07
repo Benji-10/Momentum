@@ -1,15 +1,25 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowDown, ArrowUp, Check, Loader2, Pencil, Trophy } from 'lucide-react'
+import { ArrowDown, ArrowUp, Check, Loader2, Minus, Pencil, Plus, Trash2, Trophy } from 'lucide-react'
 import { toast } from 'sonner'
-import type { GoalData, PersonalBestData } from '@/lib/types'
+import type { GoalData, PersonalBestData, PbRecordData } from '@/lib/types'
 import { formatNumber } from '@/lib/goal-math'
 import { beatsPb, currentPb, sortedRecords } from '@/lib/pb-math'
-import { isoForDayKey, todayDayKey, getAppTimezone } from '@/lib/app-time'
-import { useAddPb, useAddPbRecord, useUpdatePb } from '@/hooks/use-goals'
+import { dayKeyAgo, dayKeyOf, getAppTimezone, isoForDayKey, todayDayKey } from '@/lib/app-time'
+import { useAddPb, useAddPbRecord, useDeletePbRecord, useUpdatePb, useUpdatePbRecord } from '@/hooks/use-goals'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
@@ -390,6 +400,216 @@ export function RecordPbDialog({
             {addRecord.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Record it
           </Button>
         </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/** Fix one logged attempt — wrong number, wrong day, missing note — or
+ *  remove it entirely. Opened by tapping an attempt chip. */
+export function EditPbRecordDialog({
+  goalId,
+  pb,
+  record,
+  open,
+  onOpenChange,
+}: {
+  goalId: string
+  pb: PersonalBestData | null
+  record: PbRecordData | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  // remounted (key=) per record, so plain state is enough here
+  const [value, setValue] = useState(String(record?.value ?? ''))
+  const [note, setNote] = useState(record?.note ?? '')
+  const [day, setDay] = useState(record ? dayKeyOf(new Date(record.date), getAppTimezone()) : todayDayKey())
+  const [confirmRemove, setConfirmRemove] = useState(false)
+  const update = useUpdatePbRecord(goalId)
+  const remove = useDeletePbRecord(goalId)
+
+  if (!pb || !record) return null
+
+  const today = todayDayKey()
+  const isBest = currentPb(pb)?.id === record.id
+  const n = parseFloat(value)
+  const nowBeats = !isNaN(n) && n > 0 && beatsPb(pb, n)
+
+  function nudge(delta: number) {
+    const cur = parseFloat(value)
+    const next = Math.max(0, Math.round(((isNaN(cur) ? 0 : cur) + delta) * 100) / 100)
+    setValue(String(next))
+  }
+
+  function save() {
+    if (!pb || !record) return
+    if (isNaN(n) || n <= 0) {
+      toast.error('Enter a result greater than 0')
+      return
+    }
+    const patch: { pbId: string; recordId: string; value: number; note: string | null; date?: string } = {
+      pbId: pb.id,
+      recordId: record.id,
+      value: n,
+      note: note.trim() || null,
+    }
+    // only move the stored instant when the day actually changed
+    if (day !== dayKeyOf(new Date(record.date), getAppTimezone())) patch.date = isoForDayKey(day, '12:00')
+    update.mutate(patch, {
+      onSuccess: () => {
+        toast.success(`Attempt saved — ${formatNumber(n)}${pb.unit ? ` ${pb.unit}` : ''}`)
+        onOpenChange(false)
+      },
+      onError: (e) => toast.error('Could not update the attempt', { description: e.message }),
+    })
+  }
+
+  const dayChips = [
+    { label: 'Today', value: today },
+    { label: 'Yesterday', value: dayKeyAgo(1) },
+    { label: dayKeyAgo(2).slice(5).replace('-', '/'), value: dayKeyAgo(2) },
+  ]
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Pencil className="h-4 w-4" /> {isBest ? 'Current PB' : 'Attempt'} — {pb.name}
+          </DialogTitle>
+          <DialogDescription>
+            Fix the number, the day or the note. {pb.direction === 'up' ? 'Higher is better' : 'Lower is better'}
+            {pb.unit ? ` (${pb.unit})` : ''}.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          {/* result — quick ± nudges or type it directly */}
+          <div className="flex items-center justify-center gap-2">
+            <Button type="button" variant="outline" size="icon" aria-label="Less" onClick={() => nudge(-1)}>
+              <Minus className="h-4 w-4" />
+            </Button>
+            <Input
+              type="number"
+              min={0}
+              step="any"
+              inputMode="decimal"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && save()}
+              autoFocus
+              className="w-28 text-center text-lg font-semibold tabular-nums"
+              aria-label="Result"
+            />
+            <Button type="button" variant="outline" size="icon" aria-label="More" onClick={() => nudge(1)}>
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {nowBeats && !isBest && (
+            <p className="text-center text-xs font-semibold text-emerald-500">
+              That would be the new PB 🎉
+            </p>
+          )}
+
+          <Input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && save()}
+            placeholder="Note (optional)"
+            maxLength={200}
+            aria-label="Note"
+          />
+
+          {/* day — move the attempt to another day */}
+          <div>
+            <Label className="flex items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Which day?
+            </Label>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {dayChips.map((d) => (
+                <button
+                  key={d.value}
+                  type="button"
+                  onClick={() => setDay(d.value)}
+                  className={cn(
+                    'rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
+                    day === d.value
+                      ? 'bg-primary text-primary-foreground'
+                      : 'border text-muted-foreground hover:border-primary/50 hover:text-foreground',
+                  )}
+                >
+                  {d.label}
+                </button>
+              ))}
+              <Input
+                type="date"
+                value={day}
+                max={today}
+                onChange={(e) => setDay(e.target.value)}
+                aria-label="Date of this attempt"
+                className="h-7 w-[135px] px-2 text-xs"
+              />
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter className="sm:justify-between">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1 text-destructive hover:text-destructive"
+            onClick={() => setConfirmRemove(true)}
+          >
+            <Trash2 className="h-3.5 w-3.5" /> Remove
+          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button onClick={save} disabled={update.isPending}>
+              {update.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Save
+            </Button>
+          </div>
+        </DialogFooter>
+
+        <AlertDialog open={confirmRemove} onOpenChange={setConfirmRemove}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Remove this attempt?</AlertDialogTitle>
+              <AlertDialogDescription>
+                The {formatNumber(record.value)}
+                {pb.unit ? ` ${pb.unit}` : ''} attempt on{' '}
+                {new Date(record.date).toLocaleDateString('en-GB', {
+                  day: 'numeric',
+                  month: 'short',
+                  timeZone: getAppTimezone(),
+                })}{' '}
+                will be deleted. The other attempts stay.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Keep it</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={() =>
+                  remove.mutate(
+                    { pbId: pb.id, recordId: record.id },
+                    {
+                      onSuccess: () => {
+                        toast.success('Attempt removed')
+                        onOpenChange(false)
+                      },
+                      onError: (e) => toast.error('Could not remove the attempt', { description: e.message }),
+                    },
+                  )
+                }
+              >
+                Remove
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   )

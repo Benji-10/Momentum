@@ -40,6 +40,9 @@ export function GoalCard({
       aria-label={`Open goal ${goal.title}`}
       onClick={() => onOpen(goal)}
       onKeyDown={(e) => {
+        // only when the card itself is focused — keydowns from child inputs
+        // and portaled popovers bubble here and must not open the goal
+        if (e.target !== e.currentTarget) return
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
           onOpen(goal)

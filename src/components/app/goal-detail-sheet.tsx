@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Archive,
   ArrowDown,
@@ -50,6 +50,7 @@ import {
   useDeleteGoal,
   useDeleteLog,
   useDeleteNote,
+  useDeleteRoutine,
   useDeleteStep,
   useGoalScopeImport,
   useToggleRoutineDone,
@@ -104,6 +105,39 @@ function quickAmounts(unit: string | null): number[] {
     default:
       return [1, 2, 5]
   }
+}
+
+/** Goal description, clamped to two lines until expanded — on a phone a long
+ *  description used to push the tabs (and everything below) off-screen. */
+function ClampedDescription({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const [overflows, setOverflows] = useState(false)
+  const ref = useRef<HTMLParagraphElement>(null)
+
+  useEffect(() => {
+    // measure only while collapsed; once we know it overflows, keep the
+    // toggle so "less" stays available after expanding
+    if (expanded) return
+    const el = ref.current
+    if (el && el.scrollHeight > el.clientHeight + 2) setOverflows(true)
+  }, [text, expanded])
+
+  return (
+    <div>
+      <SheetDescription ref={ref} className={cn('mt-1 leading-snug', !expanded && 'line-clamp-2')}>
+        {text}
+      </SheetDescription>
+      {overflows && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-0.5 text-xs font-medium text-primary hover:underline"
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </button>
+      )}
+    </div>
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -169,7 +203,8 @@ function StepRow({
             <div className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-primary">Next up</div>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        {/* always visible on touch — hover-reveal only on desktop */}
+        <div className="flex shrink-0 items-center gap-0.5 opacity-100 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100 sm:focus-within:opacity-100">
           <Button
             variant="ghost"
             size="icon"
@@ -303,6 +338,7 @@ function DetailBody({
   const deleteNote = useDeleteNote(goal.id)
   const toggleDone = useToggleRoutineDone()
   const scopeImport = useGoalScopeImport(goal.id)
+  const deleteRoutine = useDeleteRoutine(goal.id)
 
   const stats = useMemo(() => computeGoalStats(goal), [goal])
   const series = useMemo(() => cumulativeSeries(goal), [goal])
@@ -408,25 +444,24 @@ function DetailBody({
 
   return (
     <>
-      {/* header */}
+      {/* header — compact on phones so the tabs below stay on-screen */}
       <SheetHeader
-        className="space-y-0 border-b p-6 pb-4"
+        className="space-y-0 border-b p-4 pb-3 sm:p-6 sm:pb-4"
         style={{ background: `linear-gradient(135deg, ${c.soft}, transparent 60%)` }}
       >
         <div className="flex items-start justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-3.5">
+          <div className="flex min-w-0 items-start gap-3 sm:gap-3.5">
             <div
-              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border text-2xl"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border text-xl sm:h-14 sm:w-14 sm:text-2xl"
               style={{ background: c.soft, borderColor: `${c.hex}55` }}
             >
               {goal.emoji}
             </div>
             <div className="min-w-0">
-              <SheetTitle className="text-xl leading-tight">{goal.title}</SheetTitle>
-              {goal.description && (
-                <SheetDescription className="mt-1 leading-snug">{goal.description}</SheetDescription>
-              )}
-              <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+              <SheetTitle className="text-lg leading-tight sm:text-xl">{goal.title}</SheetTitle>
+              {goal.description && <ClampedDescription text={goal.description} />}
+              {/* one scrollable line on phones, wrapping on larger screens */}
+              <div className="nice-scroll mt-2 flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 sm:mt-2.5 sm:flex-wrap sm:overflow-visible sm:pb-0">
                 <Badge variant="secondary" className="gap-1">
                   {goal.type === 'quantitative' ? <Target className="h-3 w-3" /> : <Zap className="h-3 w-3" />}
                   {goal.type === 'quantitative' ? 'Target goal' : 'Plan goal'}
@@ -497,7 +532,7 @@ function DetailBody({
             </AlertDialog>
           </div>
         </div>
-        <div className="mt-3">
+        <div className="mt-2 sm:mt-3">
           <StatusBadge status={stats.status} />
         </div>
       </SheetHeader>
@@ -1011,10 +1046,11 @@ function DetailBody({
                                 </span>
                               )
                             )}
+                            {/* always visible on touch — hover-reveal only on desktop */}
                             <Button
                               size="icon"
                               variant="ghost"
-                              className="h-8 w-8 opacity-0 transition-opacity group-hover:opacity-100"
+                              className="h-8 w-8 opacity-100 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100"
                               aria-label="Edit routine"
                               onClick={() => {
                                 setEditRoutine(r)
@@ -1023,6 +1059,45 @@ function DetailBody({
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </Button>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-8 w-8 text-destructive opacity-100 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100"
+                                  aria-label={`Delete routine ${r.title}`}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Delete this routine?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    &ldquo;{r.title}&rdquo; stops repeating and its check-off history is removed. Practice
+                                    you already logged stays in your history.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    className="bg-destructive text-white hover:bg-destructive/90"
+                                    onClick={() =>
+                                      deleteRoutine.mutate(
+                                        { routineId: r.id },
+                                        {
+                                          onSuccess: () => toast.success('Routine deleted'),
+                                          onError: (e) =>
+                                            toast.error('Could not delete routine', { description: e.message }),
+                                        },
+                                      )
+                                    }
+                                  >
+                                    Delete
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
                           </div>
                         </div>
                       )
@@ -1123,7 +1198,7 @@ function DetailBody({
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-7 w-7 shrink-0 text-destructive opacity-0 transition-opacity group-hover:opacity-100"
+                          className="h-7 w-7 shrink-0 text-destructive opacity-100 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100"
                           aria-label="Delete log entry"
                           disabled={deleteLog.isPending}
                           onClick={() =>
@@ -1204,7 +1279,8 @@ function DetailBody({
                   >
                     <div className="flex items-start gap-2">
                       <p className="min-w-0 flex-1 whitespace-pre-wrap">{n.content}</p>
-                      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                      {/* always visible on touch — hover-reveal only on desktop */}
+                      <div className="flex shrink-0 items-center gap-0.5 opacity-100 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100 sm:focus-within:opacity-100">
                         <Button
                           size="icon"
                           variant="ghost"

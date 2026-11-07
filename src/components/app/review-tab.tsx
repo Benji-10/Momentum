@@ -1,14 +1,14 @@
 'use client'
 
 import { useState } from 'react'
-import { Activity, CalendarClock, Clock, Flame, Gauge, Pencil, Plus, Timer, Trash2, Trophy, X } from 'lucide-react'
+import { Activity, CalendarClock, Clock, Flame, Gauge, Pencil, Plus, Timer, Trash2, Trophy } from 'lucide-react'
 import { toast } from 'sonner'
-import type { GoalData, PersonalBestData } from '@/lib/types'
+import type { GoalData, PersonalBestData, PbRecordData } from '@/lib/types'
 import { computeGoalStats, formatDateShort, formatHours, formatNumber, weeklyHistory } from '@/lib/goal-math'
 import { goalColor } from '@/lib/goal-colors'
 import { currentPb, formatPbValue, pbDelta, pbSeries, sortedRecords } from '@/lib/pb-math'
 import { timeSpent } from '@/lib/goal-math'
-import { useDeletePb, useDeletePbRecord } from '@/hooks/use-goals'
+import { useDeletePb } from '@/hooks/use-goals'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import {
@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { StatusBadge } from '@/components/app/goal-visuals'
 import { PbChart, TimeAreaChart, WeeklyBars } from '@/components/app/charts'
-import { AddPbMetricDialog, EditPbDialog, RecordPbDialog } from '@/components/app/pb-dialogs'
+import { AddPbMetricDialog, EditPbDialog, EditPbRecordDialog, RecordPbDialog } from '@/components/app/pb-dialogs'
 import { cn } from '@/lib/utils'
 
 /** One PB metric: current best, the PB-over-time chart, record + manage. */
@@ -41,9 +41,10 @@ function PbMetricBlock({
   const delta = pbDelta(pb)
   const records = sortedRecords(pb)
   const deletePb = useDeletePb(goal.id)
-  const deleteRecord = useDeletePbRecord(goal.id)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [editOpen, setEditOpen] = useState(false)
+  /** the attempt being edited, or null (editor closed) */
+  const [editRecord, setEditRecord] = useState<PbRecordData | null>(null)
 
   const improving = delta == null ? null : pb.direction === 'up' ? delta > 0 : delta < 0
 
@@ -104,38 +105,27 @@ function PbMetricBlock({
           <div className="mt-2">
             <PbChart data={pbSeries(pb)} color={c.hex} unit={pb.unit} direction={pb.direction} />
           </div>
-          {/* attempts, newest first — hover an X to fix typos */}
+          {/* attempts, newest first — tap one to fix the number, day or note */}
           <div className="mt-1 flex flex-wrap gap-1.5">
             {[...records].reverse().map((r) => {
               const isBest = best != null && r.id === best.id
               return (
-                <span
+                <button
                   key={r.id}
+                  type="button"
+                  aria-label={`Edit the ${formatNumber(r.value)} attempt from ${formatDateShort(new Date(r.date))}`}
+                  title={r.note ?? 'Tap to edit or remove'}
+                  onClick={() => setEditRecord(r)}
                   className={cn(
-                    'group inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] tabular-nums',
-                    isBest ? 'border-primary/50 bg-primary/10 font-semibold' : 'text-muted-foreground',
+                    'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] tabular-nums transition-colors hover:border-primary/50',
+                    isBest
+                      ? 'border-primary/50 bg-primary/10 font-semibold'
+                      : 'text-muted-foreground hover:text-foreground',
                   )}
-                  title={r.note ?? undefined}
                 >
                   {formatDateShort(new Date(r.date))} · {formatNumber(r.value)}
                   {isBest && <Trophy className="h-3 w-3 text-amber-500" />}
-                  <button
-                    type="button"
-                    aria-label={`Delete the ${formatNumber(r.value)} attempt`}
-                    onClick={() =>
-                      deleteRecord.mutate(
-                        { pbId: pb.id, recordId: r.id },
-                        {
-                          onSuccess: () => toast.success('Attempt removed'),
-                          onError: (e) => toast.error('Could not remove the attempt', { description: e.message }),
-                        },
-                      )
-                    }
-                    className="ml-0.5 hidden rounded-full p-0.5 hover:bg-destructive/15 hover:text-destructive group-hover:inline-flex"
-                  >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                </span>
+                </button>
               )
             })}
           </div>
@@ -143,6 +133,16 @@ function PbMetricBlock({
       )}
 
       <EditPbDialog key={pb.id} goalId={goal.id} pb={pb} open={editOpen} onOpenChange={setEditOpen} />
+
+      {/* attempt editor — keyed so form state resets per attempt */}
+      <EditPbRecordDialog
+        key={editRecord?.id ?? 'none'}
+        goalId={goal.id}
+        pb={pb}
+        record={editRecord}
+        open={!!editRecord}
+        onOpenChange={(o) => !o && setEditRecord(null)}
+      />
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>
@@ -211,6 +211,10 @@ function GoalReviewCard({
       tabIndex={0}
       onClick={() => onOpen(goal)}
       onKeyDown={(e) => {
+        // only when the card itself is focused — keydowns from inputs and
+        // portaled dialogs (edit PB, confirm…) bubble here through the React
+        // tree and must never open the goal (the "space while typing" bug)
+        if (e.target !== e.currentTarget) return
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
           onOpen(goal)
