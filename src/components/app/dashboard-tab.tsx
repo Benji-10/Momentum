@@ -447,13 +447,15 @@ function FocusItem({ goal, onOpen }: { goal: GoalData; onOpen: (g: GoalData, tab
 }
 
 /**
- * Everything about today in ONE place, split into the two kinds of work the
- * app tracks — so it's always obvious what to do:
+ * Everything about today in ONE place, split by how a goal advances:
  *
- *   ✅ check off  → concrete things scheduled today (routines)
- *   📈 work toward → ongoing targets that advance as you log progress
- *                   (skill checkpoints / weekly amounts — no checkbox,
- *                    because "done" is reached in steps, not in one tap)
+ *   ✅ check off  → goals with routines. Ticking one auto-logs the session
+ *                   in its real unit and credits the linked checkpoint, so
+ *                   these goals already have their home in the checklist.
+ *   📈 work toward → ONLY goals with no routines — nothing ever gets
+ *                   ticked for them, so logging by hand (here or from the
+ *                   skill map) is the only way they move. No checkbox,
+ *                   because "done" is reached in steps, not in one tap.
  */
 function TodayCard({
   goals,
@@ -464,17 +466,30 @@ function TodayCard({
   onOpen: (g: GoalData, tab?: string) => void
   onNewGoal: () => void
 }) {
-  const active = useMemo(
-    () => goals.filter((g) => computeGoalStats(g).status !== 'completed'),
-    [goals],
+  const today = new Date()
+  // computed inline (React Compiler memoizes); a manual useMemo over `today`
+  // could never be preserved anyway (it changes every render)
+  const active = goals.filter((g) => computeGoalStats(g).status !== 'completed')
+
+  // "Something to check off today" — a routine occurrence today, or a
+  // flexible quota still open this week
+  const hasDueToday = goals.some(
+    (g) =>
+      g.routines.some((r) => {
+        if (r.archived) return false
+        return (
+          occurrencesInRange([r], g.deadline, today, today).length > 0 ||
+          (r.cadence === 'flexible' && weekFlexProgress(r, startOfWeek(today)).left > 0)
+        )
+      }),
   )
 
-  const hasChecklist = goals.some((g) =>
-    g.routines.some((r) => {
-      if (r.archived) return false
-      return occurrencesInRange([r], g.deadline, new Date(), new Date()).length > 0
-    }),
-  )
+  // Work-toward is for goals nothing is ever ticked for: with no routines,
+  // logging by hand is the only way they move. Goals WITH routines already
+  // live in the checklist above — their ticks auto-log the session and
+  // credit the tree, so a second row here would duplicate the same progress.
+  const hasActiveRoutines = (g: GoalData) => g.routines.some((r) => !r.archived)
+  const manual = active.filter((g) => !hasActiveRoutines(g))
 
   return (
     <Card>
@@ -486,28 +501,32 @@ function TodayCard({
       <CardContent className="space-y-5 pb-4">
         <TodayChecklist goals={goals} onOpenGoal={onOpen} />
 
-        {active.length > 0 ? (
+        {manual.length > 0 ? (
           <section aria-label="Ongoing targets">
             <h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
               📈 Work toward — log progress to advance (no checkbox)
             </h3>
             <div className="divide-y divide-border/60">
-              {active.map((goal) => (
+              {manual.map((goal) => (
                 <FocusItem key={goal.id} goal={goal} onOpen={onOpen} />
               ))}
             </div>
           </section>
         ) : (
-          !hasChecklist && (
+          !hasDueToday && (
             <div className="flex flex-col items-center gap-3 py-6 text-center">
               <p className="text-sm text-muted-foreground">
                 {goals.length === 0
                   ? 'Create your first goal to see your daily plan here.'
-                  : 'All goals completed — time for a new challenge!'}
+                  : active.length === 0
+                    ? 'All goals completed — time for a new challenge!'
+                    : 'Nothing due today — your routines appear here on their days.'}
               </p>
-              <Button onClick={onNewGoal} variant="secondary" size="sm">
-                <Target className="h-4 w-4" /> New goal
-              </Button>
+              {(goals.length === 0 || active.length === 0) && (
+                <Button onClick={onNewGoal} variant="secondary" size="sm">
+                  <Target className="h-4 w-4" /> New goal
+                </Button>
+              )}
             </div>
           )
         )}
