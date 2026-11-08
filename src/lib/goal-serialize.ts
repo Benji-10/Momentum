@@ -75,6 +75,14 @@ export function serializeGoal(goal: GoalWithRelations): GoalData {
       order: s.order,
       status: s.status as GoalData['steps'][number]['status'],
       completedAt: s.completedAt?.toISOString() ?? null,
+      trigger: (s.trigger ?? 'manual') as GoalData['steps'][number]['trigger'],
+      routineId: s.routineId ?? null,
+      triggerCount: s.triggerCount ?? 1,
+      metricName: s.metricName ?? null,
+      metricWindow: s.metricWindow ?? null,
+      metricOp: (s.metricOp ?? null) as GoalData['steps'][number]['metricOp'],
+      metricValue: s.metricValue ?? null,
+      currentSince: s.currentSince?.toISOString() ?? null,
       createdAt: s.createdAt.toISOString(),
     })),
     logs: goal.logs.map((l) => ({
@@ -122,6 +130,7 @@ export function serializeGoal(goal: GoalWithRelations): GoalData {
         // the auto-log this check-off created (its amount is progress in the
         // linked checkpoint's unit — the client uses the link for labels)
         logId: d.logId,
+        advancedStepId: d.advancedStepId ?? null,
       })),
     })),
     pbs: goal.pbs.map((pb) => ({

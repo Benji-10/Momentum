@@ -20,7 +20,9 @@ import type { RoutineCadence } from './types'
 //   goal    title, description, emoji, color, category, type ("plan" |
 //           "quantitative"), targetValue, unit, weeklyTarget, deadline,
 //           steps, paths, routines, pbs, notes, logs
-//   step    title, notes, done
+//   step    title, notes, done, trigger (automation: "routine" — after N
+//           check-offs of a routine, or any routine when none is named;
+//           "metric" — when a PB's rolling average crosses a bar; "manual")
 //   path    title, description, icon, unit (the default for its nodes)
 //   node    title, description, icon, current, target, unit (override),
 //           xp, mastered (shortcut: current = target), milestones (numbers
@@ -106,6 +108,54 @@ function canonMilestone(m: unknown): unknown {
   return value
 }
 
+/** A step's automation spec, in any of the shapes a human (or an AI) might
+ *  write it. Returns a canonical object, or undefined when there is nothing
+ *  usable (absent, empty, or a calendar-ish string we don't support). */
+function canonStepTrigger(v: unknown): unknown {
+  if (v == null) return undefined
+  // bare string: a keyword kind, or a routine title shorthand
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase()
+    if (!s) return undefined
+    // calendar-style instructions ("week 1", a date) are not triggers —
+    // ignore them rather than invent a routine called "2026-01-05"
+    if (/^\d{4}-\d{2}-\d{2}/.test(s) || /\bweek\b|\bmonth\b/.test(s)) return undefined
+    if (s === 'manual' || s === 'hand' || s === 'tick') return { type: 'manual' }
+    if (s === 'routine' || s === 'checkoff' || s === 'checkoffs' || s === 'session' || s === 'sessions' || s === 'auto' || s === 'automatic')
+      return { type: 'routine', count: 1 }
+    if (s === 'metric' || s === 'performance' || s === 'pb' || s === 'best' || s === 'average' || s === 'avg')
+      return { type: 'metric' }
+    return { type: 'routine', routine: v.trim(), count: 1 } // any other string: a routine title
+  }
+  if (isPlainObject(v)) {
+    const out: Record<string, unknown> = { ...v }
+    const type = pick(v, ['type', 'kind', 'mode', 'on'])
+    if (typeof type === 'string' && type.trim()) out.type = type.trim().toLowerCase()
+    const routine = pick(v, ['routine', 'routineTitle', 'of', 'for', 'skill'])
+    if (typeof routine === 'string' && routine.trim()) out.routine = routine.trim()
+    const count = toNum(pick(v, ['count', 'times', 'sessions', 'checkoffs', 'n', 'after']))
+    if (count != null) out.count = count
+    const metric = pick(v, ['metric', 'pb', 'best', 'measure', 'tracker'])
+    if (typeof metric === 'string' && metric.trim()) out.metric = metric.trim()
+    const window = toNum(pick(v, ['window', 'avgOf', 'last', 'lastN', 'rolling', 'attempts']))
+    if (window != null) out.window = window
+    const under = toNum(pick(v, ['under', 'below', 'less', 'lower']))
+    if (under != null) out.under = under
+    const over = toNum(pick(v, ['over', 'above', 'more', 'higher']))
+    if (over != null) out.over = over
+    // infer the kind when the file didn't spell it out
+    if (out.type == null) {
+      if (routine != null || count != null) out.type = 'routine'
+      else if (metric != null || under != null || over != null || window != null) out.type = 'metric'
+      else out.type = 'manual'
+    }
+    // a bare count/under/over implies its defaults too
+    if (out.type === 'routine' && count == null) out.count = 1
+    return out
+  }
+  return undefined
+}
+
 function canonStep(s: unknown): unknown {
   if (typeof s === 'string') return s
   if (!isPlainObject(s)) return s
@@ -116,6 +166,20 @@ function canonStep(s: unknown): unknown {
   if (notes != null) out.notes = notes
   const done = s.done ?? s.completed ?? (s.status === 'done' || s.status === 'complete' ? true : undefined)
   if (done === true || done === 'true' || done === 1) out.done = true
+  // automation: "until we check off the routine the step doesn't move on",
+  // or "practice cross+1 until inspection averages under 15s"
+  const trigger = pick(s, [
+    'trigger', 'advanceOn', 'advanceAfter', 'autoAdvance', 'when', 'until',
+    'unlockAfter', 'advances', 'completesOn', 'completesAfter', 'auto',
+  ])
+  if (trigger !== undefined) {
+    if (trigger === null) {
+      out.trigger = null // explicit null = "clear it back to a manual tick" (merge)
+    } else {
+      const canon = canonStepTrigger(trigger)
+      if (canon !== undefined) out.trigger = canon
+    }
+  }
   return out
 }
 
@@ -301,12 +365,35 @@ function canonicalizeImport(raw: unknown): unknown {
 // Validation schemas (canonical shape — everything nullable is nullish)
 // ---------------------------------------------------------------------------
 
+const stepTriggerSchema = z.union([
+  z.enum(['manual', 'routine', 'metric']),
+  z.object({
+    /** "routine" = check-offs complete it · "metric" = a PB average crosses a
+     *  bar · "manual" = the classic hand tick */
+    type: z.enum(['manual', 'routine', 'metric']).nullish(),
+    /** routine trigger: title of the routine (within the same goal) whose
+     *  check-offs count — null/omitted = any routine */
+    routine: z.string().min(1).max(120).nullish(),
+    /** routine trigger: how many check-offs complete the step (default 1) */
+    count: z.number().int().min(1).max(999).nullish(),
+    /** metric trigger: PB metric name (within the same goal) */
+    metric: z.string().min(1).max(60).nullish(),
+    /** metric trigger: rolling-average window (default 3) */
+    window: z.number().int().min(1).max(50).nullish(),
+    /** metric trigger: avg must DROP below this (solve times) */
+    under: z.number().positive().max(1_000_000).nullish(),
+    /** metric trigger: avg must RISE above this (WPM, distance) */
+    over: z.number().positive().max(1_000_000).nullish(),
+  }),
+])
+
 const stepSchema = z.union([
   z.string().min(1).max(200),
   z.object({
     title: z.string().min(1).max(200),
     notes: z.string().max(2000).nullish(),
     done: z.boolean().optional(),
+    trigger: stepTriggerSchema.nullish(),
   }),
 ])
 
@@ -426,6 +513,20 @@ export interface NormalizedStep {
   title: string
   notes: string | null
   done: boolean
+  triggerType: 'manual' | 'routine' | 'metric'
+  /** routine trigger: routine title (resolved to an id after routines exist);
+   *  null = any routine of the goal counts */
+  routineRef: string | null
+  /** routine trigger: check-offs needed (default 1) */
+  triggerCount: number
+  /** metric trigger: PB metric name */
+  metricRef: string | null
+  /** metric trigger: rolling-average window (null = 3) */
+  metricWindow: number | null
+  /** metric trigger: "under" = avg must drop below metricValue (times),
+   *  "over" = avg must rise above it (WPM) */
+  metricOp: 'under' | 'over' | null
+  metricValue: number | null
 }
 export interface NormalizedMilestone {
   value: number
@@ -535,11 +636,62 @@ export function normalizeGoal(g: ImportGoalRaw): NormalizedGoal {
   const hasTarget = g.targetValue != null && g.targetValue > 0
   const type: 'quantitative' | 'plan' = g.type ?? (hasTarget && !hasPaths ? 'quantitative' : 'plan')
 
-  const steps: NormalizedStep[] = (g.steps ?? []).map((s) =>
-    typeof s === 'string'
-      ? { title: s.trim(), notes: null, done: false }
-      : { title: s.title.trim(), notes: s.notes ?? null, done: s.done === true },
-  )
+  const steps: NormalizedStep[] = (g.steps ?? []).map((s) => {
+    const base =
+      typeof s === 'string'
+        ? { title: s.trim(), notes: null as string | null, done: false, trigger: undefined }
+        : {
+            title: s.title.trim(),
+            notes: s.notes ?? null,
+            done: s.done === true,
+            trigger: s.trigger,
+          }
+    // automation: normalize the trigger spec into engine fields
+    const t =
+      typeof base.trigger === 'string'
+        ? { type: base.trigger, routine: null, count: null, metric: null, window: null, under: null, over: null }
+        : base.trigger != null
+          ? base.trigger
+          : null
+    let triggerType: 'manual' | 'routine' | 'metric' = 'manual'
+    let routineRef: string | null = null
+    let triggerCount = 1
+    let metricRef: string | null = null
+    let metricWindow: number | null = null
+    let metricOp: 'under' | 'over' | null = null
+    let metricValue: number | null = null
+    if (t) {
+      triggerType = t.type ?? (t.routine != null || t.count != null ? 'routine' : t.metric != null || t.under != null || t.over != null ? 'metric' : 'manual')
+      if (triggerType === 'routine') {
+        routineRef = t.routine?.trim() || null
+        triggerCount = t.count ?? 1
+      } else if (triggerType === 'metric') {
+        metricRef = t.metric?.trim() || null
+        metricWindow = t.window ?? null
+        // a direction defaults to the metric's own better-direction when the
+        // file only gives one bar — under is the common case for times
+        if (t.under != null) {
+          metricOp = 'under'
+          metricValue = t.under
+        } else if (t.over != null) {
+          metricOp = 'over'
+          metricValue = t.over
+        }
+      }
+    }
+    return {
+      title: base.title,
+      notes: base.notes,
+      done: base.done,
+      triggerType,
+      routineRef,
+      triggerCount,
+      metricRef,
+      metricWindow,
+      metricOp,
+      metricValue,
+    }
+  })
 
   const paths: NormalizedSkillPath[] = (g.paths ?? []).map((p) => ({
     title: p.title.trim(),
@@ -819,7 +971,10 @@ export const IMPORT_EXAMPLE_JSON = `{
       "steps": [
         "Install Anki and pick a textbook",
         { "title": "Book a weekly tutor lesson", "notes": "Thursday evenings work best", "done": true },
-        { "title": "Pass an HSK3 mock exam", "notes": "210/300 or better counts as a pass" }
+        { "title": "Pass an HSK3 mock exam", "notes": "210/300 or better counts as a pass" },
+        { "title": "Read a graded HSK3 novel without a dictionary",
+          "trigger": { "type": "metric", "metric": "Reading speed", "window": 3, "over": 160 },
+          "notes": "Auto-completes when my rolling reading speed clears 160 chars/min" }
       ],
       "paths": [
         {
@@ -905,7 +1060,9 @@ export const IMPORT_EXAMPLE_JSON = `{
       "targetValue": 21.1, "unit": "km", "weeklyTarget": 25, "deadline": "2027-01-17",
       "steps": [
         { "title": "Sign up for the race", "done": true },
-        "Get fitted for proper running shoes"
+        { "title": "Get fitted for proper running shoes", "trigger": { "routine": "Easy run", "count": 1 } },
+        { "title": "Bank three 10 km+ long runs", "trigger": { "type": "routine", "routine": "Long run", "count": 3 },
+          "notes": "Ticks itself off on the third long-run check-off" }
       ],
       "routines": [
         { "title": "Easy run", "everyDays": 2, "durationMin": 40,

@@ -49,6 +49,14 @@ CREATE TABLE "GoalStep" (
     "order" INTEGER NOT NULL DEFAULT 0,
     "status" TEXT NOT NULL DEFAULT 'pending',
     "completedAt" TIMESTAMP(3),
+    "trigger" TEXT NOT NULL DEFAULT 'manual',
+    "routineId" TEXT,
+    "triggerCount" INTEGER NOT NULL DEFAULT 1,
+    "metricName" TEXT,
+    "metricWindow" INTEGER,
+    "metricOp" TEXT,
+    "metricValue" DOUBLE PRECISION,
+    "currentSince" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -110,6 +118,7 @@ CREATE TABLE "RoutineDone" (
     "date" TIMESTAMP(3) NOT NULL,
     "creditedValue" DOUBLE PRECISION,
     "logId" TEXT,
+    "advancedStepId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "RoutineDone_pkey" PRIMARY KEY ("id")
@@ -165,6 +174,20 @@ CREATE TABLE "SkillMilestone" (
     CONSTRAINT "SkillMilestone_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "PersonalBest" (
+    "id" TEXT NOT NULL,
+    "goalId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "unit" TEXT,
+    "direction" TEXT NOT NULL DEFAULT 'up',
+    "history" TEXT NOT NULL DEFAULT '[]',
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "PersonalBest_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
 
@@ -201,11 +224,20 @@ CREATE INDEX "SkillMilestone_nodeId_idx" ON "SkillMilestone"("nodeId");
 -- CreateIndex
 CREATE UNIQUE INDEX "SkillMilestone_nodeId_value_key" ON "SkillMilestone"("nodeId", "value");
 
+-- CreateIndex
+CREATE INDEX "PersonalBest_goalId_idx" ON "PersonalBest"("goalId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "PersonalBest_goalId_name_key" ON "PersonalBest"("goalId", "name");
+
 -- AddForeignKey
 ALTER TABLE "Goal" ADD CONSTRAINT "Goal_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "GoalStep" ADD CONSTRAINT "GoalStep_goalId_fkey" FOREIGN KEY ("goalId") REFERENCES "Goal"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "GoalStep" ADD CONSTRAINT "GoalStep_routineId_fkey" FOREIGN KEY ("routineId") REFERENCES "RoutineItem"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ProgressLog" ADD CONSTRAINT "ProgressLog_goalId_fkey" FOREIGN KEY ("goalId") REFERENCES "Goal"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -218,8 +250,6 @@ ALTER TABLE "RoutineItem" ADD CONSTRAINT "RoutineItem_goalId_fkey" FOREIGN KEY (
 
 -- AddForeignKey
 ALTER TABLE "RoutineItem" ADD CONSTRAINT "RoutineItem_nodeId_fkey" FOREIGN KEY ("nodeId") REFERENCES "SkillNode"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
-ALTER TABLE "SkillNode" ADD CONSTRAINT "SkillNode_deriveFromId_fkey" FOREIGN KEY ("deriveFromId") REFERENCES "SkillNode"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "RoutineDone" ADD CONSTRAINT "RoutineDone_routineId_fkey" FOREIGN KEY ("routineId") REFERENCES "RoutineItem"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -234,27 +264,10 @@ ALTER TABLE "SkillNode" ADD CONSTRAINT "SkillNode_goalId_fkey" FOREIGN KEY ("goa
 ALTER TABLE "SkillNode" ADD CONSTRAINT "SkillNode_pathId_fkey" FOREIGN KEY ("pathId") REFERENCES "SkillPath"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "SkillNode" ADD CONSTRAINT "SkillNode_deriveFromId_fkey" FOREIGN KEY ("deriveFromId") REFERENCES "SkillNode"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "SkillMilestone" ADD CONSTRAINT "SkillMilestone_nodeId_fkey" FOREIGN KEY ("nodeId") REFERENCES "SkillNode"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
--- CreateTable
-CREATE TABLE "PersonalBest" (
-    "id" TEXT NOT NULL,
-    "goalId" TEXT NOT NULL,
-    "name" TEXT NOT NULL,
-    "unit" TEXT,
-    "direction" TEXT NOT NULL DEFAULT 'up',
-    "history" TEXT NOT NULL DEFAULT '[]',
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" TIMESTAMP(3) NOT NULL,
-
-    CONSTRAINT "PersonalBest_pkey" PRIMARY KEY ("id")
-);
-
--- CreateIndex
-CREATE INDEX "PersonalBest_goalId_idx" ON "PersonalBest"("goalId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "PersonalBest_goalId_name_key" ON "PersonalBest"("goalId", "name");
 
 -- AddForeignKey
 ALTER TABLE "PersonalBest" ADD CONSTRAINT "PersonalBest_goalId_fkey" FOREIGN KEY ("goalId") REFERENCES "Goal"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -327,5 +340,74 @@ CREATE UNIQUE INDEX IF NOT EXISTS "PersonalBest_goalId_name_key" ON "PersonalBes
     table: 'ProgressLog',
     column: 'unit',
     sql: `ALTER TABLE "ProgressLog" ADD COLUMN IF NOT EXISTS "unit" TEXT;`,
+  },
+  {
+    // v1.6: step automation — a step can complete itself. "routine": after
+    // N check-offs of a (specific or any) routine; "metric": when the
+    // rolling average of a personal-best metric crosses a threshold.
+    // advancedStepId on RoutineDone lets an undo re-open exactly the step
+    // that check-off completed. The FK is Postgres-only (SQLite can't add
+    // constraints to an existing table); deleting a routine nulls the link
+    // via the app's delete route, which also resets those steps to manual.
+    table: 'GoalStep',
+    column: 'trigger',
+    sql: `ALTER TABLE "GoalStep" ADD COLUMN IF NOT EXISTS "trigger" TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE "GoalStep" ADD COLUMN IF NOT EXISTS "routineId" TEXT;
+ALTER TABLE "GoalStep" ADD COLUMN IF NOT EXISTS "triggerCount" INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE "GoalStep" ADD COLUMN IF NOT EXISTS "metricName" TEXT;
+ALTER TABLE "GoalStep" ADD COLUMN IF NOT EXISTS "metricWindow" INTEGER;
+ALTER TABLE "GoalStep" ADD COLUMN IF NOT EXISTS "metricOp" TEXT;
+ALTER TABLE "GoalStep" ADD COLUMN IF NOT EXISTS "metricValue" DOUBLE PRECISION;
+ALTER TABLE "GoalStep" ADD COLUMN IF NOT EXISTS "currentSince" TIMESTAMP(3);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'GoalStep_routineId_fkey') THEN
+    ALTER TABLE "GoalStep" ADD CONSTRAINT "GoalStep_routineId_fkey" FOREIGN KEY ("routineId") REFERENCES "RoutineItem"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;`,
+    sqliteType: "TEXT NOT NULL DEFAULT 'manual'",
+  },
+  {
+    table: 'GoalStep',
+    column: 'routineId',
+    sql: `ALTER TABLE "GoalStep" ADD COLUMN IF NOT EXISTS "routineId" TEXT;`,
+  },
+  {
+    table: 'GoalStep',
+    column: 'triggerCount',
+    sql: `ALTER TABLE "GoalStep" ADD COLUMN IF NOT EXISTS "triggerCount" INTEGER NOT NULL DEFAULT 1;`,
+    sqliteType: 'INTEGER NOT NULL DEFAULT 1',
+  },
+  {
+    table: 'GoalStep',
+    column: 'metricName',
+    sql: `ALTER TABLE "GoalStep" ADD COLUMN IF NOT EXISTS "metricName" TEXT;`,
+  },
+  {
+    table: 'GoalStep',
+    column: 'metricWindow',
+    sql: `ALTER TABLE "GoalStep" ADD COLUMN IF NOT EXISTS "metricWindow" INTEGER;`,
+    sqliteType: 'INTEGER',
+  },
+  {
+    table: 'GoalStep',
+    column: 'metricOp',
+    sql: `ALTER TABLE "GoalStep" ADD COLUMN IF NOT EXISTS "metricOp" TEXT;`,
+  },
+  {
+    table: 'GoalStep',
+    column: 'metricValue',
+    sql: `ALTER TABLE "GoalStep" ADD COLUMN IF NOT EXISTS "metricValue" DOUBLE PRECISION;`,
+    sqliteType: 'REAL',
+  },
+  {
+    table: 'GoalStep',
+    column: 'currentSince',
+    sql: `ALTER TABLE "GoalStep" ADD COLUMN IF NOT EXISTS "currentSince" TIMESTAMP(3);`,
+    sqliteType: 'DATETIME',
+  },
+  {
+    table: 'RoutineDone',
+    column: 'advancedStepId',
+    sql: `ALTER TABLE "RoutineDone" ADD COLUMN IF NOT EXISTS "advancedStepId" TEXT;`,
   },
 ]

@@ -19,6 +19,7 @@ import {
   Sprout,
   Target,
   Trash2,
+  Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData, RoutineData } from '@/lib/types'
@@ -37,10 +38,10 @@ import {
 import { getAppTimezone } from '@/lib/app-time'
 import { goalColor } from '@/lib/goal-colors'
 import { formatNumber } from '@/lib/goal-math'
+import { currentStepForRoutine, routineStepLine } from '@/lib/step-triggers'
 import { useDeleteRoutine, useToggleRoutineDone } from '@/hooks/use-goals'
 import { EditLogDialog, type EditLogTarget } from '@/components/app/edit-log-dialog'
 import { checkoffDisplayUnit, logAmountLabel } from '@/lib/recording'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -72,6 +73,29 @@ function routineNode(goal: GoalData | undefined, routine: RoutineData) {
 }
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+/**
+ * The plan step a routine occurrence is "for" right now — shown only when
+ * the routine actually advances it (routine trigger linked to this routine,
+ * or a metric-trigger step every session works toward). Manual steps stay
+ * in the plan tab, where ticking them means something.
+ */
+function StepLine({ goal, routine, done }: { goal: GoalData; routine: RoutineData; done?: boolean }) {
+  const ctx = currentStepForRoutine(goal, routine)
+  if (!ctx) return null
+  return (
+    <div
+      className={cn(
+        'mt-1 flex items-start gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] leading-snug text-amber-700 dark:text-amber-300',
+        done && 'opacity-60',
+      )}
+      title={`This session works on the current plan step — it completes automatically${ctx.info.kind === 'metric' ? ' when the metric bar is crossed' : ' after enough check-offs'}`}
+    >
+      <Zap className="mt-px h-2.5 w-2.5 shrink-0" />
+      <span className="min-w-0 truncate">{routineStepLine(ctx)}</span>
+    </div>
+  )
+}
 
 function OccurrenceRow({
   occ,
@@ -159,6 +183,7 @@ function OccurrenceRow({
             </span>
           ) : null}
         </div>
+        {goal && <StepLine goal={goal} routine={occ.routine} />}
       </div>
       <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full" style={{ background: c.hex }} aria-hidden />
     </div>
@@ -298,6 +323,7 @@ export function ScheduleTab({
   const [weekOffset, setWeekOffset] = useState(0)
   const [addFor, setAddFor] = useState<GoalData | null>(null)
   const [showForgiven, setShowForgiven] = useState(false)
+  const [showManage, setShowManage] = useState(false)
   const [editRoutine, setEditRoutine] = useState<{ routine: RoutineData; goal: GoalData } | null>(null)
 
   const allRoutines = useMemo(
@@ -367,10 +393,25 @@ export function ScheduleTab({
             return
           }
           if (undo) {
+            const reOpened = res.stepsReverted ?? []
             toast('Check-off undone', {
-              description: res.removedLog ? 'The auto log entry was removed too.' : undefined,
+              description: [
+                res.removedLog ? 'The auto log entry was removed too.' : null,
+                reOpened.length ? `Step re-opened: “${reOpened[0].title}”.` : null,
+              ]
+                .filter(Boolean)
+                .join(' ') || undefined,
             })
             return
+          }
+          if (res.stepsAdvanced?.length) {
+            toast.success(`Step complete — “${res.stepsAdvanced[0].title}”`, {
+              icon: '⚡',
+              description:
+                res.stepsAdvanced.length > 1
+                  ? `And “${res.stepsAdvanced[1].title}” unlocked as the next step.`
+                  : 'It completed itself from your activity — the plan moved on.',
+            })
           }
           if (res.autoLog) {
             // the check-off logged the routine's defined amount — in the unit
@@ -598,6 +639,7 @@ export function ScheduleTab({
                         </span>
                       )}
                     </div>
+                    <StepLine goal={goal} routine={routine} done={doneToday} />
                   </div>
                   <div className="flex shrink-0 items-center gap-1" aria-label={`${prog.done} of ${prog.target} sessions done this week`}>
                     {Array.from({ length: Math.min(prog.target, 7) }, (_, i) => (
@@ -688,34 +730,44 @@ export function ScheduleTab({
         })}
       </div>
 
-      {/* all routines management */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex flex-wrap items-center gap-2 text-base">
-            <Repeat className="h-4 w-4 text-primary" /> Your routines
-            <span className="ml-1 text-xs font-normal text-muted-foreground">
-              {allRoutines.length} total · last 4 weeks (forgiven sessions don&apos;t count)
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2 pb-4">
-          {allRoutines.length === 0 ? (
-            <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
-              No routines yet. Add one with <span className="font-medium text-foreground">New routine</span> — e.g.
-              &ldquo;drills every 2 days&rdquo; or &ldquo;focused practice every Sunday&rdquo;.
-            </div>
-          ) : (
-            allRoutines.map(({ routine, goal }) => (
-              <RoutineManageRow
-                key={routine.id}
-                routine={routine}
-                goal={goal}
-                onEdit={() => setEditRoutine({ routine, goal })}
-              />
-            ))
-          )}
-        </CardContent>
-      </Card>
+      {/* routine management — tucked away: the week grid above is what a
+          session needs; editing a routine is occasional housekeeping */}
+      <div className="rounded-xl border bg-card">
+        <button
+          type="button"
+          onClick={() => setShowManage((v) => !v)}
+          aria-expanded={showManage}
+          className="flex w-full items-center gap-2 rounded-xl p-3.5 text-left transition-colors hover:bg-accent/40"
+        >
+          <Repeat className="h-4 w-4 shrink-0 text-primary" />
+          <span className="text-sm font-semibold">Manage routines</span>
+          <span className="text-xs font-normal text-muted-foreground">
+            {allRoutines.length} · edit cadence, duration, focus
+          </span>
+          <ChevronDown
+            className={cn('ml-auto h-4 w-4 shrink-0 text-muted-foreground transition-transform', showManage && 'rotate-180')}
+          />
+        </button>
+        {showManage && (
+          <div className="space-y-2 border-t p-3.5 pt-3">
+            {allRoutines.length === 0 ? (
+              <div className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">
+                No routines yet. Add one with <span className="font-medium text-foreground">New routine</span> — e.g.
+                &ldquo;drills every 2 days&rdquo; or &ldquo;focused practice every Sunday&rdquo;.
+              </div>
+            ) : (
+              allRoutines.map(({ routine, goal }) => (
+                <RoutineManageRow
+                  key={routine.id}
+                  routine={routine}
+                  goal={goal}
+                  onEdit={() => setEditRoutine({ routine, goal })}
+                />
+              ))
+            )}
+          </div>
+        )}
+      </div>
 
       {/* dialogs */}
       {addFor && (

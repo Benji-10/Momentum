@@ -319,7 +319,7 @@ export function RecordPbDialog({
     addRecord.mutate(
       { pbId: pb.id, value: n, date: iso, note: note.trim() || null },
       {
-        onSuccess: () => {
+        onSuccess: (res) => {
           const unit = pb.unit ? ` ${pb.unit}` : ''
           if (isRecord) {
             toast.success(`New PB — ${formatNumber(n)}${unit} 🎉`)
@@ -327,6 +327,13 @@ export function RecordPbDialog({
             const cur = currentPb(pb)
             toast.success(`Recorded ${formatNumber(n)}${unit}`, {
               description: cur ? `PB stays ${formatNumber(cur.value)}${unit}` : undefined,
+            })
+          }
+          // a metric-triggered step may have just cleared its bar
+          if (res.stepsAdvanced?.length) {
+            toast.success(`Step complete — “${res.stepsAdvanced[0].title}”`, {
+              icon: '⚡',
+              description: 'It completed itself from your activity — the plan moved on.',
             })
           }
           setValue('')

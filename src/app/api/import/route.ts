@@ -8,6 +8,12 @@ import { mergeImportGoals } from '@/lib/merge-import'
 import { goalInclude, serializeGoal } from '@/lib/goal-serialize'
 import { buildRequiresIds, resolveNodeRef, idsCsv, type NodeRefEntry } from '@/lib/resolve-refs'
 import { setNodeDerivation } from '@/lib/derive'
+import { evaluateStepTriggers } from '@/lib/step-engine'
+
+/** case-insensitive, whitespace-normalized title key (same rule as merge) */
+function normTitleKey(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, ' ')
+}
 
 /**
  * POST /api/import — import goals from a roadmap JSON file.
@@ -72,6 +78,12 @@ export async function POST(req: Request) {
                   order: i,
                   status: s.done ? ('done' as const) : ('pending' as const),
                   completedAt: s.done ? new Date() : null,
+                  trigger: s.triggerType,
+                  triggerCount: s.triggerCount,
+                  metricName: s.triggerType === 'metric' ? s.metricRef : null,
+                  metricWindow: s.triggerType === 'metric' ? s.metricWindow : null,
+                  metricOp: s.triggerType === 'metric' ? s.metricOp : null,
+                  metricValue: s.triggerType === 'metric' ? s.metricValue : null,
                 })),
               }
             : undefined,
@@ -154,6 +166,7 @@ export async function POST(req: Request) {
       }
 
       // routines (with node links, credit, flexible cadence, extra-credit flag)
+      const routineIdByTitle = new Map<string, string>()
       for (const r of g.routines) {
         let nodeId: string | null = null
         if (r.nodeRef) nodeId = resolveNodeRef(r.nodeRef, null, createdNodes)
@@ -174,6 +187,9 @@ export async function POST(req: Request) {
             optional: r.optional,
           },
         })
+        if (!routineIdByTitle.has(normTitleKey(routine.title))) {
+          routineIdByTitle.set(normTitleKey(routine.title), routine.id)
+        }
         if (r.doneDates.length) {
           const seen = new Set<string>()
           await db.routineDone.createMany({
@@ -189,9 +205,27 @@ export async function POST(req: Request) {
         }
       }
 
-      // personal-best metrics with their attempt history
+      // link step routine triggers now that every routine exists: rows were
+      // created in file order, so they pair 1:1 with g.steps by index. An
+      // unresolved title keeps null = "any routine" (never breaks the import)
+      if (g.steps.length) {
+        const stepRows = await db.goalStep.findMany({
+          where: { goalId: goal.id },
+          orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
+          select: { id: true },
+        })
+        for (const [i, s] of g.steps.entries()) {
+          const row = stepRows[i]
+          if (!row || s.triggerType !== 'routine' || !s.routineRef) continue
+          const rid = routineIdByTitle.get(normTitleKey(s.routineRef))
+          if (rid) await db.goalStep.update({ where: { id: row.id }, data: { routineId: rid } })
+        }
+      }
+
+      // personal-best metrics with their attempt history (a metric with no
+      // attempts yet is still created — steps may reference it, and recording
+      // the first attempt later is what completes them)
       for (const pb of g.pbs) {
-        if (!pb.records.length) continue
         await db.personalBest.create({
           data: {
             goalId: goal.id,
@@ -209,6 +243,11 @@ export async function POST(req: Request) {
           },
         })
       }
+
+      // with every definition in place (routines linked, metrics created),
+      // run the automation once — a file whose history already satisfies a
+      // trigger imports with those steps completed
+      await evaluateStepTriggers(goal.id)
     }
 
     const goals = await db.goal.findMany({

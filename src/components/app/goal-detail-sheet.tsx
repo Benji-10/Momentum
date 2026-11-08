@@ -86,6 +86,14 @@ import { StatusBadge, StatTile } from '@/components/app/goal-visuals'
 import { CumulativeChart, WeeklyBars } from '@/components/app/charts'
 import { SkillMapGrid } from '@/components/app/skill-map'
 import { RoutineDialog } from '@/components/app/routine-dialog'
+import { stepTriggerInfo } from '@/lib/step-triggers'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
 /** Today in the app timezone. */
@@ -145,8 +153,22 @@ function ClampedDescription({ text }: { text: string }) {
 // Step row
 // ---------------------------------------------------------------------------
 
+/** Patch shape StepRow can send back (title/notes plus automation). */
+export interface StepEditPatch {
+  title: string
+  notes: string | null
+  trigger?: 'manual' | 'routine' | 'metric'
+  routineId?: string | null
+  triggerCount?: number
+  metricName?: string | null
+  metricWindow?: number | null
+  metricOp?: 'under' | 'over' | null
+  metricValue?: number | null
+}
+
 function StepRow({
   step,
+  goal,
   isNext,
   onCycle,
   onMove,
@@ -155,16 +177,28 @@ function StepRow({
   busy,
 }: {
   step: GoalStepData
+  goal: GoalData
   isNext: boolean
   onCycle: () => void
   onMove: (dir: 'up' | 'down') => void
   onDelete: () => void
-  onEdit: (patch: { title: string; notes: string | null }) => void
+  onEdit: (patch: StepEditPatch) => void
   busy: boolean
 }) {
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState(step.title)
   const [notes, setNotes] = useState(step.notes ?? '')
+
+  // automation editor state — seeded from the step, saved with the patch
+  const [kind, setKind] = useState<'manual' | 'routine' | 'metric'>(step.trigger ?? 'manual')
+  const [routineId, setRoutineId] = useState<string>(step.routineId ?? '')
+  const [count, setCount] = useState<string>(String(step.triggerCount ?? 1))
+  const [metricName, setMetricName] = useState<string>(step.metricName ?? '')
+  const [window, setWindow] = useState<string>(String(step.metricWindow ?? 3))
+  const [op, setOp] = useState<'under' | 'over'>(step.metricOp ?? 'under')
+  const [value, setValue] = useState<string>(step.metricValue != null ? String(step.metricValue) : '')
+
+  const info = stepTriggerInfo(goal, step)
 
   const icon =
     step.status === 'done' ? (
@@ -174,6 +208,23 @@ function StepRow({
     ) : (
       <Circle className="h-5 w-5 text-muted-foreground" />
     )
+
+  function openEditor() {
+    setTitle(step.title)
+    setNotes(step.notes ?? '')
+    setKind(step.trigger ?? 'manual')
+    setRoutineId(step.routineId ?? '')
+    setCount(String(step.triggerCount ?? 1))
+    setMetricName(step.metricName ?? '')
+    setWindow(String(step.metricWindow ?? 3))
+    setOp(step.metricOp ?? 'under')
+    setValue(step.metricValue != null ? String(step.metricValue) : '')
+    setEditing(!editing)
+  }
+
+  const countNum = Math.min(999, Math.max(1, Math.round(Number(count) || 1)))
+  const windowNum = Math.min(50, Math.max(1, Math.round(Number(window) || 3)))
+  const valueNum = Number(value)
 
   return (
     <div
@@ -200,6 +251,20 @@ function StepRow({
           {step.notes && !editing && (
             <div className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground">{step.notes}</div>
           )}
+          {!editing && info.kind !== 'manual' && (
+            <div
+              className="mt-1 flex items-start gap-1 text-[11px] leading-snug"
+              title="Automation — this step completes itself; you can still tick it by hand"
+            >
+              <Zap className={cn('mt-px h-3 w-3 shrink-0', info.satisfied ? 'text-amber-500' : 'text-muted-foreground/70')} />
+              <span className="text-muted-foreground">
+                <span className={cn(info.satisfied && 'font-semibold text-amber-600 dark:text-amber-400')}>
+                  {info.label}
+                </span>
+                {info.status ? <span> · {info.status}</span> : null}
+              </span>
+            </div>
+          )}
           {isNext && step.status !== 'done' && !editing && (
             <div className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-primary">Next up</div>
           )}
@@ -211,12 +276,8 @@ function StepRow({
             size="icon"
             className="h-7 w-7"
             aria-label={`Edit step "${step.title}"`}
-            title="Rename or add notes"
-            onClick={() => {
-              setTitle(step.title)
-              setNotes(step.notes ?? '')
-              setEditing(!editing)
-            }}
+            title="Rename, add notes, set up automation"
+            onClick={openEditor}
             disabled={busy}
           >
             <Pencil className="h-3.5 w-3.5" />
@@ -233,7 +294,7 @@ function StepRow({
         </div>
       </div>
       {editing && (
-        <div className="mt-2 space-y-1.5 border-t pt-2">
+        <div className="mt-2 space-y-2 border-t pt-2">
           <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
@@ -252,6 +313,147 @@ function StepRow({
             className="text-xs"
             aria-label="Step notes"
           />
+
+          {/* ---- automation: how does this step complete? ---- */}
+          <div className="rounded-lg border bg-muted/30 p-2.5">
+            <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold">
+              <Zap className="h-3.5 w-3.5 text-amber-500" /> How does this step complete?
+            </div>
+            <div role="radiogroup" aria-label="Step automation" className="flex rounded-full border p-0.5">
+              {(
+                [
+                  { v: 'manual', label: 'Tick by hand' },
+                  { v: 'routine', label: 'Routine check-offs' },
+                  { v: 'metric', label: 'Metric bar' },
+                ] as const
+              ).map((o) => (
+                <button
+                  key={o.v}
+                  type="button"
+                  role="radio"
+                  aria-checked={kind === o.v}
+                  onClick={() => setKind(o.v)}
+                  className={cn(
+                    'flex-1 rounded-full px-2 py-1 text-[11px] font-semibold transition-colors',
+                    kind === o.v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+
+            {kind === 'routine' && (
+              <div className="mt-2 grid grid-cols-[1fr_88px] gap-2">
+                <Select value={routineId} onValueChange={setRoutineId}>
+                  <SelectTrigger className="h-8 text-xs" aria-label="Which routine advances this step">
+                    <SelectValue placeholder="Any routine" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="any">Any routine (broadest)</SelectItem>
+                    {goal.routines
+                      .filter((r) => !r.archived)
+                      .map((r) => (
+                        <SelectItem key={r.id} value={r.id}>
+                          {r.title}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <div className="flex items-center rounded-md border">
+                  <span className="pl-2 text-xs text-muted-foreground">×</span>
+                  <Input
+                    value={count}
+                    onChange={(e) => setCount(e.target.value)}
+                    inputMode="numeric"
+                    aria-label="Check-offs needed"
+                    className="h-8 border-0 text-xs focus-visible:ring-0"
+                  />
+                </div>
+                <p className="col-span-2 text-[11px] leading-snug text-muted-foreground">
+                  Completes itself after {countNum} check-off{countNum === 1 ? '' : 's'} of{' '}
+                  {routineId && routineId !== 'any'
+                    ? `“${goal.routines.find((r) => r.id === routineId)?.title ?? 'that routine'}”`
+                    : 'any routine'}
+                  . Only check-offs made while it&rsquo;s the current step count.
+                </p>
+              </div>
+            )}
+
+            {kind === 'metric' && (
+              <div className="mt-2 space-y-2">
+                {goal.pbs.length === 0 ? (
+                  <p className="text-[11px] leading-snug text-muted-foreground">
+                    No metrics yet — track one on the <span className="font-medium text-foreground">Review</span> tab
+                    first (e.g. “Inspection”, lower is better), then pick it here.
+                  </p>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-[1fr_88px] gap-2">
+                      <Select value={metricName} onValueChange={setMetricName}>
+                        <SelectTrigger className="h-8 text-xs" aria-label="Which metric unlocks this step">
+                          <SelectValue placeholder="Pick a metric" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {goal.pbs.map((pb) => (
+                            <SelectItem key={pb.id} value={pb.name}>
+                              {pb.name}
+                              {pb.unit ? ` (${pb.unit})` : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <div className="flex items-center rounded-md border">
+                        <span className="pl-2 text-xs text-muted-foreground">avg</span>
+                        <Input
+                          value={window}
+                          onChange={(e) => setWindow(e.target.value)}
+                          inputMode="numeric"
+                          aria-label="Rolling-average window (attempts)"
+                          className="h-8 border-0 text-xs focus-visible:ring-0"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-[1fr_96px] gap-2">
+                      <Select value={op} onValueChange={(v) => setOp(v as 'under' | 'over')}>
+                        <SelectTrigger className="h-8 text-xs" aria-label="Threshold direction">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="under">drops below</SelectItem>
+                          <SelectItem value="over">rises above</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        value={value}
+                        onChange={(e) => setValue(e.target.value)}
+                        inputMode="decimal"
+                        placeholder="15"
+                        aria-label="Threshold value"
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <p className="text-[11px] leading-snug text-muted-foreground">
+                      Completes itself when the average of the last {windowNum} attempt
+                      {windowNum === 1 ? '' : 's'} of {metricName ? `“${metricName}”` : 'the metric'}{' '}
+                      {op === 'under' ? 'drops below' : 'rises above'} {value.trim() || '—'}
+                      {goal.pbs.find((p) => p.name === metricName)?.unit
+                        ? ` ${goal.pbs.find((p) => p.name === metricName)?.unit}`
+                        : ''}
+                      .
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
+
+            {kind === 'manual' && (
+              <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+                The classic checklist: you tick the circle yourself, nothing happens automatically.
+              </p>
+            )}
+          </div>
+
           <div className="flex justify-end gap-1.5">
             <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditing(false)}>
               Cancel
@@ -259,9 +461,29 @@ function StepRow({
             <Button
               size="sm"
               className="h-7 text-xs"
-              disabled={!title.trim() || busy}
+              disabled={!title.trim() || busy || (kind === 'metric' && (!metricName || !(valueNum > 0)))}
               onClick={() => {
-                onEdit({ title: title.trim(), notes: notes.trim() || null })
+                onEdit({
+                  title: title.trim(),
+                  notes: notes.trim() || null,
+                  ...(kind === 'routine'
+                    ? {
+                        trigger: 'routine',
+                        routineId: routineId && routineId !== 'any' ? routineId : null,
+                        triggerCount: countNum,
+                      }
+                    : {}),
+                  ...(kind === 'metric'
+                    ? {
+                        trigger: 'metric',
+                        metricName,
+                        metricWindow: windowNum,
+                        metricOp: op,
+                        metricValue: valueNum,
+                      }
+                    : {}),
+                  ...(kind === 'manual' ? { trigger: 'manual' } : {}),
+                })
                 setEditing(false)
               }}
             >
@@ -750,13 +972,14 @@ function DetailBody({
                 <h4 className="text-sm font-semibold">
                   Your plan <span className="font-normal text-muted-foreground">({stats.stepsDone}/{stats.stepsTotal} done)</span>
                 </h4>
-                <span className="text-xs text-muted-foreground">tap the circle to change status</span>
+                <span className="text-xs text-muted-foreground">tap the circle to tick — ✏️ can automate it from routines or metrics</span>
               </div>
               <div className="space-y-1.5">
                 {goal.steps.map((step) => (
                   <StepRow
                     key={step.id}
                     step={step}
+                    goal={goal}
                     isNext={stats.nextStep?.id === step.id}
                     busy={updateStep.isPending || deleteStep.isPending}
                     onCycle={() => cycleStepStatus(step)}

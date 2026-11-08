@@ -2,6 +2,11 @@ export type GoalType = 'quantitative' | 'plan'
 export type StepStatus = 'pending' | 'in_progress' | 'done'
 export type GoalArchivedStatus = 'active' | 'archived'
 
+/** How a step completes: by hand, after N routine check-offs, or when a
+ *  personal-best metric's rolling average crosses a threshold. */
+export type StepTriggerType = 'manual' | 'routine' | 'metric'
+export type MetricOp = 'under' | 'over'
+
 /** Computed tracking status shown in the UI. */
 export type TrackStatus =
   | 'completed'
@@ -24,6 +29,23 @@ export interface GoalStepData {
   order: number
   status: StepStatus
   completedAt: string | null
+  // ---- automation (how this step completes) ----
+  trigger: StepTriggerType
+  /** routine trigger: the routine whose check-offs count (null = any) */
+  routineId: string | null
+  /** routine trigger: how many check-offs complete the step */
+  triggerCount: number
+  /** metric trigger: PB metric name (unique per goal) */
+  metricName: string | null
+  /** metric trigger: rolling average over the last N attempts (null = 3) */
+  metricWindow: number | null
+  /** metric trigger: "under" = avg must drop below metricValue (solve times),
+   *  "over" = avg must rise above it (WPM, distance) */
+  metricOp: MetricOp | null
+  metricValue: number | null
+  /** when this step became current — check-offs before it count for the
+   *  previous step (null = the whole history counts; day-granular) */
+  currentSince: string | null
   createdAt: string
 }
 
@@ -58,6 +80,8 @@ export interface RoutineDoneData {
   creditedValue: number | null
   /** the auto-created progress log entry (amount edits flow into the node) */
   logId: string | null
+  /** the step this check-off completed, if any (undo re-opens it) */
+  advancedStepId: string | null
 }
 
 export interface RoutineData {

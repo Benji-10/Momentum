@@ -13,6 +13,7 @@ import {
 import { resolveNodeRef, filterCyclicEdges, idsCsv, type NodeRefEntry } from './resolve-refs'
 import { canonicalDayUtc } from './routine-math'
 import { resyncDerivedMeters, setNodeDerivation } from './derive'
+import { evaluateStepTriggers } from './step-engine'
 import type { MergeSummary } from './types'
 
 // ---------------------------------------------------------------------------
@@ -213,7 +214,11 @@ async function mergeEntitiesIntoGoal(goalId: string, scope: EntityScope, summary
   const goal = await db.goal.findUnique({ where: { id: goalId }, include: goalInclude })
   if (!goal) return
 
-  await mergeSteps(goal, scope.steps, summary)
+  // step routine links can only be resolved once every routine exists (the
+  // file may create or rename them below) — collected here, applied last
+  const pendingStepLinks: { stepId: string; ref: string | null }[] = []
+
+  await mergeSteps(goal, scope.steps, summary, pendingStepLinks)
 
   // existing dependency edges (captured before any update — nodes' requiresIds
   // are only written by syncRequires below)
@@ -237,12 +242,25 @@ async function mergeEntitiesIntoGoal(goalId: string, scope: EntityScope, summary
   await resyncDerivedMeters(goal.id)
 
   await mergeRoutines(goal, scope.routines, entries, summary)
+  // step triggers that name a routine: point them at the (possibly new or
+  // renamed) routine now that the goal's full routine set exists
+  await linkStepRoutineTriggers(goalId, pendingStepLinks)
   await mergePbs(goal, scope.pbs, summary)
   await mergeLogs(goal, scope.logs, summary)
   await mergeNotes(goal, scope.notes, summary)
+
+  // definitions settled — run the automation once so a file whose history
+  // already satisfies a new trigger completes those steps on the spot
+  // (a no-op for goals without automated steps)
+  await evaluateStepTriggers(goalId)
 }
 
-async function mergeSteps(goal: GoalRow, steps: ImportGoalRaw['steps'], summary: MergeSummary): Promise<void> {
+async function mergeSteps(
+  goal: GoalRow,
+  steps: ImportGoalRaw['steps'],
+  summary: MergeSummary,
+  pendingStepLinks: { stepId: string; ref: string | null }[],
+): Promise<void> {
   if (!steps?.length) return
   const byTitle = new Map<string, GoalRow['steps'][number]>()
   for (const s of goal.steps) {
@@ -263,13 +281,30 @@ async function mergeSteps(goal: GoalRow, steps: ImportGoalRaw['steps'], summary:
         patch.status = 'done'
         patch.completedAt = new Date()
       }
+      // automation follows the file like any definition: present → set
+      // (explicit null clears it back to a manual tick), absent → kept.
+      // `currentSince` is progress, never touched by a merge.
+      if (raw.trigger !== undefined) {
+        const [ns] = normalizeGoal({ title: 'scope', steps: [s] }).steps
+        patch.trigger = ns.triggerType
+        patch.triggerCount = ns.triggerCount
+        patch.metricName = ns.triggerType === 'metric' ? ns.metricRef : null
+        patch.metricWindow = ns.triggerType === 'metric' ? ns.metricWindow : null
+        patch.metricOp = ns.triggerType === 'metric' ? ns.metricOp : null
+        patch.metricValue = ns.triggerType === 'metric' ? ns.metricValue : null
+        // the routine link itself is re-resolved after routines merge; clear
+        // the stale id now so a dropped/renamed routine can't keep pointing
+        // at the wrong session
+        patch.routineId = null
+        if (ns.triggerType === 'routine') pendingStepLinks.push({ stepId: m.id, ref: ns.routineRef })
+      }
       if (Object.keys(patch).length > 0) {
         await db.goalStep.update({ where: { id: m.id }, data: patch as Prisma.GoalStepUpdateInput })
       }
       summary.stepsUpdated++
     } else {
       const [ns] = normalizeGoal({ title: 'scope', steps: [s] }).steps
-      await db.goalStep.create({
+      const created = await db.goalStep.create({
         data: {
           goalId: goal.id,
           title: ns.title,
@@ -277,12 +312,41 @@ async function mergeSteps(goal: GoalRow, steps: ImportGoalRaw['steps'], summary:
           order: ++maxOrder,
           status: ns.done ? 'done' : 'pending',
           completedAt: ns.done ? new Date() : null,
+          trigger: ns.triggerType,
+          triggerCount: ns.triggerCount,
+          metricName: ns.triggerType === 'metric' ? ns.metricRef : null,
+          metricWindow: ns.triggerType === 'metric' ? ns.metricWindow : null,
+          metricOp: ns.triggerType === 'metric' ? ns.metricOp : null,
+          metricValue: ns.triggerType === 'metric' ? ns.metricValue : null,
         },
       })
+      if (ns.triggerType === 'routine') pendingStepLinks.push({ stepId: created.id, ref: ns.routineRef })
       summary.stepsCreated++
     }
   }
   summary.stepsKept += goal.steps.length - matched
+}
+
+/** Point routine-trigger steps at the routines their file titles name —
+ *  called after mergeRoutines so the full (possibly renamed/new) routine set
+ *  exists. An unresolved title leaves the link null = "any routine", never
+ *  breaking the import. */
+async function linkStepRoutineTriggers(
+  goalId: string,
+  links: { stepId: string; ref: string | null }[],
+): Promise<void> {
+  if (!links.length) return
+  const routines = await db.routineItem.findMany({ where: { goalId }, select: { id: true, title: true } })
+  const byTitle = new Map<string, string>()
+  for (const r of routines) {
+    const key = normTitle(r.title)
+    if (!byTitle.has(key)) byTitle.set(key, r.id)
+  }
+  for (const l of links) {
+    if (!l.ref) continue // "any routine" — already null
+    const rid = byTitle.get(normTitle(l.ref))
+    if (rid) await db.goalStep.update({ where: { id: l.stepId }, data: { routineId: rid } })
+  }
 }
 
 /** Merge paths + their nodes. Returns nodeId → file "requires" refs for every
@@ -811,8 +875,10 @@ async function mergePbs(goal: GoalRow, pbs: ImportGoalRaw['pbs'], summary: Merge
         }
       }
     } else {
-      // brand-new metric: create-mode semantics (needs at least one record)
-      if (!pb.records?.length) continue
+      // brand-new metric — created even with no attempts yet: a step's
+      // metric trigger may reference it, and recording the first attempt
+      // later is what completes the step (records are progress, definitions
+      // follow the file like everywhere else)
       const [np] = normalizeGoal({ title: 'scope', pbs: [pb] }).pbs
       await db.personalBest.create({
         data: {

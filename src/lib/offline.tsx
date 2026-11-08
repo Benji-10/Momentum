@@ -311,6 +311,7 @@ export function applyQueuedDones(goals: GoalData[], ops: QueuedOp[]): GoalData[]
             date: t.dayKey,
             creditedValue: null,
             logId: null,
+            advancedStepId: null,
           }
           return { ...r, dones: [...r.dones, done] }
         }),

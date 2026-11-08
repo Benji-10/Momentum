@@ -26,6 +26,7 @@ import { occurrencesInRange, routineStats, sameDay, startOfWeek, toDayKey, weekF
 import { goalColor } from '@/lib/goal-colors'
 import { useToggleRoutineDone } from '@/hooks/use-goals'
 import { checkoffDisplayUnit, logAmountLabel } from '@/lib/recording'
+import { currentStepForRoutine, routineStepLine, stepTriggerInfo } from '@/lib/step-triggers'
 import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -74,6 +75,25 @@ function XpBadge({ goals }: { goals: GoalData[] }) {
 /** Today's checkable list: every routine scheduled for today, any goal.
  *  Flexible (any-day-this-week) routines follow below — they aren't pinned
  *  to today, so they get their own quota rows instead. */
+
+/** The plan step this session works on — same rule as the schedule grid. */
+function StepLine({ goal, routine, done }: { goal: GoalData; routine: RoutineData; done?: boolean }) {
+  const ctx = currentStepForRoutine(goal, routine)
+  if (!ctx) return null
+  return (
+    <div
+      className={cn(
+        'mt-1 flex items-start gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] leading-snug text-amber-700 dark:text-amber-300',
+        done && 'opacity-60',
+      )}
+      title="This session works on the current plan step — it completes automatically"
+    >
+      <Zap className="mt-px h-2.5 w-2.5 shrink-0" />
+      <span className="min-w-0 truncate">{routineStepLine(ctx)}</span>
+    </div>
+  )
+}
+
 function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: (g: GoalData, tab?: string) => void }) {
   const toggleDone = useToggleRoutineDone()
   const today = new Date()
@@ -115,7 +135,30 @@ function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: 
       {
         onSuccess: (res) => {
           const autoLog = res.autoLog
-          if (!autoLog || o.done) return
+          if (o.done) {
+            const reOpened = res.stepsReverted ?? []
+            if (reOpened.length || res.removedLog) {
+              toast('Check-off undone', {
+                description: [
+                  res.removedLog ? 'The auto log entry was removed too.' : null,
+                  reOpened.length ? `Step re-opened: “${reOpened[0].title}”.` : null,
+                ]
+                  .filter(Boolean)
+                  .join(' ') || undefined,
+              })
+            }
+            return
+          }
+          if (res.stepsAdvanced?.length) {
+            toast.success(`Step complete — “${res.stepsAdvanced[0].title}”`, {
+              icon: '⚡',
+              description:
+                res.stepsAdvanced.length > 1
+                  ? `And “${res.stepsAdvanced[1].title}” unlocked as the next step.`
+                  : 'It completed itself from your activity — the plan moved on.',
+            })
+          }
+          if (!autoLog) return
           // the unit the server recorded it in ("words" / "min" / "hours"),
           // falling back to the client-side resolution for older payloads
           const unit = autoLog.unit ?? checkoffDisplayUnit(o.goal, o.routine)
@@ -197,6 +240,7 @@ function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: 
                       </button>
                       {o.routine.durationMin != null && <span>· {o.routine.durationMin}m</span>}
                     </div>
+                    <StepLine goal={g} routine={o.routine} done={o.done} />
                   </div>
                   <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: c.hex }} aria-hidden />
                 </div>
@@ -255,6 +299,7 @@ function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: 
                   </button>
                   {routine.durationMin != null && <span>· {routine.durationMin}m</span>}
                 </div>
+                <StepLine goal={g} routine={routine} done={doneToday} />
               </div>
               <div className="flex shrink-0 items-center gap-1" aria-label={`${prog.done} of ${prog.target} sessions this week`}>
                 {Array.from({ length: Math.min(prog.target, 7) }, (_, i) => (
@@ -343,8 +388,12 @@ function FocusItem({ goal, onOpen }: { goal: GoalData; onOpen: (g: GoalData, tab
   } else {
     // plan goal
     const parts: string[] = []
-    if (stats.nextStep) parts.push(`Next step: ${stats.nextStep.title}`)
-    else if (stats.stepsTotal === 0) parts.push('Break this goal into steps')
+    if (stats.nextStep) {
+      parts.push(`Next step: ${stats.nextStep.title}`)
+      // live automation status for steps that complete themselves
+      const ti = stepTriggerInfo(goal, stats.nextStep)
+      if (ti.kind !== 'manual' && ti.status) parts.push(ti.status)
+    } else if (stats.stepsTotal === 0) parts.push('Break this goal into steps')
     else parts.push('All steps done')
     if (goal.weeklyTarget && stats.thisWeekRemaining && stats.thisWeekRemaining > 0) {
       parts.push(`${formatNumber(stats.thisWeekRemaining)} ${unit || 'sessions'} to log this week`)

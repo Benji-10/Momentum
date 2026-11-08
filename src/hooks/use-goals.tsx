@@ -125,7 +125,19 @@ export function useUpdateStep(goalId: string | null) {
       patch,
     }: {
       stepId: string
-      patch: { title?: string; status?: StepStatus; move?: 'up' | 'down'; notes?: string | null }
+      patch: {
+        title?: string
+        status?: StepStatus
+        move?: 'up' | 'down'
+        notes?: string | null
+        trigger?: 'manual' | 'routine' | 'metric'
+        routineId?: string | null
+        triggerCount?: number
+        metricName?: string | null
+        metricWindow?: number | null
+        metricOp?: 'under' | 'over' | null
+        metricValue?: number | null
+      }
     }) =>
       jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/steps/${stepId}`, {
         method: 'PATCH',
@@ -327,6 +339,10 @@ export function useToggleRoutineDone() {
         creditSkipped: boolean
         autoLog?: { id: string; amount: number; unit: string | null; note: string | null } | null
         removedLog?: boolean
+        /** plan steps completed by this check-off (automation) */
+        stepsAdvanced?: { id: string; title: string }[]
+        /** plan steps re-opened by this undo (automation) */
+        stepsReverted?: { id: string; title: string }[]
       }>(`/api/goals/${goalId}/routines/${routineId}/done`, {
         method: 'POST',
         body: JSON.stringify({ date, undo }),
@@ -351,7 +367,7 @@ export function useToggleRoutineDone() {
               ? dones // already ticked (double-tap) — nothing to add
               : [
                   ...dones,
-                  { id: `optimistic-${routineId}-${dayKey}`, routineId, date: dayKey, creditedValue: null, logId: null },
+                  { id: `optimistic-${routineId}-${dayKey}`, routineId, date: dayKey, creditedValue: null, logId: null, advancedStepId: null },
                 ],
         )
       })
@@ -586,7 +602,7 @@ export function useAddPbRecord(goalId: string | null) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ pbId, value, date, note }: { pbId: string; value: number; date?: string; note?: string | null }) =>
-      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/pbs/${pbId}/records`, {
+      jsonFetch<{ goal: GoalData | null; stepsAdvanced?: { id: string; title: string }[] }>(`/api/goals/${goalId}/pbs/${pbId}/records`, {
         method: 'POST',
         body: JSON.stringify({ value, date, note: note || null }),
       }),

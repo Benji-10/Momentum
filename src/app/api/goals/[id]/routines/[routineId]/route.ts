@@ -105,6 +105,13 @@ export async function DELETE(_req: Request, { params }: Params) {
     if (!(await ownsGoal(id, auth.user))) return NextResponse.json({ error: 'Goal not found' }, { status: 404 })
     const routine = await db.routineItem.findFirst({ where: { id: routineId, goalId: id } })
     if (!routine) return NextResponse.json({ error: 'Routine not found' }, { status: 404 })
+    // steps that count this routine's check-offs would silently widen to
+    // "any routine" once the link is gone — reset them to a manual tick so
+    // the semantics the user set up never change behind their back
+    await db.goalStep.updateMany({
+      where: { goalId: id, routineId, trigger: 'routine' },
+      data: { trigger: 'manual', routineId: null },
+    })
     await db.routineItem.delete({ where: { id: routineId } })
     const goal = await ownedGoal(id, auth.user)
     return NextResponse.json({ goal: goal ? serializeGoal(goal) : null })

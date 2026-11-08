@@ -8,6 +8,7 @@ import { syncMilestoneReached } from '@/lib/milestones'
 import { nodeDependencies, buildNodeIndex, nodeStatus } from '@/lib/skill-tree'
 import { propagateDerived } from '@/lib/derive'
 import { autoLogAmount, autoLogNote, checkoffUnit } from '@/lib/recording'
+import { evaluateStepTriggers, undoStepAdvance } from '@/lib/step-engine'
 
 const doneSchema = z.object({
   /**
@@ -90,6 +91,9 @@ export async function POST(req: Request, { params }: Params) {
     let creditSkipped = false
     let autoLog: { id: string; amount: number; unit: string | null; note: string | null } | null = null
     let removedLog = false
+    /** steps completed by this check-off / re-opened by this undo */
+    let stepsAdvanced: { id: string; title: string }[] = []
+    let stepsReverted: { id: string; title: string }[] = []
 
     if (d.undo && existing) {
       // take back any progress this check-off had credited to the tree
@@ -112,7 +116,18 @@ export async function POST(req: Request, { params }: Params) {
         const gone = await db.progressLog.deleteMany({ where: { id: existing.logId, goalId: id } })
         removedLog = gone.count > 0
       }
+      // …and re-open the plan step this check-off closed, if any (it may
+      // complete again on re-evaluation when other check-offs still qualify
+      // — in which case nothing changed and nothing is reported)
+      if (existing.advancedStepId) {
+        const reverted = await undoStepAdvance(existing.advancedStepId)
+        if (reverted) stepsReverted = [{ id: reverted.stepId, title: reverted.title }]
+      }
       await db.routineDone.delete({ where: { id: existing.id } })
+      const reAdvances = await evaluateStepTriggers(id)
+      // a step that came right back is not worth a toast — net effect: no-op
+      const reDone = new Set(reAdvances.map((a) => a.stepId))
+      stepsReverted = stepsReverted.filter((s) => !reDone.has(s.id))
     } else if (!d.undo && !existing) {
       // the linked checkpoint (if any), resolved up-front: its unit decides
       // what the check-off records ("25 words" / "0.33 hours" / "20 min")
@@ -172,10 +187,32 @@ export async function POST(req: Request, { params }: Params) {
         await db.routineDone.update({ where: { id: done.id }, data: { logId: log.id } })
         autoLog = { id: log.id, amount, unit, note: log.note }
       }
+
+      // step automation: this check-off may close the plan step the session
+      // was working toward. The FIRST advance is the one this tick pushed
+      // over the line (later ones in the pass were enabled by it) — stamp it
+      // on the done row so an undo re-opens exactly that step.
+      const advances = await evaluateStepTriggers(id)
+      if (advances.length) {
+        stepsAdvanced = advances.map((a) => ({ id: a.stepId, title: a.title }))
+        if (advances[0].via === 'routine') {
+          await db.routineDone.updateMany({
+            where: { id: done.id },
+            data: { advancedStepId: advances[0].stepId },
+          })
+        }
+      }
     }
 
     const goal = await ownedGoal(id, auth.user)
-    return NextResponse.json({ goal: goal ? serializeGoal(goal) : null, creditSkipped, autoLog, removedLog })
+    return NextResponse.json({
+      goal: goal ? serializeGoal(goal) : null,
+      creditSkipped,
+      autoLog,
+      removedLog,
+      stepsAdvanced,
+      stepsReverted,
+    })
   } catch (e) {
     console.error('POST /api/goals/[id]/routines/[routineId]/done failed', e)
     return NextResponse.json({ error: 'Failed to toggle routine done' }, { status: 500 })

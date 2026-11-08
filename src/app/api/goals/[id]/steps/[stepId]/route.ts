@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { requireUser } from '@/lib/auth'
 import { ownedGoal, ownsGoal } from '@/lib/api-helpers'
 import { goalInclude, serializeGoal } from '@/lib/goal-serialize'
+import { evaluateStepTriggers } from '@/lib/step-engine'
 
 const updateStepSchema = z.object({
   title: z.string().min(1).max(200).optional(),
@@ -11,6 +12,20 @@ const updateStepSchema = z.object({
   status: z.enum(['pending', 'in_progress', 'done']).optional(),
   /** move step up/down by one position */
   move: z.enum(['up', 'down']).optional(),
+  // ---- automation (how this step completes) ----
+  trigger: z.enum(['manual', 'routine', 'metric']).optional(),
+  /** routine trigger: the routine whose check-offs count (null = any) */
+  routineId: z.string().min(1).nullable().optional(),
+  /** routine trigger: check-offs needed */
+  triggerCount: z.number().int().min(1).max(999).optional(),
+  /** metric trigger: PB metric name */
+  metricName: z.string().min(1).max(60).nullable().optional(),
+  /** metric trigger: rolling-average window */
+  metricWindow: z.number().int().min(1).max(50).nullable().optional(),
+  /** metric trigger: threshold direction */
+  metricOp: z.enum(['under', 'over']).nullable().optional(),
+  /** metric trigger: the threshold value */
+  metricValue: z.number().positive().max(1_000_000).nullable().optional(),
 })
 
 type Params = { params: Promise<{ id: string; stepId: string }> }
@@ -45,19 +60,57 @@ export async function PATCH(req: Request, { params }: Params) {
     }
 
     const statusChanged = d.status && d.status !== step.status
-    await db.goalStep.update({
-      where: { id: stepId },
-      data: {
-        ...(d.title !== undefined ? { title: d.title } : {}),
-        ...(d.notes !== undefined ? { notes: d.notes } : {}),
-        ...(d.status !== undefined
-          ? {
-              status: d.status,
-              completedAt: d.status === 'done' ? (statusChanged ? new Date() : step.completedAt) : null,
-            }
-          : {}),
-      },
-    })
+
+    // automation patch: a trigger change may complete the step right away
+    // (e.g. switching to a metric whose average is already past the bar).
+    // `routineId`/`metric*` fields follow null-clears like every other
+    // patch; when the trigger switches to a different kind the fields of
+    // the other kind are cleared so nothing stale survives.
+    const trigger = d.trigger ?? (step.trigger as string)
+    let routineId: string | null = step.routineId
+    if (d.routineId !== undefined) routineId = d.routineId
+    if (d.routineId && routineId) {
+      // must belong to this goal — anything else becomes "any routine"
+      const r = await db.routineItem.findFirst({ where: { id: routineId, goalId: id }, select: { id: true } })
+      routineId = r?.id ?? null
+    }
+
+    const data: Record<string, unknown> = {
+      ...(d.title !== undefined ? { title: d.title } : {}),
+      ...(d.notes !== undefined ? { notes: d.notes } : {}),
+      ...(d.status !== undefined
+        ? {
+            status: d.status,
+            completedAt: d.status === 'done' ? (statusChanged ? new Date() : step.completedAt) : null,
+          }
+        : {}),
+    }
+    if (d.trigger !== undefined) data.trigger = d.trigger
+    if (d.triggerCount !== undefined) data.triggerCount = d.triggerCount
+    if (d.routineId !== undefined) data.routineId = routineId
+    if (d.metricName !== undefined) data.metricName = d.metricName
+    if (d.metricWindow !== undefined) data.metricWindow = d.metricWindow
+    if (d.metricOp !== undefined) data.metricOp = d.metricOp
+    if (d.metricValue !== undefined) data.metricValue = d.metricValue
+    // switching kinds clears the other kind's fields
+    if (d.trigger === 'routine') {
+      data.metricName = null
+      data.metricWindow = null
+      data.metricOp = null
+      data.metricValue = null
+    } else if (d.trigger === 'metric') {
+      data.routineId = null
+      data.triggerCount = step.triggerCount ?? 1
+    } else if (d.trigger === 'manual') {
+      // keep the stored config (switching back restores it), just stop the
+      // engine from caring: trigger 'manual' never auto-completes.
+    }
+
+    await db.goalStep.update({ where: { id: stepId }, data })
+
+    // re-derive: an edited trigger (or a metric that just got edited into
+    // range elsewhere) may complete this step immediately
+    await evaluateStepTriggers(id)
 
     const goal = await ownedGoal(id, auth.user)
     return NextResponse.json({ goal: goal ? serializeGoal(goal) : null })

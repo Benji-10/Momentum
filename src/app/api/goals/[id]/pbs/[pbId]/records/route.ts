@@ -5,6 +5,7 @@ import { db } from '@/lib/db'
 import { requireUser } from '@/lib/auth'
 import { ownedGoal } from '@/lib/api-helpers'
 import { serializeGoal } from '@/lib/goal-serialize'
+import { evaluateStepTriggers } from '@/lib/step-engine'
 
 const addRecordSchema = z.object({
   value: z.number().positive('Value must be greater than 0').max(1_000_000),
@@ -48,8 +49,17 @@ export async function POST(req: Request, { params }: Params) {
       data: { history: JSON.stringify(history) },
     })
 
+    // a new attempt can push a metric-triggered step over its bar
+    const advances = await evaluateStepTriggers(id)
+
     const goal = await ownedGoal(id, auth.user)
-    return NextResponse.json({ goal: goal ? serializeGoal(goal) : null }, { status: 201 })
+    return NextResponse.json(
+      {
+        goal: goal ? serializeGoal(goal) : null,
+        stepsAdvanced: advances.map((a) => ({ id: a.stepId, title: a.title })),
+      },
+      { status: 201 },
+    )
   } catch (e) {
     console.error('POST /api/goals/[id]/pbs/[pbId]/records failed', e)
     return NextResponse.json({ error: 'Failed to add record' }, { status: 500 })

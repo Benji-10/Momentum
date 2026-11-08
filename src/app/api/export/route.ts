@@ -49,11 +49,41 @@ export async function GET() {
           unit: g.unit,
           weeklyTarget: g.weeklyTarget,
           deadline: g.deadline ? toDateString(g.deadline) : null,
-          steps: g.steps.map((s) => ({
-            title: s.title,
-            notes: s.notes,
-            done: s.status === 'done',
-          })),
+          steps: g.steps.map((s) => {
+            const out: {
+              title: string
+              notes: string | null
+              done: boolean
+              trigger?:
+                | 'manual'
+                | { type: 'routine'; routine?: string | null; count?: number }
+                | { type: 'metric'; metric: string; window?: number; under?: number; over?: number }
+            } = {
+              title: s.title,
+              notes: s.notes,
+              done: s.status === 'done',
+            }
+            // automation: emit only when it says something (manual = default)
+            const t = s.trigger ?? 'manual'
+            if (t === 'routine') {
+              const linked = s.routineId ? g.routines.find((r) => r.id === s.routineId) : null
+              out.trigger = {
+                type: 'routine',
+                routine: linked ? linked.title : null,
+                count: s.triggerCount ?? 1,
+              }
+            } else if (t === 'metric' && s.metricName) {
+              const trig: { type: 'metric'; metric: string; window?: number; under?: number; over?: number } = {
+                type: 'metric',
+                metric: s.metricName,
+              }
+              if (s.metricWindow != null && s.metricWindow !== 3) trig.window = s.metricWindow
+              if (s.metricOp === 'under' && s.metricValue != null) trig.under = s.metricValue
+              if (s.metricOp === 'over' && s.metricValue != null) trig.over = s.metricValue
+              out.trigger = trig
+            }
+            return out
+          }),
           paths: [...g.skillPaths]
             .sort((a, b) => a.order - b.order)
             .map((p) => ({

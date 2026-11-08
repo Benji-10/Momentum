@@ -408,6 +408,8 @@ function GoalReviewCard({
 export function ReviewTab({ goals, onOpen }: { goals: GoalData[]; onOpen: (g: GoalData) => void }) {
   const [pbGoal, setPbGoal] = useState<GoalData | null>(null)
   const [recordPb, setRecordPb] = useState<PersonalBestData | null>(null)
+  /** which goal's review is shown — "all" keeps the scrollable overview */
+  const [pickedId, setPickedId] = useState<string | null>(null)
 
   if (goals.length === 0) {
     return (
@@ -417,15 +419,77 @@ export function ReviewTab({ goals, onOpen }: { goals: GoalData[]; onOpen: (g: Go
     )
   }
 
+  const picked = pickedId ? goals.find((g) => g.id === pickedId) ?? null : null
+  const shown = picked ? [picked] : goals
+
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        A friendly look at your rhythm — what you actually logged each week, with the dashed line showing your goal&apos;s
-        pace. Gaps are just information, not verdicts. Flip a card to <span className="font-medium text-foreground">Bests</span> for
-        its personal-best metrics.
-      </p>
+      {/* goal switcher — jump straight to the one you want instead of
+          scrolling past every other card to find it */}
+      {goals.length > 1 && (
+        <div className="nice-scroll -mx-1 flex gap-2 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Which goal to review">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={pickedId === null}
+            onClick={() => setPickedId(null)}
+            className={cn(
+              'flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-semibold transition-all',
+              pickedId === null
+                ? 'border-transparent bg-primary text-primary-foreground shadow-md'
+                : 'border-border bg-card text-muted-foreground hover:border-muted-foreground/30 hover:text-foreground',
+            )}
+          >
+            <Activity className="h-3.5 w-3.5" /> All goals
+            <span className={cn('rounded-full px-1.5 text-[10px] tabular-nums', pickedId === null ? 'bg-primary-foreground/20' : 'bg-muted')}>
+              {goals.length}
+            </span>
+          </button>
+          {goals.map((g) => {
+            const c = goalColor(g.color)
+            const selected = g.id === pickedId
+            return (
+              <button
+                key={g.id}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                onClick={() => setPickedId(selected ? null : g.id)}
+                title={g.title}
+                className={cn(
+                  'flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-left transition-all',
+                  selected ? 'border-transparent shadow-md' : 'border-border bg-card hover:border-muted-foreground/30',
+                )}
+                style={selected ? { background: c.soft, borderColor: c.hex } : undefined}
+              >
+                <span className="text-lg leading-none">{g.emoji}</span>
+                <span className="min-w-0">
+                  <span className="block max-w-44 truncate text-sm font-semibold leading-tight">{g.title}</span>
+                  <span className="mt-0.5 block text-[10px] tabular-nums text-muted-foreground">
+                    {g.pbs.length > 0 ? `${g.pbs.length} metric${g.pbs.length === 1 ? '' : 's'}` : 'rhythm only'}
+                  </span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
 
-      {goals.map((goal) => (
+      {shown.length === 1 ? (
+        <p className="text-sm text-muted-foreground">
+          What you actually logged each week for <span className="font-medium text-foreground">{shown[0].title}</span> — the
+          dashed line is its pace. Flip to <span className="font-medium text-foreground">Bests</span> for its personal-best
+          metrics.
+        </p>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          A friendly look at your rhythm — what you actually logged each week, with the dashed line showing each
+          goal&apos;s pace. Flip a card to <span className="font-medium text-foreground">Bests</span> for its personal-best
+          metrics.
+        </p>
+      )}
+
+      {shown.map((goal) => (
         <GoalReviewCard
           key={goal.id}
           goal={goal}

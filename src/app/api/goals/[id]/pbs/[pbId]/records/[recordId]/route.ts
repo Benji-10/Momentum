@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { requireUser } from '@/lib/auth'
 import { ownedGoal } from '@/lib/api-helpers'
 import { serializeGoal } from '@/lib/goal-serialize'
+import { evaluateStepTriggers } from '@/lib/step-engine'
 
 const updateRecordSchema = z.object({
   value: z.number().positive('Value must be greater than 0').max(1_000_000).optional(),
@@ -64,6 +65,9 @@ export async function PATCH(req: Request, { params }: Params) {
       data: { history: JSON.stringify(loaded.history) },
     })
 
+    // an edited attempt can push a metric-triggered step over its bar
+    await evaluateStepTriggers(id)
+
     const goal = await ownedGoal(id, auth.user)
     return NextResponse.json({ goal: goal ? serializeGoal(goal) : null })
   } catch (e) {
@@ -95,6 +99,9 @@ export async function DELETE(_req: Request, { params }: Params) {
       where: { id: loaded.pb.id },
       data: { history: JSON.stringify(next) },
     })
+
+    // a removed attempt can change a rolling average — re-derive steps
+    await evaluateStepTriggers(id)
 
     const goal = await ownedGoal(id, auth.user)
     return NextResponse.json({ goal: goal ? serializeGoal(goal) : null })

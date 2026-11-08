@@ -66,8 +66,28 @@ model GoalStep {
   order       Int       @default(0)
   status      String    @default("pending") // pending | in_progress | done
   completedAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  // ---- automation: how this step completes --------------------------------
+  // "manual"  = ticked by hand (the classic checklist behaviour)
+  // "routine" = completes after `triggerCount` check-offs of `routine`
+  //             (null routine = any routine of the goal), counted from
+  //             `currentSince` (null = the whole history counts)
+  // "metric"  = completes when the rolling average of the last
+  //             `metricWindow` attempts of the `metricName` PB crosses
+  //             `metricValue` ("under" = avg must drop below it, e.g. a
+  //             solve time; "over" = avg must rise above it, e.g. WPM)
+  trigger       String    @default("manual")
+  routineId     String?
+  routine       RoutineItem? @relation("StepTriggerRoutine", fields: [routineId], references: [id], onDelete: SetNull)
+  triggerCount  Int       @default(1)
+  metricName    String?
+  metricWindow  Int?
+  metricOp      String? // "under" | "over"
+  metricValue   Float?
+  // when this step became the current one — check-offs before it count for
+  // the previous step; stored at a UTC day boundary
+  currentSince  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   @@index([goalId, order])
 }
@@ -133,6 +153,8 @@ model RoutineItem {
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
   dones        RoutineDone[]
+  /// steps whose routine trigger points at this routine
+  triggerSteps GoalStep[]   @relation("StepTriggerRoutine")
 
   @@index([goalId])
 }
@@ -148,6 +170,10 @@ model RoutineDone {
   date          DateTime // the occurrence day (normalized to midnight)
   creditedValue Float?
   logId         String? // the auto-created ProgressLog entry (undo deletes it)
+  /// set when this check-off completed a step (routine trigger): undoing
+  /// it re-opens exactly that step. Plain string, no FK — deleting the step
+  /// just makes the undo a no-op.
+  advancedStepId String?
   createdAt     DateTime     @default(now())
 
   @@unique([routineId, date])
