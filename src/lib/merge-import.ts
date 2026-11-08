@@ -49,6 +49,13 @@ import type { MergeSummary } from './types'
 // absent → keep); the meter itself is re-synced upward only — existing
 // progress on the meter is never taken away when the source/factor changes.
 //
+// Units follow the file the same way, with one inheritance rule: a node entry
+// that omits `unit` inherits the path's unit — so when the file's path
+// (re)defines a unit, any unit override stored on a matched node is cleared
+// and the node follows the path again. A regeneration can therefore switch a
+// branch from "sessions" to "minutes" by setting the path unit alone;
+// re-emit `unit` on a node entry to keep it counting something different.
+//
 // Items that exist in the database but are NOT in the file are kept untouched
 // (renaming a checkpoint in the file therefore creates a new one rather than
 // deleting the old one's progress). Existing dependency edges are locked in;
@@ -381,6 +388,9 @@ async function mergeNodes(
     const key = normTitle(n.title)
     if (!byTitle.has(key)) byTitle.set(key, n)
   }
+  // the file's path positively defines a unit → node entries without their
+  // own `unit` inherit it (clearing any override stored on a matched node)
+  const pathUnitDefined = typeof p.unit === 'string' && p.unit.trim() !== ''
   const existingOrders = path.nodes.map((n) => n.order)
   const minOrder = existingOrders.length ? Math.min(...existingOrders) : 0
   let anchor: number | null = null
@@ -394,7 +404,7 @@ async function mergeNodes(
       matched++
       anchor = m.order
       seq = 0
-      await updateMatchedNode(m, n, summary)
+      await updateMatchedNode(m, n, summary, pathUnitDefined)
       if (n.requires !== undefined) fileRequires.set(m.id, n.requires ?? [])
       if (n.deriveFrom !== undefined || n.derivePer !== undefined) {
         pendingDerive.set(m.id, { ref: n.deriveFrom, factor: n.derivePer })
@@ -457,11 +467,19 @@ async function updateMatchedNode(
   m: NodeRow,
   n: RawNode,
   summary: MergeSummary,
+  pathUnitDefined: boolean,
 ): Promise<void> {
   const patch: Record<string, unknown> = {}
   if (n.description !== undefined) patch.description = n.description
   if (n.icon !== undefined) patch.icon = n.icon ?? '✨'
   if (n.unit !== undefined) patch.unit = n.unit?.trim() || null
+  else if (pathUnitDefined && m.unit != null) {
+    // the file re-defaults units at the path level and this entry doesn't
+    // override → drop the stored override so the node inherits the path's
+    // (possibly new) unit. This is what lets a regeneration change how new
+    // logs are added (e.g. sessions → minutes) without touching progress.
+    patch.unit = null
+  }
   if (n.xp !== undefined) patch.xpValue = n.xp ?? 20
   patch.targetValue = n.target // required in the file — always definitional
 

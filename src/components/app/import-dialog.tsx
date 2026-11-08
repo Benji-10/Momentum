@@ -38,6 +38,10 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   const [error, setError] = useState<string | null>(null)
   const [showExample, setShowExample] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  // set once the user explicitly picks a mode — until then the dialog picks
+  // the safe default per file (merge when any goal title already exists,
+  // so a regenerated roadmap can't silently duplicate at zero progress)
+  const modeTouched = useRef(false)
   const importGoals = useImportGoals()
   const { data: existingGoals } = useGoals()
 
@@ -51,6 +55,8 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     setRaw('')
     setParsed(null)
     setError(null)
+    modeTouched.current = false
+    setMode('create')
   }
 
   /** Parse the given text; on success move to the preview stage. */
@@ -60,6 +66,11 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
       const json = JSON.parse(text)
       const p = parseImportFile(json)
       setParsed(p)
+      // smart default: any existing goal title in the file → merge mode
+      // (progress is kept; the per-goal badges show Merge vs New)
+      if (!modeTouched.current) {
+        setMode(p.goals.some((g) => existingTitles.has(normTitle(g.title))) ? 'merge' : 'create')
+      }
       setStage('preview')
     } catch (e) {
       setStage('input')
@@ -185,7 +196,10 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
                     type="button"
                     role="radio"
                     aria-checked={mode === opt.key}
-                    onClick={() => setMode(opt.key)}
+                    onClick={() => {
+                      setMode(opt.key)
+                      modeTouched.current = true
+                    }}
                     className={cn(
                       'flex items-start gap-2.5 rounded-xl border p-3 text-left transition-colors',
                       mode === opt.key
