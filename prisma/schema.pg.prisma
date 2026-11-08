@@ -97,6 +97,10 @@ model ProgressLog {
   date      DateTime @default(now())
   amount    Float    @default(0)
   note      String?
+  // The unit this amount was recorded in ("words", "min", "km") — set by
+  // routine check-offs whose unit differs from the goal's own. Null = the
+  // goal's unit (pre-existing rows keep displaying exactly as before).
+  unit      String?
   createdAt DateTime @default(now())
 
   @@index([goalId, date])

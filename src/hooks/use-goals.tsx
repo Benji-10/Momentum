@@ -325,7 +325,7 @@ export function useToggleRoutineDone() {
       jsonFetch<{
         goal: GoalData | null
         creditSkipped: boolean
-        autoLog?: { id: string; amount: number; note: string | null } | null
+        autoLog?: { id: string; amount: number; unit: string | null; note: string | null } | null
         removedLog?: boolean
       }>(`/api/goals/${goalId}/routines/${routineId}/done`, {
         method: 'POST',

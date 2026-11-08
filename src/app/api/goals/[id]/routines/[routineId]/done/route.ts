@@ -7,7 +7,7 @@ import { serializeGoal } from '@/lib/goal-serialize'
 import { syncMilestoneReached } from '@/lib/milestones'
 import { nodeDependencies, buildNodeIndex, nodeStatus } from '@/lib/skill-tree'
 import { propagateDerived } from '@/lib/derive'
-import { autoLogAmount } from '@/lib/recording'
+import { autoLogAmount, autoLogNote, checkoffUnit } from '@/lib/recording'
 
 const doneSchema = z.object({
   /**
@@ -23,22 +23,6 @@ const doneSchema = z.object({
 })
 
 type Params = { params: Promise<{ id: string; routineId: string }> }
-
-const HOUR_UNITS = ['h', 'hr', 'hrs', 'hour', 'hours']
-const MINUTE_UNITS = ['m', 'min', 'mins', 'minute', 'minutes']
-
-/** Note for the auto log — keeps the duration visible unless the amount
- *  already expresses it (then it would just repeat itself). */
-function autoLogNote(
-  goal: { type: string; unit: string | null },
-  routine: { title: string; durationMin: number | null },
-): string {
-  const unit = (goal.unit ?? '').toLowerCase()
-  if (routine.durationMin != null && routine.durationMin > 0 && !HOUR_UNITS.includes(unit) && !MINUTE_UNITS.includes(unit)) {
-    return `${routine.title} · ${routine.durationMin}m`
-  }
-  return routine.title
-}
 
 /**
  * Is the node unlocked right now? (all of its dependencies mastered).
@@ -104,7 +88,7 @@ export async function POST(req: Request, { params }: Params) {
     })
 
     let creditSkipped = false
-    let autoLog: { id: string; amount: number; note: string | null } | null = null
+    let autoLog: { id: string; amount: number; unit: string | null; note: string | null } | null = null
     let removedLog = false
 
     if (d.undo && existing) {
@@ -131,8 +115,7 @@ export async function POST(req: Request, { params }: Params) {
       await db.routineDone.delete({ where: { id: existing.id } })
     } else if (!d.undo && !existing) {
       // the linked checkpoint (if any), resolved up-front: its unit decides
-      // what the check-off records ("25 words"), and crediting defaults to
-      // one session = `credit` (default 1) of that unit
+      // what the check-off records ("25 words" / "0.33 hours" / "20 min")
       let node: { id: string; currentValue: number; targetValue: number; completedAt: Date | null } | null = null
       let nodeUnit: string | null = null
       if (routine.nodeId) {
@@ -145,10 +128,18 @@ export async function POST(req: Request, { params }: Params) {
           nodeUnit = found.unit ?? found.path.unit ?? null
         }
       }
-      // credit the linked checkpoint (if unlocked and not yet mastered)
+      // the unit this check-off records in, and how much of it — one shared
+      // resolution for the checkpoint credit and the auto-log, so the two
+      // can never disagree ("Reading · 20m" on an hours checkpoint = 0.33 h
+      // credited AND logged; editing the entry moves both)
+      const unit = checkoffUnit(goalRow, routine, nodeUnit)
+      const amount = autoLogAmount(goalRow, routine, nodeUnit)
+      // credit the linked checkpoint (if unlocked and not yet mastered) —
+      // the same amount the auto-log records, so later edits by difference
+      // stay exact
       let creditedValue: number | null = null
       if (node && nodeStatus(node) !== 'mastered') {
-        const perSession = routine.credit != null && routine.credit > 0 ? routine.credit : 1
+        const perSession = amount != null && amount > 0 ? amount : 1
         if (await nodeUnlocked(node.id)) {
           const next = Math.min(node.targetValue, node.currentValue + perSession)
           creditedValue = next - node.currentValue
@@ -165,9 +156,6 @@ export async function POST(req: Request, { params }: Params) {
           creditSkipped = true // done, but its checkpoint is still gated
         }
       }
-      // log the defined amount automatically — in the unit the check-off
-      // records (the checkpoint's unit when linked, else the goal's own)
-      const amount = autoLogAmount(goalRow, routine, nodeUnit)
       const done = await db.routineDone.create({
         data: { routineId, date: day, creditedValue, logId: null },
       })
@@ -176,12 +164,13 @@ export async function POST(req: Request, { params }: Params) {
           data: {
             goalId: id,
             amount,
-            note: autoLogNote(goalRow, routine),
+            unit,
+            note: autoLogNote(routine, unit),
             date: logDay,
           },
         })
         await db.routineDone.update({ where: { id: done.id }, data: { logId: log.id } })
-        autoLog = { id: log.id, amount, note: log.note }
+        autoLog = { id: log.id, amount, unit, note: log.note }
       }
     }
 

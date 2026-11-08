@@ -377,7 +377,9 @@ export function ScheduleTab({
             // it records (the linked checkpoint's unit when there is one) —
             // adjusting to reality is one tap away
             const autoLog = res.autoLog
-            const unit = checkoffDisplayUnit(goal, routine)
+            // the unit the server recorded it in, falling back to the
+            // client-side resolution for older payloads
+            const unit = autoLog.unit ?? checkoffDisplayUnit(goal, routine)
             const dur = routine.durationMin
             const timeish = ['h', 'hr', 'hrs', 'hour', 'hours', 'm', 'min', 'mins', 'minute', 'minutes'].includes(unit.toLowerCase())
             const shown = logAmountLabel(autoLog.amount, unit) + (dur && !timeish ? ` · ${dur}m` : '')

@@ -37,13 +37,15 @@ async function verifyIdentityToken(token: string): Promise<VerifiedIdentity> {
       const row = await db.user.findUnique({ where: { id: claims.sub }, select: { id: true, email: true, name: true, settings: true } })
       if (row) return { user: row }
       // A shim token that verifies but has no row = the account was deleted
-      // (the preview database was reset/wiped). Say so directly — falling
-      // through to /.netlify/identity/user here just 404s, which looks in the
-      // network tab like "every endpoint is broken".
+      // (the preview database was reset/wiped). Say so directly.
       return { gone: true }
     }
-    // shim verification failed: maybe the preview is pointed at production
-    // data and a real Netlify Identity token was pasted — let the /user check try
+    // A token that doesn't verify against this shim is expired or foreign —
+    // and there is no Netlify Identity here to ask. Probing
+    // /.netlify/identity/user would just 404 on every single API call,
+    // which in a network tab looks exactly like "every endpoint is broken".
+    // Reject directly with a clean 401 instead.
+    return null
   }
 
   // production: ask Netlify Identity to validate the JWT

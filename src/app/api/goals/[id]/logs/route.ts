@@ -9,6 +9,10 @@ const createLogSchema = z.object({
   note: z.string().max(500).nullable().optional(),
   /** ISO date, optional — defaults to now */
   date: z.string().datetime().optional(),
+  /** Unit the amount was recorded in, when it differs from the goal's own
+   *  (e.g. an import carrying "20 min" entries). Manual entries omit it —
+   *  they are in the goal's unit by definition. */
+  unit: z.string().max(30).nullable().optional(),
 })
 
 type Params = { params: Promise<{ id: string }> }
@@ -31,6 +35,7 @@ export async function POST(req: Request, { params }: Params) {
         goalId: id,
         amount: d.amount,
         note: d.note ?? null,
+        unit: d.unit?.trim() || null,
         date: d.date ? new Date(d.date) : new Date(),
       },
     })

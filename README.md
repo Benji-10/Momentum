@@ -25,9 +25,14 @@ with flexible routines, and watch the log write itself as you check things off.
   passive meter: every progress entry on the source auto-advances it, in the
   roadmap (an “auto” chip), on check-offs, quick adds and imports. One level
   only — a meter can't be a source — and it never locks behind gating.
-- **Auto-logging** — checking off a routine that has a preset duration
-  ("read 20 min", "work 2 h") writes the log entry for you; a separate quick
-  entry still lets you log custom amounts.
+- **Auto-logging in the right unit** — checking off a routine writes the log
+  entry for you, in the unit that actually measures it: a linked checkpoint's
+  unit ("Vocab drills" → 25 words), the duration when the routine or the
+  checkpoint counts time ("Reading · 20m" → 20 min, or 0.33 h on an hours
+  checkpoint), or the goal's own unit otherwise. Every log row remembers the
+  unit it was recorded in, and the toast's **Edit** action adjusts the
+  checkpoint by the difference — "actually learnt 10 words, not 25" is a
+  two-tap fix. A separate quick entry still lets you log custom amounts.
 - **Personal bests & time invested** — track PB metrics per goal ("WPM",
   higher is better; "BLD" solve time, lower is better) with a PB-over-time
   chart and per-attempt history, plus a cumulative time-spent graph. Each

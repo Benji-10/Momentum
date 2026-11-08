@@ -83,6 +83,7 @@ export function serializeGoal(goal: GoalWithRelations): GoalData {
       date: l.date.toISOString(),
       amount: l.amount,
       note: l.note,
+      unit: l.unit ?? null,
       createdAt: l.createdAt.toISOString(),
     })),
     notes: goal.notes.map((n) => ({

@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { apiFetch } from '@/lib/api-client'
+import { ApiError, apiFetch } from '@/lib/api-client'
 import {
   completeRecovery,
   currentIdentityUser,
@@ -44,9 +44,13 @@ async function fetchMe(): Promise<{ user: SessionUser | null; settings: UserSett
       toast.error('Your account no longer exists — please create it again', {
         description: 'The server database was reset, so your previous sign-in can no longer be verified.',
       })
+      throw e // a real rejection: show the sign-in gate
     }
-    if (isNetworkError(e)) {
-      // offline (or the server is unreachable): stay locally signed in
+    if (e instanceof ApiError ? e.status !== 401 : isNetworkError(e)) {
+      // offline, cold server boot, proxy hiccup, 5xx — anything that isn't a
+      // genuine "session rejected": stay locally signed in (and keep the
+      // cached settings alive) so the offline list stays reachable. The next
+      // successful poll re-verifies, and a real 401 signs out properly.
       return {
         user: {
           id: identity.id,

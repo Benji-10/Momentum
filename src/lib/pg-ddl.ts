@@ -62,6 +62,7 @@ CREATE TABLE "ProgressLog" (
     "date" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "amount" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "note" TEXT,
+    "unit" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "ProgressLog_pkey" PRIMARY KEY ("id")
@@ -317,5 +318,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS "PersonalBest_goalId_name_key" ON "PersonalBes
     column: 'deriveFactor',
     sql: `ALTER TABLE "SkillNode" ADD COLUMN IF NOT EXISTS "deriveFactor" DOUBLE PRECISION;`,
     sqliteType: 'REAL',
+  },
+  {
+    // v1.5: the unit a log entry was recorded in — routine check-offs whose
+    // unit differs from the goal's own (a linked checkpoint's "words", a
+    // duration routine's "min") store it here so history rows always show
+    // the truth. Null = the goal's unit (all pre-existing rows).
+    table: 'ProgressLog',
+    column: 'unit',
+    sql: `ALTER TABLE "ProgressLog" ADD COLUMN IF NOT EXISTS "unit" TEXT;`,
   },
 ]

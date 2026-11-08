@@ -120,10 +120,11 @@ Either a plain string (`"Buy running shoes"`) or an object:
 
 | Field | Type | Limits | Default | Notes |
 |---|---|---|---|---|
-| `amount` | number | >0, ≤1,000,000 | required | Amount of the goal's `unit` gained that day (7.5 km, 20 pages). |
+| `amount` | number | >0, ≤1,000,000 | required | Amount gained that day (7.5 km, 20 pages). Measured in the goal's `unit` unless `unit` below says otherwise. |
 | `date` | string | date | — | `"YYYY-MM-DD"` or ISO. Either `date` or `daysAgo`. |
 | `daysAgo` | number | 0–3650 | 0 | Relative: 0 = today, 1 = yesterday. Ignored if `date` is present. |
 | `note` | string | ≤500 | null | e.g. `"Easy 7.5 km"`. |
+| `unit` | string | ≤30 | goal's unit | Optional: the unit this entry was recorded in, when it differs from the goal's own (e.g. `"20 min"` of reading on a sessions goal, `"25 words"` from a linked checkpoint). Usually omitted — the app records it automatically for routine check-offs. |
 
 ---
 

@@ -38,7 +38,7 @@ import {
   weeklyHistory,
 } from '@/lib/goal-math'
 import { goalColor } from '@/lib/goal-colors'
-import { linkedLogUnits, logAmountLabel } from '@/lib/recording'
+import { logRowUnit, logAmountLabel } from '@/lib/recording'
 import { buildSkillMap } from '@/lib/skill-tree'
 import { describeCadence, occurrencesInRange, relativeDayLabel, routineStats, sameDay, startOfWeek, addDays, toDayKey } from '@/lib/routine-math'
 import { dayKeyOf, isoForDayKey, todayDayKey } from '@/lib/app-time'
@@ -348,9 +348,9 @@ function DetailBody({
   const c = goalColor(goal.color)
   const unit = goal.unit ?? ''
   // display unit for the log editor (falls back to sessions/units); entries
-  // written by a linked check-off override it with the checkpoint's unit
+  // written by a check-off carry the unit they were recorded in ("words",
+  // "min"), older linked entries get it inferred from their checkpoint
   const logUnit = goal.unit ?? (goal.type === 'plan' ? 'sessions' : 'units')
-  const linkedUnits = useMemo(() => linkedLogUnits(goal), [goal])
 
   const weekRequirement =
     goal.type === 'quantitative' ? (stats.idealWeeklyPace ?? null) : goal.weeklyTarget
@@ -1167,9 +1167,9 @@ function DetailBody({
                   </div>
                   <div className="max-h-72 space-y-1.5 overflow-y-auto nice-scroll pr-1">
                     {goal.logs.map((log) => {
-                      // linked check-off entries speak the checkpoint's unit
-                      // ("10 words"), everything else the goal's own
-                      const rowUnit = linkedUnits.get(log.id) ?? logUnit
+                      // check-off entries speak the unit they were recorded in
+                      // ("10 words" / "20 min"), everything else the goal's own
+                      const rowUnit = logRowUnit(goal, log)
                       return (
                       <div
                         key={log.id}

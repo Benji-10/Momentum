@@ -375,6 +375,9 @@ const logSchema = z.object({
   date: z.string().nullish(), // YYYY-MM-DD
   amount: z.number().positive().max(1_000_000),
   note: z.string().max(500).nullish(),
+  /** unit the amount was recorded in ("words", "min", …) — optional; null
+   *  or missing = the goal's own unit */
+  unit: z.string().max(30).nullish(),
 })
 
 const pbRecordSchema = z.object({
@@ -473,6 +476,7 @@ export interface NormalizedLog {
   amount: number
   note: string | null
   date: string // ISO
+  unit: string | null
 }
 export interface NormalizedPbRecord {
   value: number
@@ -628,6 +632,7 @@ export function normalizeGoal(g: ImportGoalRaw): NormalizedGoal {
       amount: l.amount,
       note: l.note ?? null,
       date: isoFromDaysAgoOrDate(l.daysAgo, l.date),
+      unit: l.unit?.trim() || null,
     })),
   }
 }

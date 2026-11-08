@@ -33,6 +33,9 @@ export interface ProgressLogData {
   date: string
   amount: number
   note: string | null
+  /** The unit this amount was recorded in ("words", "min", …) — null = the
+   * goal's own unit (manual entries and pre-v1.5 check-offs). */
+  unit: string | null
   createdAt: string
 }
 

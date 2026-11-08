@@ -116,7 +116,9 @@ function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: 
         onSuccess: (res) => {
           const autoLog = res.autoLog
           if (!autoLog || o.done) return
-          const unit = checkoffDisplayUnit(o.goal, o.routine)
+          // the unit the server recorded it in ("words" / "min" / "hours"),
+          // falling back to the client-side resolution for older payloads
+          const unit = autoLog.unit ?? checkoffDisplayUnit(o.goal, o.routine)
           const timeish = ['h', 'hr', 'hrs', 'hour', 'hours', 'm', 'min', 'mins', 'minute', 'minutes'].includes(unit.toLowerCase())
           const shown =
             logAmountLabel(autoLog.amount, unit) +

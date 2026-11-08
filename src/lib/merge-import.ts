@@ -824,7 +824,7 @@ async function mergeLogs(goal: GoalRow, logs: ImportGoalRaw['logs'], summary: Me
   })
   if (fresh.length) {
     await db.progressLog.createMany({
-      data: fresh.map((l) => ({ goalId: goal.id, amount: l.amount, note: l.note, date: new Date(l.date) })),
+      data: fresh.map((l) => ({ goalId: goal.id, amount: l.amount, note: l.note, date: new Date(l.date), unit: l.unit ?? null })),
     })
     summary.logsAdded += fresh.length
   }
