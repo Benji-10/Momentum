@@ -13,7 +13,12 @@
 [build]
   # Production uses the Postgres (Neon) schema; the SQLite schema is only
   # generated for local dev, never on Netlify.
-  command = "npx prisma generate --schema prisma/schema.pg.prisma && npx next build"
+  #
+  # verify-tree runs first: it compares the repo against .build-manifest.json
+  # (the file list the release zip was built from) and fails fast with the
+  # exact missing-file list if the upload was incomplete — a partial extract
+  # once shipped as two dozen "Module not found" Turbopack errors instead.
+  command = "node scripts/verify-tree.mjs && npx prisma generate --schema prisma/schema.pg.prisma && npx next build"
   publish = ".next"
 
 [build.environment]

@@ -76,6 +76,18 @@ as preview-only).
 
 ## Notes
 
+- **Incomplete uploads fail fast.** The Netlify build starts with
+  `node scripts/verify-tree.mjs`, which compares the repo against
+  `.build-manifest.json` — the exact file list the release zip was built
+  from. If your transfer to GitHub dropped files, the build stops in seconds
+  with the precise missing-file list, instead of failing later with cryptic
+  Turbopack "Module not found" errors. When that happens: **replace** the
+  source in your repo with a fresh extract of the full zip (delete the old
+  tree first — never merge over it), commit everything, and push again.
+- **Dependency versions are pinned.** The zip ships a `package-lock.json`, so
+  Netlify installs exactly the versions the release was tested with instead
+  of resolving `^`-ranges fresh on every deploy (which quietly drifted between
+  builds before). `bun install` still uses `bun.lock` for local dev.
 - The Postgres schema lives at `prisma/schema.pg.prisma`, the SQLite one at
   `prisma/schema.prisma`. **Keep the models in sync** when you change one.
 - Never generate the SQLite client on Netlify (or the pg client locally)
