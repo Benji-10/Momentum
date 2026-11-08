@@ -411,3 +411,83 @@ END $$;`,
     sql: `ALTER TABLE "RoutineDone" ADD COLUMN IF NOT EXISTS "advancedStepId" TEXT;`,
   },
 ]
+
+/**
+ * Split a DDL script into single statements, each executable on its own.
+ * Lives here (not in db.ts) so scripts/verify-pg-bootstrap.ts exercises the
+ * exact logic ensureDbReady runs against Neon — a private copy in the harness
+ * once drifted from the real one and a broken statement shipped.
+ *
+ * A statement ends at a top-level `;` — one that is NOT inside any of:
+ *   - '…' / "…"   string literals and quoted identifiers ('' and "" double
+ *                 as escapes, so 'it''s' never closes early)
+ *   - $tag$…$tag$ dollar-quoted bodies — DO blocks live here. The v1.6
+ *                 step-trigger migration adds its FK inside DO $$ … $$, and
+ *                 the previous regex splitter (/;\s*\n/) cut that block at the
+ *                 internal ";" after "ON UPDATE CASCADE", shipping Postgres
+ *                 the fragment "DO $$ BEGIN … CASCADE" → 42601 "unterminated
+ *                 dollar-quoted string" (the 8 Nov 2026 Neon incident).
+ *   - -- line comments and block comments (slash-star … star-slash)
+ * Comment-only fragments are dropped; everything else is trimmed.
+ */
+export function splitStatements(sql: string): string[] {
+  const out: string[] = []
+  let buf = ''
+  let i = 0
+  const end = sql.length
+  let lineComment = false
+  let blockComment = false
+  let quote = '' // "'" / '"' while inside a literal or quoted identifier
+  let dollar = '' // "$…$" tag while inside a dollar-quoted body
+
+  const flush = () => {
+    const s = buf.trim()
+    buf = ''
+    if (s.replace(/--[^\n]*/g, '').trim()) out.push(s)
+  }
+
+  while (i < end) {
+    const ch = sql[i]
+    const next = i + 1 < end ? sql[i + 1] : ''
+
+    // ---- inside a context: copy verbatim until it closes ----
+    if (lineComment) {
+      buf += ch
+      if (ch === '\n') lineComment = false
+      i++
+      continue
+    }
+    if (blockComment) {
+      if (ch === '*' && next === '/') { buf += '*/'; blockComment = false; i += 2; continue }
+      buf += ch
+      i++
+      continue
+    }
+    if (quote) {
+      if (ch === quote && next === quote) { buf += ch + next; i += 2; continue } // doubled = escaped
+      if (ch === quote) { buf += ch; quote = ''; i++; continue }
+      buf += ch
+      i++
+      continue
+    }
+    if (dollar) {
+      if (sql.startsWith(dollar, i)) { buf += dollar; i += dollar.length; dollar = ''; continue }
+      buf += ch
+      i++
+      continue
+    }
+
+    // ---- top level: detect context openers and the statement end ----
+    if (ch === '-' && next === '-') { lineComment = true; buf += '--'; i += 2; continue }
+    if (ch === '/' && next === '*') { blockComment = true; buf += '/*'; i += 2; continue }
+    if (ch === "'" || ch === '"') { quote = ch; buf += ch; i++; continue }
+    const tag = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i))
+    if (tag) { dollar = tag[0]; buf += tag[0]; i += tag[0].length; continue }
+    if (ch === ';') { flush(); i++; continue }
+
+    buf += ch
+    i++
+  }
+  flush()
+  return out
+}

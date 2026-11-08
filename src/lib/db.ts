@@ -1,5 +1,5 @@
 import { PrismaClient, Prisma } from '@prisma/client'
-import { PG_BOOTSTRAP_SQL, PG_MIGRATIONS } from './pg-ddl'
+import { PG_BOOTSTRAP_SQL, PG_MIGRATIONS, splitStatements } from './pg-ddl'
 
 /**
  * One database client for two worlds:
@@ -29,14 +29,6 @@ export const db =
   })
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db
-
-/** Split a DDL script into single statements (mirrors the .sql file layout). */
-function splitStatements(sql: string): string[] {
-  return sql
-    .split(/;\s*\n/)
-    .map((s) => s.trim())
-    .filter((s) => s.replace(/^--[^\n]*\n?/gm, '').trim().length > 0)
-}
 
 /** Does a table exist? to_regclass() returns regclass, which Prisma's
  *  queryRaw cannot deserialize — always cast to ::text (P2010). */
