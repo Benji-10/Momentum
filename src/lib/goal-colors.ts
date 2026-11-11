@@ -26,37 +26,31 @@ export function goalColor(key: string | null | undefined): GoalColorMeta {
 
 export const TRACK_STATUS_META: Record<
   TrackStatus,
-  { label: string; hex: string; className: string }
+  { label: string; className: string }
 > = {
   completed: {
     label: 'Completed',
-    hex: '#10b981',
-    className: 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-400 border border-emerald-500/25',
+    className: 'bg-success/12 text-success border border-success/25',
   },
   ahead: {
     label: 'Ahead of pace',
-    hex: '#14b8a6',
-    className: 'bg-teal-500/12 text-teal-700 dark:text-teal-400 border border-teal-500/25',
+    className: 'bg-primary/12 text-primary border border-primary/25',
   },
   on_track: {
     label: 'On track',
-    hex: '#10b981',
-    className: 'bg-emerald-500/12 text-emerald-700 dark:text-emerald-400 border border-emerald-500/25',
+    className: 'bg-success/12 text-success border border-success/25',
   },
   behind: {
     label: 'Behind pace',
-    hex: '#f59e0b',
-    className: 'bg-amber-500/14 text-amber-700 dark:text-amber-400 border border-amber-500/30',
+    className: 'bg-warning/12 text-warning border border-warning/30',
   },
   ended: {
     label: 'Deadline passed',
-    hex: '#f43f5e',
-    className: 'bg-rose-500/12 text-rose-700 dark:text-rose-400 border border-rose-500/25',
+    className: 'bg-destructive/12 text-destructive border border-destructive/25',
   },
   not_started: {
     label: 'Not started',
-    hex: '#78716c',
-    className: 'bg-stone-500/10 text-stone-600 dark:text-stone-400 border border-stone-500/25',
+    className: 'bg-muted-foreground/10 text-muted-foreground border border-muted-foreground/25',
   },
 }
 

@@ -270,7 +270,7 @@ export function AuthScreen() {
                   </>
                 )}
                 {!devCode && (
-                  <div className="flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-700 dark:text-emerald-400">
+                  <div className="flex items-start gap-2 rounded-lg border border-success/30 bg-success/10 p-3 text-xs text-success">
                     <CheckCircle2 className="mt-px h-4 w-4 shrink-0" />
                     Recovery link sent. Come back here after clicking it in your email.
                   </div>
@@ -339,7 +339,7 @@ export function IdentityUnconfiguredNotice() {
   return (
     <div className="flex min-h-[calc(100dvh-4rem)] items-center justify-center px-4 py-10">
       <div className="w-full max-w-md rounded-2xl border bg-card p-6 text-center shadow-sm">
-        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-400">
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-warning/15 text-warning">
           <TriangleAlert className="h-7 w-7" />
         </div>
         <h1 className="text-xl font-bold tracking-tight">Accounts aren&apos;t enabled on this site yet</h1>

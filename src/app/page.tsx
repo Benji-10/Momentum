@@ -1,9 +1,8 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { CalendarDays, ChevronDown, CloudOff, CloudUpload, CopyPlus, LayoutDashboard, Loader2, LogOut, Map as MapIcon, Plus, RefreshCw, Repeat, Settings, UserRound } from 'lucide-react'
 import { toast } from 'sonner'
-import { useTheme } from 'next-themes'
 import type { GoalData } from '@/lib/types'
 import type { UserSettings } from '@/lib/settings'
 import { useGoals, useSeedDemo } from '@/hooks/use-goals'
@@ -38,35 +37,21 @@ import { EmptyState } from '@/components/app/empty-state'
 import { AuthScreen, IdentityUnconfiguredNotice } from '@/components/app/auth-screen'
 import { BrandMark } from '@/components/app/brand-mark'
 import { SettingsDialog } from '@/components/app/account-settings'
-import { ExportButton, ImportButton, ThemePicker, exportData } from '@/components/app/theme-picker'
+import { ExportButton, ImportButton, exportData } from '@/components/app/theme-picker'
 
 /**
- * Applies the signed-in user's synced settings to this device:
- *  - the timezone becomes the app timezone (every "today / this week / chart
- *    day" decision follows it), and
- *  - a saved theme is applied and cached to localStorage, so the look is
- *    identical on every device.
+ * Applies the signed-in user's synced timezone to this device (every
+ * "today / this week / chart day" decision follows it). The look of the app
+ * — palette, background, surfaces — is applied by AppearanceProvider.
  * Renders nothing — it just reconciles this device with the account.
  */
 function AppSettingsApplier({ settings }: { settings: UserSettings | null }) {
-  const { theme, setTheme } = useTheme()
-  const lastServerTheme = useRef<string | null>(null)
-
   // module timezone — set during render so this render pass (and its
   // children, which read it through the date helpers) already sees it
   useMemo(() => {
     setAppTimezone(settings?.timezone ?? null)
     return null
   }, [settings?.timezone])
-
-  // theme: apply a server-side change (cross-device sync), but never
-  // clobber a local pick that is still being saved
-  useEffect(() => {
-    const serverTheme = settings?.theme ?? null
-    if (serverTheme === lastServerTheme.current) return
-    lastServerTheme.current = serverTheme
-    if (serverTheme && theme !== serverTheme) setTheme(serverTheme)
-  }, [settings?.theme, theme, setTheme])
 
   return null
 }
@@ -107,7 +92,7 @@ function SyncButton({ goalsQuery }: { goalsQuery: ReturnType<typeof useGoals> })
       size="icon"
       className={cn(
         'relative h-9 w-9 shrink-0',
-        sync.online ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400',
+        sync.online ? 'text-muted-foreground' : 'text-warning',
       )}
       aria-label={label}
       title={
@@ -129,13 +114,13 @@ function SyncButton({ goalsQuery }: { goalsQuery: ReturnType<typeof useGoals> })
       {!sync.online ? (
         <CloudOff className="h-4 w-4" />
       ) : sync.pending > 0 ? (
-        <CloudUpload className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+        <CloudUpload className="h-4 w-4 text-warning" />
       ) : (
         <RefreshCw className={cn('h-4 w-4', busy && 'animate-spin')} />
       )}
       {sync.pending > 0 && (
         <span
-          className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[9px] font-bold leading-none text-white"
+          className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[9px] font-bold leading-none text-white"
           aria-hidden
         >
           {sync.pending > 9 ? '9+' : sync.pending}
@@ -154,7 +139,7 @@ function OfflineBanner() {
   return (
     <div
       role="status"
-      className="mb-4 flex items-center gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-sm text-amber-800 dark:text-amber-200"
+      className="mb-4 flex items-center gap-2.5 rounded-lg border border-warning/30 bg-warning/10 px-3.5 py-2.5 text-sm text-warning"
     >
       <CloudOff className="h-4 w-4 shrink-0" />
       <div className="min-w-0 flex-1">
@@ -242,7 +227,6 @@ function App({ email, name, settings }: { email: string; name: string | null; se
           </div>
           <ImportButton onClick={() => setImportOpen(true)} />
           <ExportButton />
-          <ThemePicker />
           <SyncButton goalsQuery={goalsQuery} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

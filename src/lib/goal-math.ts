@@ -73,6 +73,38 @@ export function weeklyHistory(goal: GoalData, weeks = 8, ref = new Date()): Week
 }
 
 // ---------------------------------------------------------------------------
+// Day streaks — consecutive calendar days with any activity
+// ---------------------------------------------------------------------------
+
+/**
+ * Longest run of consecutive active days (all-time) for one goal. An active
+ * day is any day with a routine check-off, a logged entry, or a step
+ * completed. Days are canonical app-tz midnights, so the streak is the same
+ * on every device. The dashboard's "Best streak" card takes the max across
+ * goals — days, not weeks, match how people think about streaks.
+ */
+export function bestDayStreak(goal: GoalData): number {
+  const days = new Set<number>()
+  for (const r of goal.routines) {
+    for (const d of r.dones) days.add(dayStart(parseDayKey(d.date)).getTime())
+  }
+  for (const l of goal.logs) days.add(logDay(l))
+  for (const s of goal.steps) {
+    if (s.completedAt) days.add(dayStart(new Date(s.completedAt)).getTime())
+  }
+  const sorted = [...days].sort((a, b) => a - b)
+  let best = 0
+  let run = 0
+  let prev = Number.NaN
+  for (const t of sorted) {
+    run = t - prev === DAY_MS ? run + 1 : 1
+    if (run > best) best = run
+    prev = t
+  }
+  return best
+}
+
+// ---------------------------------------------------------------------------
 // Session counting — what a "session" is for plan goals that count sessions
 // ---------------------------------------------------------------------------
 

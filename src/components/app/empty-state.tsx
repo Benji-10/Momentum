@@ -1,8 +1,7 @@
 'use client'
 
-import { CopyPlus, FileJson, ListChecks, Map as MapIcon, Palette, Repeat, Sparkles, Target } from 'lucide-react'
+import { CopyPlus, FileJson, ListChecks, Map as MapIcon, Repeat, Sparkles, Target } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { ThemeQuickRow } from '@/components/app/theme-picker'
 import { BrandMark } from '@/components/app/brand-mark'
 
 export function EmptyState({
@@ -78,13 +77,6 @@ export function EmptyState({
       <p className="mt-3 text-xs text-muted-foreground">
         Demo data adds four example goals (including a Mandarin skill map) with two months of history.
       </p>
-
-      <div className="mt-8 flex items-center justify-center gap-3">
-        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-          <Palette className="h-3.5 w-3.5" /> Pick a theme:
-        </span>
-        <ThemeQuickRow />
-      </div>
     </div>
   )
 }

@@ -1,12 +1,19 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { CalendarDays, Dumbbell, Repeat, Sparkles, Target } from 'lucide-react'
+import { CalendarDays, Dumbbell, NotebookPen, Repeat, Sparkles, Target } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData, RoutineData } from '@/lib/types'
 import { buildSkillMap } from '@/lib/skill-tree'
 import { WEEKDAY_LABELS, WEEKDAY_ORDER, describeCadence } from '@/lib/routine-math'
 import { dayKeyOf, getAppTimezone, isoForDayKey } from '@/lib/app-time'
+import {
+  autoLogAmount,
+  checkoffUnit,
+  creditUnitLabel,
+  logAmountLabel,
+  routineNodeUnit,
+} from '@/lib/recording'
 import { useAddRoutine, useUpdateRoutine } from '@/hooks/use-goals'
 import {
   Dialog,
@@ -90,6 +97,27 @@ export function RoutineDialog({
     [nodeGroups, nodeId],
   )
 
+  // ---- what one check-off records, live from the form ----
+  // the same resolution the server applies on tick (recording.ts), so the
+  // preview can never promise something different from what gets logged
+  const linked = nodeId !== 'none'
+  const routineDraft = useMemo(
+    () => ({
+      nodeId: linked ? nodeId : null,
+      durationMin: duration ? parseInt(duration, 10) : null,
+      credit: credit ? parseFloat(credit) : null,
+    }),
+    [linked, nodeId, duration, credit],
+  )
+  const draftNodeUnit = useMemo(
+    () => (linked ? routineNodeUnit(goal, { nodeId }) : null),
+    [goal, linked, nodeId],
+  )
+  const draftUnit = checkoffUnit(goal, routineDraft, draftNodeUnit)
+  const draftAmount = autoLogAmount(goal, routineDraft, draftNodeUnit)
+  const draftUnitLabel = creditUnitLabel(goal, routineDraft, draftNodeUnit)
+  const logsSomething = draftAmount != null && draftAmount > 0
+
   const valid =
     title.trim().length > 0 &&
     (cadence === 'interval'
@@ -109,7 +137,9 @@ export function RoutineDialog({
       weekdays: cadence === 'weekly' ? [...weekdays].sort() : null,
       timesPerWeek: cadence === 'flexible' ? parseInt(timesPerWeek, 10) : null,
       nodeId: nodeId === 'none' ? null : nodeId,
-      credit: nodeId !== 'none' && credit ? parseFloat(credit) : null,
+      // what one check-off logs — also without a linked checkpoint (then
+      // it's the amount in the goal's own unit; see recording.ts)
+      credit: credit ? parseFloat(credit) : null,
       durationMin: duration ? parseInt(duration, 10) : null,
       startDate: startDate ? isoForDayKey(startDate, '12:00') : null,
       endDate: endDate ? isoForDayKey(endDate, '23:59:59') : null,
@@ -130,7 +160,9 @@ export function RoutineDialog({
       addRoutine.mutate(payload, {
         onSuccess: () => {
           toast.success('Routine scheduled', {
-            description: selectedNode ? `${describeCadence(payload)} · advances ${selectedNode.label}` : describeCadence(payload),
+            description: selectedNode
+              ? `${describeCadence(payload)} · advances ${selectedNode.label}`
+              : describeCadence(payload),
           })
           onOpenChange(false)
         },
@@ -332,29 +364,54 @@ export function RoutineDialog({
                   ))}
                 </SelectContent>
               </Select>
-              {nodeId !== 'none' && (
-                <div className="flex items-center gap-3 rounded-lg border border-dashed bg-muted/30 p-2.5">
-                  <Label htmlFor="routine-credit" className="shrink-0 text-xs">
-                    Add per session
-                  </Label>
-                  <Input
-                    id="routine-credit"
-                    type="number"
-                    min={0}
-                    step="any"
-                    value={credit}
-                    onChange={(e) => setCredit(e.target.value)}
-                    placeholder="e.g. 10"
-                    className="h-8 w-24 text-xs"
-                    inputMode="decimal"
-                  />
-                  <span className="text-[11px] leading-tight text-muted-foreground">
-                    progress added to {selectedNode?.label ?? 'the checkpoint'} per check-off — defaults to 1, and the real amount can be edited right after checking off
-                  </span>
-                </div>
-              )}
             </div>
           )}
+
+          {/* what one check-off logs — amount + unit, with a live preview of
+              the exact entry a tick will create */}
+          <div className="space-y-2 rounded-xl border bg-muted/30 p-3">
+            <Label htmlFor="routine-credit" className="flex items-center gap-1.5 text-xs">
+              <NotebookPen className="h-3.5 w-3.5 text-primary" />
+              One check-off logs
+            </Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="routine-credit"
+                type="number"
+                min={0}
+                step="any"
+                value={credit}
+                onChange={(e) => setCredit(e.target.value)}
+                placeholder="1"
+                className="h-8 w-24 text-xs"
+                inputMode="decimal"
+              />
+              <span className="text-xs text-muted-foreground">{draftUnitLabel}</span>
+            </div>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              {logsSomething ? (
+                <>
+                  Each check-off adds{' '}
+                  <span className="font-medium text-foreground">
+                    {logAmountLabel(draftAmount!, draftUnit ?? draftUnitLabel)}
+                  </span>{' '}
+                  to this goal&rsquo;s history
+                  {linked && selectedNode ? (
+                    <> and advances <span className="font-medium text-foreground">{selectedNode.label}</span> by the same amount</>
+                  ) : null}
+                  {routineDraft.durationMin ? <> — you can edit the real amount right after ticking</> : null}
+                  {!linked && hasNodes ? (
+                    <> · link a checkpoint above to count it in the skill tree</>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  Set minutes or an amount above so check-offs record something — until then a tick only marks the
+                  calendar
+                </>
+              )}
+            </p>
+          </div>
 
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-2">

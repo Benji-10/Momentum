@@ -15,7 +15,8 @@ import {
 } from '@/lib/identity-client'
 import { handleUserSwitch, isNetworkError, loadSettingsCache, saveSettingsCache } from '@/lib/offline'
 import type { SessionUser } from '@/lib/auth'
-import type { UserSettings } from '@/lib/settings'
+import { DEFAULT_SETTINGS, type UserSettings } from '@/lib/settings'
+import type { AppearanceSettings } from '@/lib/appearance/types'
 
 /** The shared ['me'] fetch: verifies the identity token with the server on
  *  load, then re-checks on window focus so a sign-out on another device is
@@ -29,7 +30,7 @@ import type { UserSettings } from '@/lib/settings'
 async function fetchMe(): Promise<{ user: SessionUser | null; settings: UserSettings }> {
   await initIdentity()
   const identity = await currentIdentityUser()
-  if (!identity) return { user: null, settings: { theme: null, timezone: null } }
+  if (!identity) return { user: null, settings: { ...DEFAULT_SETTINGS } }
   // confirms the token server-side; also creates the app row (and adopts
   // unclaimed goals) on the very first sign-in
   try {
@@ -58,7 +59,7 @@ async function fetchMe(): Promise<{ user: SessionUser | null; settings: UserSett
           name: (identity.user_metadata?.name as string | undefined) ?? null,
           settings: null,
         },
-        settings: loadSettingsCache() ?? { theme: null, timezone: null },
+        settings: loadSettingsCache() ?? { ...DEFAULT_SETTINGS },
       }
     }
     throw e
@@ -100,7 +101,7 @@ export function useLogin() {
       handleUserSwitch(user.id)
       qc.setQueryData(['me'], {
         user: { id: user.id, email: user.email, name: (user.user_metadata?.name as string) ?? null, settings: null },
-        settings: { theme: null, timezone: null },
+        settings: { ...DEFAULT_SETTINGS },
       })
       await qc.invalidateQueries({ queryKey: ['me'] })
       qc.invalidateQueries({ queryKey: ['goals'] })
@@ -117,7 +118,7 @@ export function useSignup() {
       handleUserSwitch(user.id)
       qc.setQueryData(['me'], {
         user: { id: user.id, email: user.email, name: (user.user_metadata?.name as string) ?? null, settings: null },
-        settings: { theme: null, timezone: null },
+        settings: { ...DEFAULT_SETTINGS },
       })
       await qc.invalidateQueries({ queryKey: ['me'] })
       qc.invalidateQueries({ queryKey: ['goals'] })
@@ -173,6 +174,8 @@ export function useRecoverPassword() {
 export interface SettingsPatch {
   theme?: string | null
   timezone?: string | null
+  /** full appearance block (theme / background / surface) */
+  appearance?: AppearanceSettings | null
 }
 
 /** Save a settings change to the signed-in account. On success the ['me']

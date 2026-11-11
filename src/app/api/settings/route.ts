@@ -4,15 +4,47 @@ import { db } from '@/lib/db'
 import { requireUser } from '@/lib/auth'
 import { isValidTimezone } from '@/lib/app-time'
 import { normalizeSettings, serializeSettings } from '@/lib/settings'
+import { isPaletteKey, migrateThemeKey } from '@/lib/appearance/palettes'
+import { normalizeBackgroundConfig } from '@/lib/appearance/backgrounds'
+import { normalizeAppearance } from '@/lib/appearance/types'
 
 /**
- * GET /api/settings — the signed-in user's app settings (theme + timezone).
+ * GET /api/settings — the signed-in user's app settings.
  * PUT /api/settings — merge a partial update and save it to the account, so
  * every device agrees. Setting a field to null clears it ("automatic").
  */
 
+const HEX = /^#[0-9a-fA-F]{6}$/
+
+const customThemeSchema = z.object({
+  background: z.string().regex(HEX),
+  surface: z.string().regex(HEX),
+  surfaceAlt: z.string().regex(HEX),
+  border: z.string().regex(HEX),
+  text: z.string().regex(HEX),
+  textMuted: z.string().regex(HEX),
+  primary: z.string().regex(HEX),
+  accent2: z.string().regex(HEX),
+  success: z.string().regex(HEX),
+  warning: z.string().regex(HEX),
+  error: z.string().regex(HEX),
+})
+
+const appearanceSchema = z.object({
+  theme: z.string().min(1).max(40),
+  custom: customThemeSchema.nullable().optional(),
+  background: z
+    .object({
+      id: z.string().min(1).max(40),
+      settings: z.record(z.string().max(40), z.union([z.number().finite(), z.string().max(40)])),
+    })
+    .nullable()
+    .optional(),
+  surface: z.enum(['solid', 'translucent', 'glass']).optional(),
+})
+
 const patchSchema = z.object({
-  /** theme key, or null = not chosen (app default) */
+  /** legacy palette key (migrated), or null = not chosen */
   theme: z.string().min(1).max(40).nullable().optional(),
   /** IANA timezone, or null = follow each device's own clock */
   timezone: z
@@ -22,6 +54,8 @@ const patchSchema = z.object({
     .nullable()
     .optional()
     .refine((v) => v == null || isValidTimezone(v), { message: 'Unknown timezone' }),
+  /** full appearance block (theme / background / surface) */
+  appearance: appearanceSchema.nullable().optional(),
 })
 
 export async function GET() {
@@ -41,9 +75,26 @@ export async function PUT(req: Request) {
     }
     const patch = parsed.data
     const current = normalizeSettings(auth.user.settings)
+
+    // appearance: the payload shape is validated by zod, then re-normalized
+    // against the catalogs (clamps, whitelists) exactly like on read
+    let appearance = current.appearance
+    if ('appearance' in patch) {
+      appearance = patch.appearance
+        ? normalizeAppearance(patch.appearance, isPaletteKey, normalizeBackgroundConfig)
+        : null
+    }
+
+    // the legacy theme key follows the appearance choice (older clients)
+    let theme = current.theme
+    if ('theme' in patch && patch.theme != null) theme = migrateThemeKey(patch.theme)
+    else if (appearance) theme = appearance.theme === 'custom' ? 'custom' : appearance.theme
+    else if ('theme' in patch) theme = patch.theme ?? null
+
     const next = {
-      theme: 'theme' in patch ? (patch.theme ?? null) : current.theme,
+      theme,
       timezone: 'timezone' in patch ? (patch.timezone ?? null) : current.timezone,
+      appearance,
     }
     await db.user.update({
       where: { id: auth.user.id },

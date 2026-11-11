@@ -21,7 +21,11 @@ import { formatNumber } from './goal-math'
  *     duration in minutes. Ticking "Reading · 20m" logs 20 min of reading,
  *     not "1 session" — the session still counts toward the weekly
  *     commitment, but the log records the time actually spent
- *  4. anything else → one session (or `credit` in the goal's unit)
+ *  4. anything else → one session (or `credit` in the goal's own unit).
+ *     Plan goals always log at least one session per check-off — a tick
+ *     without a log entry is invisible history. Quantitative goals with a
+ *     real unit log `credit` once it is defined (and nothing until then, so
+ *     a tick never invents "1 book" out of thin air)
  *
  * The unit actually used is STORED on the log row, so history rows always
  * display the truth even if the goal's unit changes later. Editing the
@@ -91,6 +95,19 @@ export function checkoffUnit(goal: GoalLike, routine: RoutineLike, nodeUnit: str
   return goal.unit
 }
 
+/** The unit label the routine editor shows next to the per-check-off
+ *  amount: the linked checkpoint's unit when there is one, else what an
+ *  unlinked check-off records in (goal unit, or sessions / min). */
+export function creditUnitLabel(
+  goal: GoalLike,
+  routine: RoutineLike,
+  nodeUnit: string | null,
+): string {
+  if (routine.nodeId && isPlanSessionGoal(goal) && nodeUnit) return nodeUnit
+  const u = checkoffUnit(goal, routine, nodeUnit)
+  return u || (goal.type === 'plan' ? 'sessions' : 'units')
+}
+
 /**
  * How much progress one check-off logs, expressed in checkoffUnit units
  * (see the module doc for the resolution order and examples).
@@ -121,14 +138,17 @@ export function autoLogAmount(
   // 3. session-counting plan goal: a duration routine logs its time
   if (isPlanSessionGoal(goal)) {
     if (hasDur) return routine.durationMin // "Reading · 20m" → 20 min
-    return 1 // no duration, no link — one session
+    return credit ?? 1 // no duration — a session (or the set amount)
   }
 
   // 4. anything else: one session, or credit in the goal's own unit.
-  // (A quantitative goal whose unit IS sessions counts sessions toward its
-  // target — those check-offs must stay 1, not become minutes.)
-  if (SESSION_UNITS.includes(u)) return 1
-  if (!u && goal.type === 'plan') return 1
+  // Plan goals always log something — progress history and streaks are
+  // built from log entries, and "ticked but nothing was recorded" reads as
+  // a bug. (A quantitative goal whose unit is a real quantity only logs
+  // once credit or a duration defines what a session is worth — never a
+  // made-up "1 book".)
+  if (SESSION_UNITS.includes(u)) return credit ?? 1
+  if (goal.type === 'plan') return credit ?? 1
   return credit
 }
 

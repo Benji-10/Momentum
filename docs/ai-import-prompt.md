@@ -37,7 +37,7 @@ Constraints are hard limits enforced by validation. Optional fields may be omitt
 |---|---|---|---|---|
 | `title` | string | 1–120 | — (required) | Goal name shown everywhere. |
 | `description` | string | ≤2000 | null | One-paragraph description of the goal. |
-| `emoji` | string | ≤8 | `"🎯"` | Goal icon. Any emoji; the in-app picker offers 🎯 📚 🎸 🏃 🧘 ✍️ 💻 🎨 🗣️ 💪 💰 🌱 🍳 📷 🎹 🧠 ⭐ 🔥 🚀 🏔️ 🏊 ⚽ 🥗 📝. |
+| `emoji` | string | ≤8 | `"🎯"` | Goal icon. Any emoji works (the picker also accepts anything you type); quick picks: 🎯 📚 🎸 🏃 🧘 ✍️ 💻 🎨 🗣️ 💪 💰 🌱 🍳 📷 🎹 🧠 ⭐ 🔥 🚀 🏔️ 🏊 ⚽ 🥗 📝. |
 | `color` | string | ≤20 | `"emerald"` | Accent color. Must be one of: `emerald`, `teal`, `amber`, `orange`, `rose`, `pink`, `violet`, `lime`. Anything else falls back to emerald. Blue/indigo don't exist in the palette. |
 | `category` | string | ≤40 | null | Free-text grouping label, e.g. `"Language"`, `"Fitness"`, `"Career"`. |
 | `type` | string | — | inferred | `"plan"` or `"quantitative"` — see §3.1. |
@@ -61,6 +61,7 @@ Either a plain string (`"Buy running shoes"`) or an object:
 | `title` | string | 1–200 | required | The action. |
 | `notes` | string | ≤2000 | null | Detail (e.g. "210/300 or better counts as a pass"). |
 | `done` | boolean | — | false | `true` imports it as already completed. |
+| `trigger` | string or object | — | `"manual"` | **Auto-complete rule** — see §3.6. `"manual"` (the default) waits for a hand tick. A routine title string is shorthand for `{ "type": "routine", "routine": "…", "count": 1 }`. Object shape: `{ "type": "routine", "routine": "Easy run", "count": 10 }` or `{ "type": "metric", "metric": "5K time", "under": 22, "window": 3 }`. |
 
 ### 2.3 Path (a branch of the skill tree)
 
@@ -155,10 +156,22 @@ The parser also accepts aliases (`name`→`title`, `checkpoints`→`nodes`, `sub
 The app can import a file in two modes: **create** (everything fresh, importing twice duplicates) and **merge** (upsert by name). When the user asks you to *update*, *extend*, *regenerate* or *upgrade* an existing roadmap — especially when they paste a previous export back — produce the file assuming it will be merged, and say so in your summary. Merge rules the AI should know:
 
 - **Matching keys:** goal by `title`, branch by path `title`, checkpoint by node `title` (within its path), step by `title`, routine by `title`, PB by `name` — case-insensitive. **Keep titles stable between versions** when you want progress preserved; renaming creates a new item instead of updating the old one (the old one is kept, progress and all).
-- **Definitions follow the file:** description, emoji, color, category, type, targetValue, unit, weeklyTarget, deadline, icons, xp, milestones (synced by value, keeping reached dates), `requires` (re-resolved, cycle-safe), routine cadence/duration/node/credit/endDate/optional, PB unit/direction. **Derivation follows too:** `deriveFrom` + `derivePer` re-link the meter to (possibly) a new source/factor, and the meter is then re-synced so it reflects the source's progress so far — upward only, never taking existing progress away. Omitting both fields keeps the stored link; `null` clears it (the meter keeps its progress and becomes hand-entered again).
+- **Definitions follow the file:** description, emoji, color, category, type, targetValue, unit, weeklyTarget, deadline, icons, xp, milestones (synced by value, keeping reached dates), `requires` (re-resolved, cycle-safe), **step `trigger` (re-resolved: routine titles re-link to routines, metric names to PBs — a step whose trigger is already satisfied completes on the spot)**, routine cadence/duration/node/credit/endDate/optional, PB unit/direction. **Derivation follows too:** `deriveFrom` + `derivePer` re-link the meter to (possibly) a new source/factor, and the meter is then re-synced so it reflects the source's progress so far — upward only, never taking existing progress away. Omitting both fields keeps the stored link; `null` clears it (the meter keeps its progress and becomes hand-entered again).
 - **Progress survives:** node `current` becomes `max(existing, incoming)` — a stale file never rolls progress back; `completedAt` dates are kept; step `done` is OR-ed in; routine `dones`, PB `records`, `logs` and `notes` are appended with dedupe (day+value / day+amount+note / exact content). Re-importing the same file twice is a no-op.
 - **What the file omits is kept:** branches, checkpoints, steps, routines and PBs not mentioned in the new file stay exactly as they are (progress included). To *remove* something the user must delete it in the app — so when regenerating, either include everything or tell the user what you left out.
 - **A partial file is fine:** omitting a field on a matched item keeps that field's current value; `null` clears it.
+
+### 3.6 Step automation (`trigger`) — steps that tick themselves
+
+A step's `trigger` lets it complete on its own instead of waiting for a manual tick. Three kinds:
+
+- **`"routine"`** — completes after **N check-offs** of one routine: `{ "type": "routine", "routine": "Flying lesson", "count": 10 }`. Omit `routine` to count check-offs of **any** routine on the goal. Only check-offs made while the step is the *current* (first unfinished) step count — a tick can never "catch up" a future step, so order still matters.
+- **`"metric"`** — completes when the **rolling average** of a PB metric crosses a bar: `{ "type": "metric", "metric": "5K time", "under": 22, "window": 3 }` (avg of the last 3 attempts drops under 22 min). Use `over` instead of `under` when higher is better (`"Reading speed" over 140 chars/min`). `window` defaults to 3.
+- **`"manual"`** — the default: the classic hand tick.
+
+Shorthand: a bare routine-title string (`"trigger": "Flying lesson"`) equals `{ "type": "routine", "routine": "Flying lesson", "count": 1 }`, and `"trigger": "routine"` counts 1 check-off of any routine. A trigger naming a routine or PB that doesn't exist (or was renamed) quietly falls back to a manual tick — so spell titles exactly as defined in the same goal, and prefer an explicit object over the string shorthand when `count` > 1.
+
+When to use which: give steps a `routine` trigger when the plan is literally "do the sessions" (10 lessons, 8 coaching sessions) — the step then doubles as a session counter. Give a `metric` trigger when finishing is about performance, not attendance ("hold 140 chars/min", "solve under 15s"). One-off actions (buy shoes, sign up for the race) stay `manual`. Don't put a trigger on every step — a plan where nothing is ever hand-ticked feels hands-off; two or three automated steps per goal is the sweet spot.
 
 ---
 
@@ -176,6 +189,7 @@ The app can import a file in two modes: **create** (everything fresh, importing 
 10. **Colors/emoji:** pick from the 8 color keys; match emoji to the domain (🏃 fitness, 📚 language, 💻 coding, 💰 money…).
 11. **Don't fabricate the user's history.** If the user didn't give current progress, start nodes at `current: 0`, no `dones`, no records — or ask. When they *did* give progress, encode it (`current`, `mastered`, `dones`, `records`, `logs`) so the app opens up-to-date. A derived checkpoint's `current` may stay 0 — import syncs it to the source's progress automatically.
 12. **Editing an export:** exported files contain extra fields (`ids`, `completedAt`, `exportedAt`, per-record ids). Keep the user's existing titles and values, change only what they asked for; unknown fields are ignored on re-import. To *add* steps/paths/routines to one existing goal, a scoped file `{ "paths": [...], "steps": [...], "routines": [...] }` (or a full single-goal object) works too — and when the user wants the changes applied over their live data without losing progress, recommend importing with **Merge into existing** (§3.5): titles match, definitions update, progress stays.
+13. **Automate the repetitive steps** with `trigger` (§3.6): "N sessions of a routine" → `routine` trigger with a `count`; "reach a performance bar" → `metric` trigger on a PB you also define. Keep one-off actions manual, and keep `count`s honest (10 lessons = `count: 10`).
 
 ---
 
@@ -187,6 +201,7 @@ The app can import a file in two modes: **create** (everything fresh, importing 
 - [ ] Every node: `target` > 0; all `milestones` strictly between 0 and `target`; `current` ≤ `target` unless `mastered`.
 - [ ] Every `requires` and routine `node` ref resolves: titles spelled exactly as defined, **qualified `"Path › Node"` whenever the title repeats across paths**, ≤ 8 per node. Same for `deriveFrom` — and `derivePer` (>0) present whenever `deriveFrom` is, with a source that is **not itself derived**.
 - [ ] Routines: cadence input matches cadence (weekdays / everyDays / timesPerWeek); `credit` only with `node`; `durationMin` 1–1440; `optional` only on genuine bonus sessions.
+- [ ] Step `trigger`s: `routine` titles and `metric` names spelled exactly as the routines/PBs defined in the same goal; `count` ≥ 1; `under`/`over` match the metric's direction; one-off steps stay manual.
 - [ ] PBs have ≥ 1 record; `direction` is `"up"` or `"down"`; record values > 0.
 - [ ] All dates `"YYYY-MM-DD"`; future dates only for deadline/endDate/startDate, past dates only for dones/logs/records.
 - [ ] Counts within caps: paths ≤ 12, nodes 1–40 per path, steps ≤ 100, routines ≤ 30, pbs ≤ 20, records ≤ 500, logs ≤ 1000, milestones ≤ 30 per node, notes ≤ 50.
@@ -212,7 +227,10 @@ One of *every* customizable field, in a realistic shape — mirror this style (v
       "steps": [
         "Install Anki and pick a textbook",
         { "title": "Book a weekly tutor lesson", "notes": "Thursday evenings work best", "done": true },
-        { "title": "Pass an HSK3 mock exam", "notes": "210/300 or better counts as a pass" }
+        { "title": "Pass an HSK3 mock exam", "notes": "210/300 or better counts as a pass" },
+        { "title": "Read comfortably at speed",
+          "trigger": { "type": "metric", "metric": "Reading speed", "over": 140, "window": 3 },
+          "notes": "Auto-completes when my reading speed holds above 140 chars/min" }
       ],
       "paths": [
         {
@@ -298,7 +316,10 @@ One of *every* customizable field, in a realistic shape — mirror this style (v
       "targetValue": 21.1, "unit": "km", "weeklyTarget": 25, "deadline": "2027-01-17",
       "steps": [
         { "title": "Sign up for the race", "done": true },
-        "Get fitted for proper running shoes"
+        "Get fitted for proper running shoes",
+        { "title": "Bank 10 easy runs",
+          "trigger": { "type": "routine", "routine": "Easy run", "count": 10 },
+          "notes": "Ticks itself off every time I check off an easy run — 10 of them" }
       ],
       "routines": [
         { "title": "Easy run", "everyDays": 2, "durationMin": 40,

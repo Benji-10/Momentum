@@ -127,7 +127,9 @@ export function BulkCreateDialog({
         category: r.category.trim() || null,
         type: r.type,
         targetValue: r.type === 'quantitative' ? target : null,
-        unit: r.unit.trim() || null,
+        // only target goals carry a unit — a value left over from switching
+        // the row's type would break what routine check-offs log
+        unit: r.type === 'quantitative' ? r.unit.trim() || null : null,
         weeklyTarget: r.weekly ? parseFloat(r.weekly) || null : null,
         deadline: r.deadline ? isoForDayKey(r.deadline, '23:59:59') : null,
       })

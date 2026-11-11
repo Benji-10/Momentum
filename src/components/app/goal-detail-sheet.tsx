@@ -38,7 +38,7 @@ import {
   weeklyHistory,
 } from '@/lib/goal-math'
 import { goalColor } from '@/lib/goal-colors'
-import { logRowUnit, logAmountLabel } from '@/lib/recording'
+import { logRowUnit, logAmountLabel, checkoffDisplayUnit } from '@/lib/recording'
 import { buildSkillMap } from '@/lib/skill-tree'
 import { describeCadence, occurrencesInRange, relativeDayLabel, routineStats, sameDay, startOfWeek, addDays, toDayKey } from '@/lib/routine-math'
 import { dayKeyOf, isoForDayKey, todayDayKey } from '@/lib/app-time'
@@ -202,9 +202,9 @@ function StepRow({
 
   const icon =
     step.status === 'done' ? (
-      <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+      <CheckCircle2 className="h-5 w-5 text-success" />
     ) : step.status === 'in_progress' ? (
-      <CircleDot className="h-5 w-5 text-amber-500" />
+      <CircleDot className="h-5 w-5 text-warning" />
     ) : (
       <Circle className="h-5 w-5 text-muted-foreground" />
     )
@@ -791,9 +791,9 @@ function DetailBody({
             {/* ============ OVERVIEW ============ */}
             <TabsContent value="overview" className="mt-0">
               {stats.status === 'completed' && (
-                <div className="mb-4 flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
-                  <Trophy className="h-6 w-6 shrink-0 text-emerald-500" />
-                  <div className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                <div className="mb-4 flex items-center gap-3 rounded-xl border border-success/30 bg-success/10 p-4">
+                  <Trophy className="h-6 w-6 shrink-0 text-success" />
+                  <div className="text-sm font-medium text-success">
                     Goal completed! Time to set the next one.
                   </div>
                 </div>
@@ -854,9 +854,9 @@ function DetailBody({
                     className={cn(
                       'rounded-xl border p-3.5 text-sm leading-relaxed',
                       projection.tone === 'good'
-                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
+                        ? 'border-success/30 bg-success/10 text-success'
                         : projection.tone === 'warn'
-                          ? 'border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300'
+                          ? 'border-warning/30 bg-warning/10 text-warning'
                           : 'border-border bg-muted/40 text-muted-foreground',
                     )}
                   >
@@ -935,9 +935,9 @@ function DetailBody({
                       className={cn(
                         'rounded-xl border p-3.5 text-sm leading-relaxed',
                         skillMap.stats.pace === 'ahead'
-                          ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
+                          ? 'border-success/30 bg-success/10 text-success'
                           : skillMap.stats.pace === 'behind'
-                            ? 'border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-300'
+                            ? 'border-warning/30 bg-warning/10 text-warning'
                             : 'border-border bg-muted/40 text-muted-foreground',
                       )}
                     >
@@ -1181,6 +1181,47 @@ function DetailBody({
                                         icon: '🔒',
                                       })
                                     }
+                                    // the tick also created (or removed) an auto
+                                    // log entry — say so, with a one-tap edit
+                                    if (o.done) {
+                                      const reOpened = res.stepsReverted ?? []
+                                      if (res.removedLog || reOpened.length) {
+                                        toast('Check-off undone', {
+                                          description: [
+                                            res.removedLog ? 'The auto log entry was removed too.' : null,
+                                            reOpened.length ? `Step re-opened: “${reOpened[0].title}”.` : null,
+                                          ]
+                                            .filter(Boolean)
+                                            .join(' ') || undefined,
+                                        })
+                                      }
+                                      return
+                                    }
+                                    if (res.stepsAdvanced?.length) {
+                                      toast.success(`Step complete — “${res.stepsAdvanced[0].title}”`, {
+                                        icon: '⚡',
+                                        description: 'It completed itself from your activity — the plan moved on.',
+                                      })
+                                    }
+                                    const autoLog = res.autoLog
+                                    if (!autoLog) return
+                                    const unit = autoLog.unit ?? checkoffDisplayUnit(goal, o.routine)
+                                    toast.success(`${o.routine.title} done`, {
+                                      description: `Logged ${logAmountLabel(autoLog.amount, unit)} — not quite right?`,
+                                      action: {
+                                        label: 'Edit',
+                                        onClick: () =>
+                                          setEditLog({
+                                            goalId: goal.id,
+                                            logId: autoLog.id,
+                                            amount: autoLog.amount,
+                                            unit,
+                                            title: o.routine.title,
+                                            note: autoLog.note,
+                                            day: toDayKey(o.date),
+                                          }),
+                                      },
+                                    })
                                   },
                                 },
                               )
@@ -1264,7 +1305,7 @@ function DetailBody({
                                           ? 'rgba(245,158,11,0.14)'
                                           : 'rgba(100,116,139,0.14)',
                                     color:
-                                      rs.adherencePct >= 70 ? '#10b981' : rs.adherencePct >= 40 ? '#f59e0b' : '#64748b',
+                                      rs.adherencePct >= 70 ? 'var(--success)' : rs.adherencePct >= 40 ? 'var(--warning)' : 'var(--muted-foreground)',
                                   }}
                                   title="Recent adherence — forgiven sessions don't count against you"
                                 >

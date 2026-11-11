@@ -20,7 +20,7 @@ import {
   Zap,
 } from 'lucide-react'
 import type { GoalData, RoutineData } from '@/lib/types'
-import { computeGoalStats, formatNumber } from '@/lib/goal-math'
+import { bestDayStreak, computeGoalStats, formatNumber } from '@/lib/goal-math'
 import { buildSkillMap, computeXp, xpToReachLevel } from '@/lib/skill-tree'
 import { occurrencesInRange, routineStats, sameDay, startOfWeek, toDayKey, weekFlexProgress, isRoutineDone } from '@/lib/routine-math'
 import { goalColor } from '@/lib/goal-colors'
@@ -83,7 +83,7 @@ function StepLine({ goal, routine, done }: { goal: GoalData; routine: RoutineDat
   return (
     <div
       className={cn(
-        'mt-1 flex items-start gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] leading-snug text-amber-700 dark:text-amber-300',
+        'mt-1 flex items-start gap-1 rounded bg-warning/10 px-1.5 py-0.5 text-[10px] leading-snug text-warning',
         done && 'opacity-60',
       )}
       title="This session works on the current plan step — it completes automatically"
@@ -429,7 +429,7 @@ function FocusItem({ goal, onOpen }: { goal: GoalData; onOpen: (g: GoalData, tab
       className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-2.5 py-2.5 text-left transition-colors hover:bg-accent/60 focus-visible:outline-2 focus-visible:outline-ring"
     >
       {done ? (
-        <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500" />
+        <CheckCircle2 className="h-5 w-5 shrink-0 text-success" />
       ) : (
         <Circle className="h-5 w-5 shrink-0 text-muted-foreground/40" />
       )}
@@ -561,7 +561,10 @@ export function DashboardTab({
   const completed = statsAll.filter((s) => s.stats.status === 'completed')
   const onTrack = statsAll.filter((s) => ['ahead', 'on_track'].includes(s.stats.status)).length
   const behind = statsAll.filter((s) => s.stats.status === 'behind').length
-  const totalStreak = Math.max(0, ...statsAll.map((s) => s.stats.streakWeeks))
+  // best day streak across goals — consecutive active days, the way people
+  // actually picture a streak (weeks only made sense for weekly commitments,
+  // which the per-goal streak already covers)
+  const bestStreakDays = Math.max(0, ...statsAll.map((s) => bestDayStreak(s.goal)))
 
   // routine stats for header summary
   const routineSummary = useMemo(() => {
@@ -618,15 +621,20 @@ export function DashboardTab({
 
   const summaryCards = [
     { label: 'Active goals', value: active.length, icon: Target, color: undefined as string | undefined },
-    { label: 'On track', value: onTrack, icon: TrendingUp, color: '#10b981' },
-    { label: 'Behind pace', value: behind, icon: TrendingDown, color: behind > 0 ? '#f59e0b' : undefined },
+    { label: 'On track', value: onTrack, icon: TrendingUp, color: 'var(--success)' },
+    { label: 'Behind pace', value: behind, icon: TrendingDown, color: behind > 0 ? 'var(--warning)' : undefined },
     {
       label: 'Routines today',
       value: `${routineSummary.done}/${routineSummary.sched}`,
       icon: Repeat,
       color: routineSummary.sched > 0 && routineSummary.done < routineSummary.sched ? '#14b8a6' : undefined,
     },
-    { label: 'Best streak', value: `${totalStreak}w`, icon: Flame, color: totalStreak > 0 ? '#f97316' : undefined },
+    {
+      label: 'Best streak',
+      value: bestStreakDays > 0 ? `${bestStreakDays}d` : '—',
+      icon: Flame,
+      color: bestStreakDays > 0 ? '#f97316' : undefined,
+    },
   ]
 
   return (

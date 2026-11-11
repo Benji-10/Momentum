@@ -14,7 +14,7 @@ export function StatusBadge({ status, className }: { status: TrackStatus; classN
         className,
       )}
     >
-      <span className="h-1.5 w-1.5 rounded-full" style={{ background: meta.hex }} />
+      <span className="h-1.5 w-1.5 rounded-full bg-current" />
       {meta.label}
     </span>
   )

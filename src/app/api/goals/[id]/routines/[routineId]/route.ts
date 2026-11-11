@@ -68,8 +68,9 @@ export async function PATCH(req: Request, { params }: Params) {
       }
     }
     const effectiveNodeId = nodeId !== undefined ? nodeId : routine.nodeId
-    const credit =
-      d.credit !== undefined ? d.credit : nodeId === null ? null : routine.credit
+    // credit survives unlinking: unlinked, it means "what one check-off logs
+    // in the goal's own unit" instead of the checkpoint's — still meaningful
+    const credit = d.credit !== undefined ? d.credit : routine.credit
 
     await db.routineItem.update({
       where: { id: routineId },
@@ -81,7 +82,7 @@ export async function PATCH(req: Request, { params }: Params) {
         weekdays: cadence === 'weekly' ? [...new Set(weekdays!)].sort().join(',') : null,
         timesPerWeek: cadence === 'flexible' ? timesPerWeek! : null,
         ...(nodeId !== undefined ? { nodeId: effectiveNodeId } : {}),
-        ...(nodeId !== undefined || d.credit !== undefined ? { credit: effectiveNodeId ? credit : null } : {}),
+        ...(nodeId !== undefined || d.credit !== undefined ? { credit } : {}),
         ...(d.durationMin !== undefined ? { durationMin: d.durationMin } : {}),
         ...(d.startDate !== undefined ? { startDate: d.startDate ? new Date(d.startDate) : new Date() } : {}),
         ...(d.endDate !== undefined ? { endDate: d.endDate ? new Date(d.endDate) : null } : {}),

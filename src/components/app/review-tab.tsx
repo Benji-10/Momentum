@@ -331,8 +331,8 @@ function GoalReviewCard({
                       style={{
                         color:
                           stats.projectedFinishDate.getTime() <= new Date(goal.deadline).getTime()
-                            ? '#10b981'
-                            : '#f59e0b',
+                            ? 'var(--success)'
+                            : 'var(--warning)',
                       }}
                     >
                       {stats.projectedFinishDate.toLocaleDateString('en-GB', {

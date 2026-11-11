@@ -65,7 +65,10 @@ export async function POST(req: Request, { params }: Params) {
         weekdays: d.cadence === 'weekly' ? [...new Set(d.weekdays!)].sort().join(',') : null,
         timesPerWeek: d.cadence === 'flexible' ? d.timesPerWeek! : null,
         nodeId,
-        credit: nodeId ? (d.credit ?? null) : null,
+        // what one check-off logs — in the linked checkpoint's unit when
+        // linked, else the goal's own (see recording.ts). Kept unlinked too,
+        // so an unlinked routine can still define its per-check-off amount.
+        credit: d.credit ?? null,
         durationMin: d.durationMin ?? null,
         startDate: d.startDate ? new Date(d.startDate) : new Date(),
         endDate: d.endDate ? new Date(d.endDate) : null,

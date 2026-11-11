@@ -75,7 +75,10 @@ export function CreateGoalDialog({ open, onOpenChange, editGoal, categories = []
   const [emoji, setEmoji] = useState('🎯')
   const [color, setColor] = useState('emerald')
   const [targetValue, setTargetValue] = useState('')
-  const [unit, setUnit] = useState('books')
+  // blank by default — plan goals never show this field, and a leaked value
+  // ("books") would silently break what routine check-offs log (see recording.ts)
+  const [unit, setUnit] = useState('')
+  const [appliedTemplate, setAppliedTemplate] = useState<string | null>(null)
   const [weeklyTarget, setWeeklyTarget] = useState('')
   const [deadline, setDeadline] = useState(toDateString(defaultDeadlineISO()))
   const [steps, setSteps] = useState<string[]>([])
@@ -96,6 +99,7 @@ export function CreateGoalDialog({ open, onOpenChange, editGoal, categories = []
       setWeeklyTarget(editGoal.weeklyTarget != null ? String(editGoal.weeklyTarget) : '')
       setDeadline(toDateString(editGoal.deadline))
       setSteps(editGoal.steps.map((s) => s.title))
+      setAppliedTemplate(null)
       setStep(1)
     } else {
       setType('quantitative')
@@ -105,10 +109,11 @@ export function CreateGoalDialog({ open, onOpenChange, editGoal, categories = []
       setEmoji('🎯')
       setColor('emerald')
       setTargetValue('')
-      setUnit('books')
+      setUnit('')
       setWeeklyTarget('')
       setDeadline(toDateString(defaultDeadlineISO()))
       setSteps([])
+      setAppliedTemplate(null)
       setStep(0)
     }
   }, [open, editGoal])
@@ -133,6 +138,7 @@ export function CreateGoalDialog({ open, onOpenChange, editGoal, categories = []
     if (t.unit) setUnit(t.unit)
     setWeeklyTarget(t.weeklyTarget != null ? String(t.weeklyTarget) : '')
     setSteps(t.steps ? [...t.steps] : [])
+    setAppliedTemplate(t.id)
   }
 
   function detailsValid(): boolean {
@@ -147,12 +153,14 @@ export function CreateGoalDialog({ open, onOpenChange, editGoal, categories = []
     const input: CreateGoalInput = {
       title: title.trim(),
       description: description.trim() || null,
-      emoji,
+      emoji: emoji.trim() || '🎯',
       color,
       category: category.trim() || null,
       type,
       targetValue: type === 'quantitative' ? targetNum : null,
-      unit: unit.trim() || null,
+      // only target goals carry a unit — a leaked default on a plan goal
+      // breaks what routine check-offs log ("books" ≠ a session)
+      unit: type === 'quantitative' ? unit.trim() || null : null,
       weeklyTarget: !isNaN(weeklyNum) && weeklyNum > 0 ? weeklyNum : null,
       deadline: deadlineISO,
       steps:
@@ -180,10 +188,12 @@ export function CreateGoalDialog({ open, onOpenChange, editGoal, categories = []
         patch: {
           title: title.trim(),
           description: description.trim() || null,
-          emoji,
+          emoji: emoji.trim() || '🎯',
           color,
           category: category.trim() || null,
-          unit: unit.trim() || null,
+          // plan goals keep whatever unit they already had (e.g. imported);
+          // the field itself is only editable on target goals
+          unit: type === 'quantitative' ? unit.trim() || null : editGoal.unit ?? null,
           targetValue: type === 'quantitative' ? (isNaN(targetNum) ? null : targetNum) : null,
           weeklyTarget: !isNaN(weeklyNum) && weeklyNum > 0 ? weeklyNum : null,
           deadline: deadlineISO,
@@ -244,7 +254,10 @@ export function CreateGoalDialog({ open, onOpenChange, editGoal, categories = []
             <div className="grid gap-3 sm:grid-cols-2">
               <button
                 type="button"
-                onClick={() => setType('quantitative')}
+                onClick={() => {
+                  setType('quantitative')
+                  setAppliedTemplate(null)
+                }}
                 className={cn(
                   'rounded-xl border-2 p-4 text-left transition-colors',
                   type === 'quantitative' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground/40',
@@ -258,7 +271,10 @@ export function CreateGoalDialog({ open, onOpenChange, editGoal, categories = []
               </button>
               <button
                 type="button"
-                onClick={() => setType('plan')}
+                onClick={() => {
+                  setType('plan')
+                  setAppliedTemplate(null)
+                }}
                 className={cn(
                   'rounded-xl border-2 p-4 text-left transition-colors',
                   type === 'plan' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground/40',
@@ -277,17 +293,33 @@ export function CreateGoalDialog({ open, onOpenChange, editGoal, categories = []
                 <Sparkles className="h-4 w-4 text-primary" /> Start from a template
               </div>
               <div className="flex flex-wrap gap-2">
-                {TEMPLATES.filter((t) => t.type === type).map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => applyTemplate(t)}
-                    className="flex items-center gap-1.5 rounded-full border bg-card px-3 py-1.5 text-xs font-medium transition-colors hover:border-primary/50 hover:bg-primary/5"
-                  >
-                    <span>{t.emoji}</span> {t.title}
-                  </button>
-                ))}
+                {TEMPLATES.filter((t) => t.type === type).map((t) => {
+                  const applied = appliedTemplate === t.id
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      aria-pressed={applied}
+                      onClick={() => applyTemplate(t)}
+                      className={cn(
+                        'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors',
+                        applied
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-border bg-card hover:border-primary/50 hover:bg-primary/5',
+                      )}
+                    >
+                      <span>{t.emoji}</span> {t.title}
+                      {applied && <Check className="h-3 w-3" />}
+                    </button>
+                  )
+                })}
               </div>
+              {appliedTemplate && (
+                <p className="mt-2 flex items-center gap-1 text-xs text-primary">
+                  <Check className="h-3.5 w-3.5 shrink-0" />
+                  Template applied — Continue to tweak the details.
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -307,27 +339,40 @@ export function CreateGoalDialog({ open, onOpenChange, editGoal, categories = []
                 />
               </div>
               <div className="space-y-2">
-                <Label>Icon</Label>
-                <div className="flex h-9 items-center gap-1 rounded-lg border bg-card px-2">
-                  <span className="text-lg">{emoji}</span>
-                </div>
+                <Label htmlFor="goal-emoji">Icon</Label>
+                {/* editable — type or paste any emoji, not just the picks below */}
+                <Input
+                  id="goal-emoji"
+                  value={emoji}
+                  onChange={(e) => setEmoji(e.target.value.replace(/\s+/g, '').slice(0, 8))}
+                  onBlur={() => setEmoji((e) => e.trim() || '🎯')}
+                  className="h-9 w-[4.5rem] px-0 text-center text-lg"
+                  maxLength={8}
+                  autoComplete="off"
+                  aria-describedby="goal-emoji-help"
+                />
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-1.5">
-              {EMOJI_CHOICES.map((e) => (
-                <button
-                  key={e}
-                  type="button"
-                  onClick={() => setEmoji(e)}
-                  className={cn(
-                    'flex h-9 w-9 items-center justify-center rounded-lg border text-lg transition-colors hover:bg-accent',
-                    emoji === e ? 'border-primary bg-primary/10' : 'border-transparent',
-                  )}
-                >
-                  {e}
-                </button>
-              ))}
+            <div className="space-y-1.5">
+              <div className="text-xs text-muted-foreground" id="goal-emoji-help">
+                Pick one, or type/paste any emoji above
+              </div>
+              <div className="nice-scroll flex flex-wrap gap-1.5">
+                {EMOJI_CHOICES.map((e) => (
+                  <button
+                    key={e}
+                    type="button"
+                    onClick={() => setEmoji(e)}
+                    className={cn(
+                      'flex h-9 w-9 items-center justify-center rounded-lg border text-lg transition-colors hover:bg-accent',
+                      emoji === e ? 'border-primary bg-primary/10' : 'border-transparent',
+                    )}
+                  >
+                    {e}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="space-y-2">
@@ -418,44 +463,50 @@ export function CreateGoalDialog({ open, onOpenChange, editGoal, categories = []
                 <Label>Plan steps</Label>
                 <div className="space-y-2">
                   {steps.map((s, i) => (
-                    <div key={i} className="flex items-center gap-1.5">
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-semibold text-muted-foreground">
+                    <div key={i} className="flex items-center gap-1">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-semibold text-muted-foreground">
                         {i + 1}
                       </span>
                       <Input
                         value={s}
                         onChange={(e) => setSteps(steps.map((x, j) => (j === i ? e.target.value : x)))}
                         maxLength={200}
+                        className="min-w-0 flex-1"
                       />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Move step up"
-                        disabled={i === 0}
-                        onClick={() => setSteps(steps.map((x, j) => (j === i - 1 ? steps[i] : j === i ? steps[i - 1] : x)))}
-                      >
-                        <ArrowUp className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Move step down"
-                        disabled={i === steps.length - 1}
-                        onClick={() => setSteps(steps.map((x, j) => (j === i + 1 ? steps[i] : j === i ? steps[i + 1] : x)))}
-                      >
-                        <ArrowDown className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Remove step"
-                        onClick={() => setSteps(steps.filter((_, j) => j !== i))}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
+                      <div className="flex shrink-0 gap-0.5">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          aria-label="Move step up"
+                          disabled={i === 0}
+                          onClick={() => setSteps(steps.map((x, j) => (j === i - 1 ? steps[i] : j === i ? steps[i - 1] : x)))}
+                        >
+                          <ArrowUp className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          aria-label="Move step down"
+                          disabled={i === steps.length - 1}
+                          onClick={() => setSteps(steps.map((x, j) => (j === i + 1 ? steps[i] : j === i ? steps[i + 1] : x)))}
+                        >
+                          <ArrowDown className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          aria-label="Remove step"
+                          onClick={() => setSteps(steps.filter((_, j) => j !== i))}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
                   ))}
                 </div>

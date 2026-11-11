@@ -86,7 +86,7 @@ function StepLine({ goal, routine, done }: { goal: GoalData; routine: RoutineDat
   return (
     <div
       className={cn(
-        'mt-1 flex items-start gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] leading-snug text-amber-700 dark:text-amber-300',
+        'mt-1 flex items-start gap-1 rounded bg-warning/10 px-1.5 py-0.5 text-[10px] leading-snug text-warning',
         done && 'opacity-60',
       )}
       title={`This session works on the current plan step — it completes automatically${ctx.info.kind === 'metric' ? ' when the metric bar is crossed' : ' after enough check-offs'}`}
@@ -121,7 +121,7 @@ function OccurrenceRow({
           : occ.isToday
             ? 'today-glow border-primary/40 border-dashed'
             : open
-              ? 'border-amber-500/25 bg-amber-500/5'
+              ? 'border-warning/25 bg-warning/5'
               : 'border-border bg-card hover:border-primary/40',
       )}
     >
@@ -177,7 +177,7 @@ function OccurrenceRow({
               extra credit — no pressure
             </span>
           ) : open ? (
-            <span className="inline-flex items-center gap-0.5 text-amber-600 dark:text-amber-400">
+            <span className="inline-flex items-center gap-0.5 text-warning">
               <Feather className="h-2.5 w-2.5" />
               still open — no rush
             </span>
@@ -239,7 +239,7 @@ function RoutineManageRow({
           </span>
         )}
         {!routine.optional && stats.openCount > 0 && (
-          <span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[11px] font-semibold text-amber-600 tabular-nums dark:text-amber-400">
+          <span className="rounded-full bg-warning/12 px-2 py-0.5 text-[11px] font-semibold text-warning tabular-nums">
             {stats.openCount} open
           </span>
         )}
@@ -259,7 +259,7 @@ function RoutineManageRow({
                     ? 'rgba(245,158,11,0.14)'
                     : 'rgba(100,116,139,0.14)',
               color:
-                stats.adherencePct >= 70 ? '#10b981' : stats.adherencePct >= 40 ? '#f59e0b' : '#64748b',
+                stats.adherencePct >= 70 ? 'var(--success)' : stats.adherencePct >= 40 ? 'var(--warning)' : 'var(--muted-foreground)',
             }}
             title={routine.optional ? 'Extra credit — nothing to adhere to' : 'Recent adherence — forgiven sessions don\'t count against you'}
           >
@@ -522,7 +522,7 @@ export function ScheduleTab({
       {/* kindness banner */}
       {isPastWeek ? (
         <div className="flex items-start gap-2.5 rounded-xl border border-border/70 bg-muted/30 p-3.5 text-sm text-muted-foreground">
-          <Leaf className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+          <Leaf className="mt-0.5 h-4 w-4 shrink-0 text-success" />
           <span>
             A past week, gently archived — nothing to fix here. What matters is what you do{' '}
             <span className="font-semibold text-foreground">this week</span>.
@@ -532,10 +532,10 @@ export function ScheduleTab({
         <div
           className={cn(
             'flex flex-wrap items-start gap-2.5 rounded-xl border p-3.5 text-sm',
-            'border-amber-500/25 bg-amber-500/8 text-amber-800 dark:text-amber-300',
+            'border-warning/25 bg-warning/8 text-warning',
           )}
         >
-          <Sprout className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          <Sprout className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
           <div className="min-w-0 flex-1">
             {weekTodayLeft > 0 ? (
               <>
@@ -560,8 +560,8 @@ export function ScheduleTab({
           </div>
         </div>
       ) : weekDone > 0 ? (
-        <div className="flex items-start gap-2.5 rounded-xl border border-emerald-500/25 bg-emerald-500/8 p-3.5 text-sm text-emerald-800 dark:text-emerald-300">
-          <Sprout className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+        <div className="flex items-start gap-2.5 rounded-xl border border-success/25 bg-success/8 p-3.5 text-sm text-success">
+          <Sprout className="mt-0.5 h-4 w-4 shrink-0 text-success" />
           <span>
             Nothing pending — {weekDone} session{weekDone === 1 ? '' : 's'} done
             {weekTodayLeft === 0 ? ' this week' : ''}. Keep the streak alive at your own pace.

@@ -349,7 +349,7 @@ export function ImportDialog({ open, onOpenChange }: { open: boolean; onOpenChan
                               className={cn(
                                 'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
                                 matches
-                                  ? 'border-teal-500/30 bg-teal-500/10 text-teal-700 dark:text-teal-400'
+                                  ? 'border-primary/30 bg-primary/10 text-primary'
                                   : 'border-muted-foreground/25 bg-muted/50 text-muted-foreground',
                               )}
                             >

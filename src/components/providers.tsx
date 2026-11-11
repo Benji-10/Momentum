@@ -4,13 +4,31 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from 'next-themes'
 import { useEffect, useState } from 'react'
 import { initOffline, onReplayComplete } from '@/lib/offline'
+import { PALETTE_KEYS } from '@/lib/appearance/palettes'
+import { AppearanceProvider } from '@/components/app/appearance/AppearanceProvider'
+import { Toaster } from '@/components/ui/sonner'
 
-/** All selectable themes (applied as data-theme on <html>). */
-export const THEME_KEYS = ['paper', 'charcoal', 'forest', 'sunset', 'meadow', 'blossom'] as const
+/** All selectable themes (applied as data-theme on <html>). Includes the
+ *  legacy keys so devices with a pre-migration localStorage value keep
+ *  painting correctly until the synced settings arrive. */
+export const THEME_KEYS = [...PALETTE_KEYS, 'custom', 'paper', 'meadow', 'blossom', 'charcoal'] as const
 export type ThemeKey = (typeof THEME_KEYS)[number]
 
 /** Themes that render on a dark surface (used to derive light/dark for libs). */
-export const DARK_THEMES: ThemeKey[] = ['charcoal', 'forest', 'sunset']
+export const DARK_THEMES: string[] = [
+  'dark',
+  'forest',
+  'sunset',
+  'petrolhead',
+  'ultraviolet',
+  'pomegranate',
+  'cryosphere',
+  'marigold',
+  'nightshade',
+  'oxidation',
+  'afterburn',
+  'mycelium',
+]
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(() => {
@@ -60,11 +78,15 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <ThemeProvider
         attribute="data-theme"
         themes={[...THEME_KEYS]}
-        defaultTheme="paper"
+        defaultTheme="light"
         enableSystem={false}
         disableTransitionOnChange
       >
-        {children}
+        <AppearanceProvider>
+          {children}
+          {/* inside the appearance provider: toasts follow the palette */}
+          <Toaster position="top-center" richColors closeButton />
+        </AppearanceProvider>
       </ThemeProvider>
     </QueryClientProvider>
   )

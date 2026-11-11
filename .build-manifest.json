@@ -56,6 +56,14 @@ src/app/globals.css
 src/app/layout.tsx
 src/app/page.tsx
 src/components/app/account-settings.tsx
+src/components/app/appearance/AppearanceProvider.tsx
+src/components/app/appearance/BackgroundLayer.tsx
+src/components/app/appearance/animated.tsx
+src/components/app/appearance/appearance-tab.tsx
+src/components/app/appearance/controls.tsx
+src/components/app/appearance/generators.ts
+src/components/app/appearance/previews.tsx
+src/components/app/appearance/scenes.ts
 src/components/app/auth-screen.tsx
 src/components/app/brand-mark.tsx
 src/components/app/bulk-create-dialog.tsx
@@ -137,6 +145,10 @@ src/hooks/use-toast.ts
 src/lib/api-client.ts
 src/lib/api-helpers.ts
 src/lib/app-time.ts
+src/lib/appearance/backgrounds.ts
+src/lib/appearance/idb.ts
+src/lib/appearance/palettes.ts
+src/lib/appearance/types.ts
 src/lib/auth.ts
 src/lib/danger.ts
 src/lib/db.ts

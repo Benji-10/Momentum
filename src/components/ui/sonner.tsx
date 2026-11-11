@@ -1,16 +1,16 @@
 "use client"
 
-import { useTheme } from "next-themes"
 import { Toaster as Sonner, ToasterProps } from "sonner"
-import { DARK_THEMES } from "@/components/providers"
+import { useAppearance } from "@/components/app/appearance/AppearanceProvider"
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme()
-  const derived: ToasterProps["theme"] = DARK_THEMES.includes(theme as never) ? "dark" : "light"
+  // toast styling follows the effective appearance — including custom
+  // palettes, whose light/dark-ness is decided by their own colours
+  const { darkMode } = useAppearance()
 
   return (
     <Sonner
-      theme={derived}
+      theme={darkMode ? "dark" : "light"}
       className="toaster group"
       style={
         {
