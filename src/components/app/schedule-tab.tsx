@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData, RoutineData } from '@/lib/types'
+import { RoutineTitle } from '@/components/app/routine-title'
 import {
   addDays,
   describeCadence,
@@ -139,8 +140,12 @@ function OccurrenceRow({
         {occ.done && <Check className="h-3 w-3" strokeWidth={3} />}
       </button>
       <div className="min-w-0 flex-1">
-        <div className={cn('text-xs font-semibold leading-snug', occ.done && 'line-through decoration-primary/50')}>
-          {occ.routine.title}
+        <div className="leading-snug">
+          <RoutineTitle
+            routine={occ.routine}
+            done={occ.done}
+            className={cn('text-xs font-semibold', occ.done && 'line-through decoration-primary/50')}
+          />
         </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-muted-foreground">
           {goal && (
@@ -211,7 +216,7 @@ function RoutineManageRow({
         <Repeat className="h-4 w-4" style={{ color: c.hex }} />
       </div>
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-semibold">{routine.title}</div>
+        <RoutineTitle routine={routine} className="truncate text-sm font-semibold" />
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
           <span>{describeCadence(routine)}</span>
           {routine.durationMin != null && <span>· {routine.durationMin}m</span>}

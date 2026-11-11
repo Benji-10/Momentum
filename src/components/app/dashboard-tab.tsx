@@ -34,6 +34,7 @@ import { Input } from '@/components/ui/input'
 import { GoalCard } from '@/components/app/goal-card'
 import { EditLogDialog, type EditLogTarget } from '@/components/app/edit-log-dialog'
 import { NodeQuickAddPopover, QuickLogPopover } from '@/components/app/quick-log'
+import { RoutineTitle } from '@/components/app/routine-title'
 import { cn } from '@/lib/utils'
 
 type StatusFilter = 'all' | 'on_track' | 'behind' | 'completed'
@@ -218,8 +219,12 @@ function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: 
                     {o.done && <Check className="h-3.5 w-3.5" strokeWidth={3} />}
                   </button>
                   <div className="min-w-0 flex-1">
-                    <div className={cn('text-sm font-medium leading-snug', o.done && 'text-muted-foreground line-through')}>
-                      {o.routine.title}
+                    <div className="leading-snug">
+                      <RoutineTitle
+                        routine={o.routine}
+                        done={o.done}
+                        className={cn('text-sm font-medium', o.done && 'text-muted-foreground line-through')}
+                      />
                       {o.routine.optional && (
                         <span
                           className="ml-1.5 rounded-full bg-violet-500/15 px-1.5 py-px align-middle text-[9px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400"
@@ -277,8 +282,12 @@ function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: 
                 {doneToday && <Check className="h-3.5 w-3.5" strokeWidth={3} />}
               </button>
               <div className="min-w-0 flex-1">
-                <div className={cn('text-sm font-medium leading-snug', doneToday && 'text-muted-foreground line-through')}>
-                  {routine.title}
+                <div className="leading-snug">
+                  <RoutineTitle
+                    routine={routine}
+                    done={doneToday}
+                    className={cn('text-sm font-medium', doneToday && 'text-muted-foreground line-through')}
+                  />
                   {routine.optional && (
                     <span
                       className="ml-1.5 rounded-full bg-violet-500/15 px-1.5 py-px align-middle text-[9px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400"

@@ -242,7 +242,7 @@ export function RoutineDialog({
           </div>
 
           {cadence === 'interval' ? (
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <Label htmlFor="every-n" className="shrink-0">
                 Repeat every
               </Label>
@@ -258,7 +258,7 @@ export function RoutineDialog({
               <span className="text-sm text-muted-foreground">days</span>
             </div>
           ) : cadence === 'flexible' ? (
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <Label htmlFor="times-week" className="shrink-0">
                 Sessions per week
               </Label>
@@ -413,7 +413,10 @@ export function RoutineDialog({
             </p>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          {/* minutes / start / end — stacked on phones: three columns leave
+              the native date pickers too narrow on small screens and push the
+              dialog out sideways (iOS date controls have a minimum width) */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="space-y-2">
               <Label htmlFor="routine-duration">Minutes</Label>
               <Input
@@ -428,11 +431,11 @@ export function RoutineDialog({
             </div>
             <div className="space-y-2">
               <Label htmlFor="routine-start">Starts</Label>
-              <Input id="routine-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              <Input id="routine-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="min-w-0" />
             </div>
             <div className="space-y-2">
               <Label htmlFor="routine-end">Ends</Label>
-              <Input id="routine-end" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+              <Input id="routine-end" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="min-w-0" />
             </div>
           </div>
 

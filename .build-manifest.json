@@ -85,6 +85,7 @@ src/components/app/quick-log.tsx
 src/components/app/review-tab.tsx
 src/components/app/roadmap-tab.tsx
 src/components/app/routine-dialog.tsx
+src/components/app/routine-title.tsx
 src/components/app/schedule-tab.tsx
 src/components/app/skill-map.tsx
 src/components/app/theme-picker.tsx

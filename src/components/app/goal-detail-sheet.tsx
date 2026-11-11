@@ -86,6 +86,7 @@ import { StatusBadge, StatTile } from '@/components/app/goal-visuals'
 import { CumulativeChart, WeeklyBars } from '@/components/app/charts'
 import { SkillMapGrid } from '@/components/app/skill-map'
 import { RoutineDialog } from '@/components/app/routine-dialog'
+import { RoutineTitle } from '@/components/app/routine-title'
 import { stepTriggerInfo } from '@/lib/step-triggers'
 import {
   Select,
@@ -1236,7 +1237,13 @@ function DetailBody({
                             {o.done && <Check className="h-3 w-3" strokeWidth={3} />}
                           </button>
                           <div className="min-w-0 flex-1">
-                            <div className={cn('text-xs font-semibold', o.done && 'line-through')}>{o.routine.title}</div>
+                            <div className="leading-snug">
+                              <RoutineTitle
+                                routine={o.routine}
+                                done={o.done}
+                                className={cn('text-xs font-semibold', o.done && 'line-through')}
+                              />
+                            </div>
                             <div className="text-[10px] text-muted-foreground">
                               {relativeDayLabel(o.date)}
                               {o.routine.durationMin != null && ` · ${o.routine.durationMin}m`}
@@ -1263,8 +1270,8 @@ function DetailBody({
                             <Repeat className="h-4 w-4" style={{ color: c.hex }} />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-semibold">
-                              {r.title}
+                            <div className="leading-snug">
+                              <RoutineTitle routine={r} className="truncate text-sm font-semibold" />
                               {r.optional && (
                                 <span
                                   className="ml-1.5 rounded-full bg-violet-500/15 px-1.5 py-px align-middle text-[9px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400"
