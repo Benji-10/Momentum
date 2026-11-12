@@ -18,9 +18,9 @@ import {
   generateCarbon,
   generateFractals,
   generateIridescence,
-  generateMineral,
   generateMycelium,
   generateTopography,
+  MINERAL_IMAGE_URL,
 } from './generators'
 import { CanvasScene, CustomImageScene, NebulaScene, VapourwaveScene } from './animated'
 import { makeBioluminescence, makeFluidMechanics, makeParticleField } from './scenes'
@@ -62,8 +62,6 @@ function useStaticArt(config: BackgroundConfig, fg: string): string | null {
         return generateFractals({ fg: fg || 'oklch(0.2 0.01 80)', intensity, scale })
       case 'bg-mycelium':
         return generateMycelium({ density, glow, scale })
-      case 'mineral':
-        return generateMineral({ scale })
       case 'carbon':
         return generateCarbon({ scale })
       case 'iridescence':
@@ -121,6 +119,23 @@ export function BackgroundLayer({
         <div className="absolute inset-0 bg-muted/40" aria-hidden />
       )
       break
+    case 'mineral': {
+      // a real photograph — cover, with the scale slider acting as zoom
+      const zoom = bgNum(config, 'scale', 100)
+      scene = (
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage: `url("${MINERAL_IMAGE_URL}")`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            ...(zoom !== 100 ? { transform: `scale(${zoom / 100})` } : {}),
+          }}
+          aria-hidden
+        />
+      )
+      break
+    }
     default: {
       // static procedural / image-style art (useStaticArt returned null for
       // unknown ids — render nothing rather than an empty layer)

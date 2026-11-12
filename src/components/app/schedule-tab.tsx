@@ -116,7 +116,7 @@ function OccurrenceRow({
   return (
     <div
       className={cn(
-        'group flex items-start gap-2 rounded-lg border p-2 transition-all',
+        'group frosted flex items-start gap-2 rounded-lg border p-2 transition-all',
         occ.done
           ? 'border-primary/25 bg-primary/5'
           : occ.isToday
@@ -211,7 +211,7 @@ function RoutineManageRow({
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   return (
-    <div className="group flex items-center gap-3 rounded-xl border bg-card p-3 transition-colors hover:border-muted-foreground/25">
+    <div className="group frosted flex items-center gap-3 rounded-xl border bg-card p-3 transition-colors hover:border-muted-foreground/25">
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-base" style={{ background: c.soft }}>
         <Repeat className="h-4 w-4" style={{ color: c.hex }} />
       </div>
@@ -526,7 +526,7 @@ export function ScheduleTab({
 
       {/* kindness banner */}
       {isPastWeek ? (
-        <div className="flex items-start gap-2.5 rounded-xl border border-border/70 bg-muted/30 p-3.5 text-sm text-muted-foreground">
+        <div className="frosted flex items-start gap-2.5 rounded-xl border border-border/70 bg-muted/30 p-3.5 text-sm text-muted-foreground">
           <Leaf className="mt-0.5 h-4 w-4 shrink-0 text-success" />
           <span>
             A past week, gently archived — nothing to fix here. What matters is what you do{' '}
@@ -565,7 +565,7 @@ export function ScheduleTab({
           </div>
         </div>
       ) : weekDone > 0 ? (
-        <div className="flex items-start gap-2.5 rounded-xl border border-success/25 bg-success/8 p-3.5 text-sm text-success">
+        <div className="frosted flex items-start gap-2.5 rounded-xl border border-success/25 bg-success/8 p-3.5 text-sm text-success">
           <Sprout className="mt-0.5 h-4 w-4 shrink-0 text-success" />
           <span>
             Nothing pending — {weekDone} session{weekDone === 1 ? '' : 's'} done
@@ -576,7 +576,7 @@ export function ScheduleTab({
 
       {/* flexible weekly quota — any day, rest days built in */}
       {flexRoutines.length > 0 && (
-        <div className="rounded-xl border border-primary/25 bg-primary/[0.04] p-3">
+        <div className="frosted rounded-xl border border-primary/25 bg-muted/10 p-3">
           <div className="flex items-center gap-2">
             <Dumbbell className="h-4 w-4 text-primary" />
             <span className="text-xs font-bold uppercase tracking-wide text-primary">Any day this week</span>
@@ -594,7 +594,7 @@ export function ScheduleTab({
                 <div
                   key={routine.id}
                   className={cn(
-                    'flex items-center gap-2 rounded-lg border bg-card p-2',
+                    'frosted flex items-center gap-2 rounded-lg border bg-card p-2',
                     weekOffset === 0 && prog.left > 0
                       ? routine.optional
                         ? 'border-violet-500/25'
@@ -683,7 +683,7 @@ export function ScheduleTab({
             <div
               key={i}
               className={cn(
-                'flex min-h-28 flex-col gap-2 rounded-xl border p-2.5',
+                'frosted flex min-h-28 flex-col gap-2 rounded-xl border p-2.5',
                 isToday ? 'border-primary/50 bg-primary/5' : 'border-border/70 bg-muted/10',
               )}
             >
@@ -737,7 +737,7 @@ export function ScheduleTab({
 
       {/* routine management — tucked away: the week grid above is what a
           session needs; editing a routine is occasional housekeeping */}
-      <div className="rounded-xl border bg-card">
+      <div className="frosted rounded-xl border bg-card">
         <button
           type="button"
           onClick={() => setShowManage((v) => !v)}

@@ -14,6 +14,7 @@ postcss.config.mjs
 prisma/schema.pg.prisma
 prisma/schema.prisma
 public/apple-touch-icon.png
+public/backgrounds/mineral.jpg
 public/favicon.ico
 public/favicon.svg
 public/icon-192.png

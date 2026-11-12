@@ -296,7 +296,7 @@ export function NodeEditDialog({
                   type="number"
                   min={0.01}
                   step="any"
-                  className="h-8 w-24 text-xs"
+                  className="h-8 w-24"
                   aria-label="Source units per 1 of this checkpoint"
                   placeholder="e.g. 300"
                 />
@@ -326,7 +326,7 @@ export function NodeEditDialog({
                       min={1}
                       step="any"
                       inputMode="decimal"
-                      className="h-8 w-20 text-xs"
+                      className="h-8 w-20"
                       aria-label={`Sub-checkpoint ${i + 1} value`}
                     />
                     <Input
@@ -334,7 +334,7 @@ export function NodeEditDialog({
                       onChange={(e) => setRows(rows.map((x, k) => (k === i ? { ...x, label: e.target.value } : x)))}
                       placeholder="Label (optional)"
                       maxLength={60}
-                      className="h-8 min-w-0 flex-1 text-xs"
+                      className="h-8 min-w-0 flex-1"
                       aria-label={`Sub-checkpoint ${i + 1} label`}
                     />
                     <Button

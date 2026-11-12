@@ -374,7 +374,7 @@ export function RoutineDialog({
               <NotebookPen className="h-3.5 w-3.5 text-primary" />
               One check-off logs
             </Label>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Input
                 id="routine-credit"
                 type="number"
@@ -383,7 +383,7 @@ export function RoutineDialog({
                 value={credit}
                 onChange={(e) => setCredit(e.target.value)}
                 placeholder="1"
-                className="h-8 w-24 text-xs"
+                className="h-8 w-24"
                 inputMode="decimal"
               />
               <span className="text-xs text-muted-foreground">{draftUnitLabel}</span>

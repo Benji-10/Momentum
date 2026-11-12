@@ -301,7 +301,7 @@ function StepRow({
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Step title"
             maxLength={200}
-            className="h-8 text-xs"
+            className="h-8"
             aria-label="Step title"
             autoFocus
           />
@@ -368,7 +368,7 @@ function StepRow({
                     onChange={(e) => setCount(e.target.value)}
                     inputMode="numeric"
                     aria-label="Check-offs needed"
-                    className="h-8 border-0 text-xs focus-visible:ring-0"
+                    className="h-8 border-0 focus-visible:ring-0"
                   />
                 </div>
                 <p className="col-span-2 text-[11px] leading-snug text-muted-foreground">
@@ -431,7 +431,7 @@ function StepRow({
                         inputMode="decimal"
                         placeholder="15"
                         aria-label="Threshold value"
-                        className="h-8 text-xs"
+                        className="h-8"
                       />
                     </div>
                     <p className="text-[11px] leading-snug text-muted-foreground">

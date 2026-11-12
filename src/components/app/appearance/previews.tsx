@@ -21,9 +21,9 @@ import {
   generateCarbon,
   generateFractals,
   generateIridescence,
-  generateMineral,
   generateMycelium,
   generateTopography,
+  MINERAL_IMAGE_URL,
 } from './generators'
 import { NebulaScene, VapourwaveScene } from './animated'
 import { makeBioluminescence, makeFluidMechanics, makeParticleField, type SceneFactory, type WarmupSceneFactory } from './scenes'
@@ -265,7 +265,7 @@ export function BackgroundThumb({ def }: { def: BackgroundDef }) {
       visual = <StaticThumb id="mycelium" make={() => generateMycelium({ density: 50, glow: 55, scale: 100 })}  />
       break
     case 'mineral':
-      visual = <StaticThumb id="mineral" make={() => generateMineral({ scale: 100 })}  />
+      visual = <div className="h-full w-full" style={{ backgroundImage: `url("${MINERAL_IMAGE_URL}")`, backgroundSize: 'cover', backgroundPosition: 'center' }} aria-hidden />
       break
     case 'carbon':
       visual = <StaticThumb id="carbon" make={() => generateCarbon({ scale: 100 })}  />

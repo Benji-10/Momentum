@@ -72,7 +72,10 @@ export function makeBioluminescence(settings: BgSettings): SceneFactory {
 }
 
 // ---------------------------------------------------------------------------
-// Particle Fields — drifting particles in a vector field, optional links
+// Particle Fields — a crisp technical constellation. Two parallax depth
+// layers of sharp dots (no halos, no additive glow) with thin links between
+// the near layer only — deliberately nothing like the soft glowing plankton
+// of bioluminescence.
 // ---------------------------------------------------------------------------
 
 export function makeParticleField(settings: BgSettings): SceneFactory {
@@ -80,57 +83,77 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
   const density = Number(settings.density) ?? 45
   const connections = Number(settings.connections) ?? 50
   return (ctx: CanvasRenderingContext2D, w: number, h: number) => {
-    const count = Math.round(28 + (density / 100) * 95)
+    const count = Math.round(30 + (density / 100) * 110)
+    // every third particle joins the far layer: smaller, dimmer, slower —
+    // the depth gap is what makes the field read as space, not plankton
+    const parts = Array.from({ length: count }, (_, i) => {
+      const far = i % 3 === 0
+      return {
+        far,
+        x: Math.random() * w,
+        y: Math.random() * h,
+        r: far ? 0.65 + Math.random() * 0.35 : 1.35 + Math.random() * 0.65,
+        // a handful of near-layer "navigation stars" in accent cyan
+        accent: !far && i % 17 === 0,
+      }
+    })
+    const near = parts.filter((p) => !p.far)
     const field = (x: number, y: number, t: number) =>
       Math.sin(x * 0.0016 + t * 0.18) * 1.5 +
       Math.cos(y * 0.0021 - t * 0.14) * 1.5 +
       Math.sin((x + y) * 0.0009 + t * 0.1)
-    const parts = Array.from({ length: count }, () => ({
-      x: Math.random() * w,
-      y: Math.random() * h,
-    }))
-    const linkDist = 60 + connections * 0.65
+    const linkDist = 42 + connections * 0.55
+    const linkAlpha = (connections / 100) * 0.2
     return (t: number) => {
-      ctx.fillStyle = '#070b12'
+      // flat technical base with a quiet corner falloff — no wash, no bloom
+      ctx.fillStyle = '#05070c'
       ctx.fillRect(0, 0, w, h)
-      const g = ctx.createLinearGradient(0, 0, 0, h)
-      g.addColorStop(0, 'rgba(15,23,42,0.5)')
-      g.addColorStop(1, 'rgba(2,6,12,0.2)')
-      ctx.fillStyle = g
+      const vg = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.hypot(w, h) * 0.62)
+      vg.addColorStop(0, 'rgba(0,0,0,0)')
+      vg.addColorStop(1, 'rgba(0,0,0,0.28)')
+      ctx.fillStyle = vg
       ctx.fillRect(0, 0, w, h)
 
       for (const p of parts) {
         const a = field(p.x, p.y, t)
-        p.x += Math.cos(a) * 0.55 * speed
-        p.y += Math.sin(a) * 0.55 * speed
-        if (p.x < -10) p.x = w + 10
-        if (p.x > w + 10) p.x = -10
-        if (p.y < -10) p.y = h + 10
-        if (p.y > h + 10) p.y = -10
+        const s = (p.far ? 0.45 : 1) * speed
+        p.x += Math.cos(a) * 0.55 * s
+        p.y += Math.sin(a) * 0.55 * s
+        if (p.x < -12) p.x = w + 12
+        if (p.x > w + 12) p.x = -12
+        if (p.y < -12) p.y = h + 12
+        if (p.y > h + 12) p.y = -12
       }
+
+      // links only inside the near layer — fewer, thinner, quieter
       if (connections > 3) {
-        ctx.lineWidth = 0.7
-        for (let i = 0; i < parts.length; i++) {
-          for (let j = i + 1; j < parts.length; j++) {
-            const dx = parts[i].x - parts[j].x
-            const dy = parts[i].y - parts[j].y
+        ctx.lineWidth = 0.6
+        for (let i = 0; i < near.length; i++) {
+          for (let j = i + 1; j < near.length; j++) {
+            const dx = near[i].x - near[j].x
+            const dy = near[i].y - near[j].y
             const d2 = dx * dx + dy * dy
             if (d2 < linkDist * linkDist) {
               const d = Math.sqrt(d2)
-              const a = (1 - d / linkDist) * 0.22 * (connections / 100)
+              const a = (1 - d / linkDist) * linkAlpha
               ctx.strokeStyle = `rgba(148,163,184,${a.toFixed(3)})`
               ctx.beginPath()
-              ctx.moveTo(parts[i].x, parts[i].y)
-              ctx.lineTo(parts[j].x, parts[j].y)
+              ctx.moveTo(near[i].x, near[i].y)
+              ctx.lineTo(near[j].x, near[j].y)
               ctx.stroke()
             }
           }
         }
       }
-      ctx.fillStyle = 'rgba(203,213,225,0.85)'
+      // crisp discs — far layer dim slate, near layer bright silver
       for (const p of parts) {
+        ctx.fillStyle = p.far
+          ? 'rgba(148,163,184,0.28)'
+          : p.accent
+            ? 'rgba(56,189,248,0.9)'
+            : 'rgba(226,232,240,0.8)'
         ctx.beginPath()
-        ctx.arc(p.x, p.y, 1.5, 0, Math.PI * 2)
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
         ctx.fill()
       }
     }
@@ -138,55 +161,265 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
 }
 
 // ---------------------------------------------------------------------------
-// Fluid Mechanics — flowing ink: drifting colour blobs with motion trails.
-// A lightweight approximation of fluid advection (no real simulation): a
-// low-alpha wash each frame leaves trails, additive gradients read as ink.
+// Fluid Mechanics — an actual fluid solver (Stam's "stable fluids"):
+// a coarse velocity + dye grid, semi-Lagrangian advection, a pressure
+// projection each frame so the field stays incompressible, and orbiting
+// vortex stirrers that inject spin and dye. Rendered at grid resolution
+// and upscaled — the upscale is the antialias.
 // ---------------------------------------------------------------------------
 
 export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
   const speed = (Number(settings.speed) || 60) / 100
   const density = Number(settings.density) ?? 50
   const factory = ((ctx: CanvasRenderingContext2D, w: number, h: number) => {
-    const inks = ['rgba(14,116,144,', 'rgba(124,58,237,', 'rgba(180,83,9,', 'rgba(13,148,136,', 'rgba(192,38,211,']
-    const count = Math.round(4 + (density / 100) * 6)
-    const blobs = Array.from({ length: count }, (_, i) => ({
-      colour: inks[i % inks.length],
-      sp1: 0.05 + Math.random() * 0.08,
-      sp2: 0.03 + Math.random() * 0.07,
-      ph1: Math.random() * Math.PI * 2,
-      ph2: Math.random() * Math.PI * 2,
-      fx: 0.18 + Math.random() * 0.3,
-      fy: 0.16 + Math.random() * 0.28,
-      size: 0.22 + Math.random() * 0.16,
-    }))
+    // --- sim grid, shaped like the viewport: a portrait phone would only
+    //     ever see the middle third of a fixed 128x80 grid ------------------
+    const AR = Math.max(0.3, Math.min(4, w / Math.max(1, h)))
+    const N = Math.max(48, Math.round(Math.sqrt(20480 * AR)))
+    const M = Math.max(48, Math.round(N / AR))
+    const S = N * M
+    // detail scale: velocities/radii are tuned at ~10k cells; keep the same
+    // visual sizes when the grid is finer
+    const K = Math.sqrt(S / 10240)
+    const u = new Float32Array(S)
+    const v = new Float32Array(S)
+    const u2 = new Float32Array(S)
+    const v2 = new Float32Array(S)
+    const dye = [new Float32Array(S), new Float32Array(S), new Float32Array(S)]
+    const dye2 = [new Float32Array(S), new Float32Array(S), new Float32Array(S)]
+    const pr = new Float32Array(S)
+    const dv = new Float32Array(S)
+
+    const at = (x: number, y: number) => y * N + x
+    const clampI = (n: number, lo: number, hi: number) => (n < lo ? lo : n > hi ? hi : n)
+
+    /** bilinear sample of a field at float grid coordinates */
+    const sample = (f: Float32Array, x: number, y: number) => {
+      const xi = clampI(Math.floor(x), 0, N - 1)
+      const yi = clampI(Math.floor(y), 0, M - 1)
+      const xj = clampI(xi + 1, 0, N - 1)
+      const yj = clampI(yi + 1, 0, M - 1)
+      const fx = x - xi
+      const fy = y - yi
+      const a = f[at(xi, yi)] * (1 - fx) + f[at(xj, yi)] * fx
+      const b = f[at(xi, yj)] * (1 - fx) + f[at(xj, yj)] * fx
+      return a * (1 - fy) + b * fy
+    }
+
+    // --- stirrers: slowly drifting vortices on a jittered grid so the
+    //     whole frame is covered — no empty halves -------------------------
+    const PALETTE: [number, number, number][] = [
+      [56, 189, 248], // cyan
+      [129, 140, 248], // indigo
+      [167, 139, 250], // violet
+      [45, 212, 191], // teal
+      [251, 146, 60], // one warm ember note
+    ]
+    const count = 3 + Math.round((density / 100) * 4)
+    const cols = Math.max(2, Math.round(Math.sqrt(count * AR)))
+    const rows = Math.max(1, Math.ceil(count / cols))
+    const stir: {
+      col: [number, number, number]
+      ax: number
+      ay: number
+      ar: number
+      ph: number
+      om: number
+      gw: number
+      spin: number
+      emit: number
+    }[] = []
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (stir.length >= count) break
+        stir.push({
+          col: PALETTE[stir.length % PALETTE.length],
+          ax: (c + 0.5) / cols + (Math.random() - 0.5) * 0.18,
+          ay: (r + 0.5) / rows + (Math.random() - 0.5) * 0.18,
+          ar: 0.06 + Math.random() * 0.08, // slow drift orbit
+          ph: Math.random() * Math.PI * 2,
+          om: (0.04 + Math.random() * 0.06) * (Math.random() < 0.5 ? -1 : 1),
+          gw: (10 + Math.random() * 6) * K, // vortex radius in cells — big enough to read
+          spin: (Math.random() < 0.5 ? -1 : 1) * (0.9 + Math.random() * 0.5),
+          emit: 0.6 + Math.random() * 0.6,
+        })
+      }
+    }
+
+    // --- render target: grid-res offscreen canvas, upscaled on draw --------
+    const off = document.createElement('canvas')
+    off.width = N
+    off.height = M
+    const octx = off.getContext('2d')!
+    const img = octx.createImageData(N, M)
+    let simT = 0
+    let lastT = -1
     let primed = false
+
+    const advance = (dt: number) => {
+      simT += dt
+      // time-based decays so the look is frame-rate independent
+      const vDecay = Math.pow(0.9995, dt / 0.0167) // rotation persists between pulses
+      const dyeDecay = Math.pow(0.999, dt / 0.0167)
+      // 1) forces + dye injection ----------------------------------------
+      // velocities stay GENTLE (≤ ~1 cell/step): fast fields make the
+      // semi-Lagrangian back-trace sample across several cells and the
+      // numerical diffusion turns the whole thing into gradient mush.
+      // The dye source is a SMALL PATCH OFFSET from the vortex centre —
+      // an axisymmetric source rotating in place looks like a static blob;
+      // an offset stream gets wrapped into visible spiral arms. Emission is
+      // PULSED (staggered per stirrer) so fresh arms keep being drawn and
+      // the scene never decays into uniform mush on a long-open tab.
+      for (const s of stir) {
+        const ang = s.ph + simT * s.om * 4 // slow drift: a vortex must
+        // sit and chew, not sweep
+        const gx = (s.ax + Math.cos(ang) * s.ar) * N
+        const gy = (s.ay + Math.sin(ang) * s.ar) * M
+        const x0 = clampI(Math.floor(gx - s.gw), 1, N - 2)
+        const x1 = clampI(Math.ceil(gx + s.gw), 1, N - 2)
+        const y0 = clampI(Math.floor(gy - s.gw), 1, M - 2)
+        const y1 = clampI(Math.ceil(gy + s.gw), 1, M - 2)
+        for (let y = y0; y <= y1; y++) {
+          for (let x = x0; x <= x1; x++) {
+            const dx = x - gx
+            const dy = y - gy
+            const d = Math.hypot(dx, dy)
+            if (d > s.gw || d < 0.001) continue
+            const fall = (1 - d / s.gw) ** 2
+            const i = at(x, y)
+            u[i] += (-dy / d) * s.spin * 35 * K * fall * dt
+            v[i] += (dx / d) * s.spin * 35 * K * fall * dt
+          }
+        }
+        // 10s pulse cycle, 5.5s duty, phase-staggered; always on during the
+        // opening so the first visible frame is a fully drawn swirl
+        const emitting = simT < 5.5 || (simT + s.ph * 1.6) % 10 < 5.5
+        if (emitting) {
+          const sx = gx + s.gw * 0.45 // on the fast side of the spin
+          const sy = gy
+          const rDye = 2.2 * K
+          const ix0 = clampI(Math.floor(sx - rDye), 1, N - 2)
+          const ix1 = clampI(Math.ceil(sx + rDye), 1, N - 2)
+          const iy0 = clampI(Math.floor(sy - rDye), 1, M - 2)
+          const iy1 = clampI(Math.ceil(sy + rDye), 1, M - 2)
+          for (let y = iy0; y <= iy1; y++) {
+            for (let x = ix0; x <= ix1; x++) {
+              const dd = Math.hypot(x - sx, y - sy)
+              if (dd > rDye) continue
+              const wq = (1 - dd / rDye) ** 2
+              const i = at(x, y)
+              const e = s.emit * 6 * wq * dt
+              dye[0][i] += (s.col[0] / 255) * e
+              dye[1][i] += (s.col[1] / 255) * e
+              dye[2][i] += (s.col[2] / 255) * e
+            }
+          }
+        }
+      }
+
+      // 2) advect velocity through itself (semi-Lagrangian) ---------------
+      for (let y = 1; y < M - 1; y++) {
+        for (let x = 1; x < N - 1; x++) {
+          const i = at(x, y)
+          const bx = x - u[i] * dt
+          const by = y - v[i] * dt
+          u2[i] = sample(u, bx, by)
+          v2[i] = sample(v, bx, by)
+        }
+      }
+      u.set(u2)
+      v.set(v2)
+
+      // rotation dissipation (time-based)
+      for (let i = 0; i < S; i++) {
+        u[i] *= vDecay
+        v[i] *= vDecay
+      }
+
+      // 3) pressure projection — incompressibility is what makes it swirl
+      //    like a fluid instead of mushing like noise
+      for (let y = 1; y < M - 1; y++) {
+        for (let x = 1; x < N - 1; x++) {
+          const i = at(x, y)
+          dv[i] = -0.5 * (u[at(x + 1, y)] - u[at(x - 1, y)] + v[at(x, y + 1)] - v[at(x, y - 1)])
+        }
+      }
+      pr.fill(0)
+      for (let it = 0; it < 14; it++) {
+        for (let y = 1; y < M - 1; y++) {
+          for (let x = 1; x < N - 1; x++) {
+            const i = at(x, y)
+            pr[i] = (dv[i] + pr[at(x - 1, y)] + pr[at(x + 1, y)] + pr[at(x, y - 1)] + pr[at(x, y + 1)]) * 0.25
+          }
+        }
+      }
+      for (let y = 1; y < M - 1; y++) {
+        for (let x = 1; x < N - 1; x++) {
+          const i = at(x, y)
+          u[i] -= 0.5 * (pr[at(x + 1, y)] - pr[at(x - 1, y)])
+          v[i] -= 0.5 * (pr[at(x, y + 1)] - pr[at(x, y - 1)])
+        }
+      }
+
+      // 4) advect dye ------------------------------------------------------
+      for (let y = 1; y < M - 1; y++) {
+        for (let x = 1; x < N - 1; x++) {
+          const i = at(x, y)
+          const bx = x - u[i] * dt
+          const by = y - v[i] * dt
+          for (let c = 0; c < 3; c++) dye2[c][i] = sample(dye[c], bx, by) * dyeDecay
+        }
+      }
+      for (let c = 0; c < 3; c++) dye[c].set(dye2[c])
+    }
+
+    // pre-roll ~5.3 s of simulation: a live scene must not open as blank
+    // water — the first visible frame should already be a developed swirl
+    for (let i = 0; i < 320; i++) advance(0.0167)
+
     const frame = (t: number) => {
       if (!primed) {
-        ctx.fillStyle = '#0a0a10'
+        ctx.fillStyle = '#060a12'
         ctx.fillRect(0, 0, w, h)
         primed = true
       }
-      ctx.fillStyle = 'rgba(10,10,16,0.045)'
-      ctx.fillRect(0, 0, w, h)
-      ctx.globalCompositeOperation = 'lighter'
-      const base = Math.min(w, h)
-      for (const b of blobs) {
-        const cx = w * (0.5 + b.fx * Math.sin(t * b.sp1 * Math.PI * speed + b.ph1) + 0.1 * Math.sin(t * b.sp2 + b.ph2))
-        const cy = h * (0.5 + b.fy * Math.cos(t * b.sp2 * Math.PI * speed + b.ph2) + 0.08 * Math.cos(t * b.sp1 + b.ph1))
-        const r = base * b.size * (1 + 0.18 * Math.sin(t * 0.3 + b.ph1))
-        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r)
-        g.addColorStop(0, `${b.colour}0.16)`)
-        g.addColorStop(0.55, `${b.colour}0.07)`)
-        g.addColorStop(1, `${b.colour}0)`)
-        ctx.fillStyle = g
-        ctx.beginPath()
-        ctx.arc(cx, cy, r, 0, Math.PI * 2)
-        ctx.fill()
+      const dt = Math.min(0.05, Math.max(0.004, lastT < 0 ? 0.016 : (t - lastT) * speed))
+      lastT = t
+      advance(dt)
+
+      // 5) render: tonemapped dye over a deep base, upscaled with smoothing
+      //    (grid edge cells never move — copy inward neighbours so the rim
+      //    doesn't read as a border)
+      for (let x = 0; x < N; x++) {
+        for (const y of [0, M - 1]) {
+          const src = at(x, y === 0 ? 1 : M - 2)
+          for (let c = 0; c < 3; c++) dye[c][at(x, y)] = dye[c][src]
+        }
       }
-      ctx.globalCompositeOperation = 'source-over'
+      for (let y = 0; y < M; y++) {
+        for (const x of [0, N - 1]) {
+          const src = at(x === 0 ? 1 : N - 2, y)
+          for (let c = 0; c < 3; c++) dye[c][at(x, y)] = dye[c][src]
+        }
+      }
+      const data = img.data
+      for (let i = 0; i < S; i++) {
+        // 1.6× tonemap lift: the dye reads mid-bright instead of murk
+        const r = (1.6 * dye[0][i]) / (1 + 1.6 * dye[0][i])
+        const g = (1.6 * dye[1][i]) / (1 + 1.6 * dye[1][i])
+        const b = (1.6 * dye[2][i]) / (1 + 1.6 * dye[2][i])
+        const k = i * 4
+        data[k] = 6 + 235 * r
+        data[k + 1] = 10 + 235 * g
+        data[k + 2] = 18 + 235 * b
+        data[k + 3] = 255
+      }
+      octx.putImageData(img, 0, 0)
+      ctx.imageSmoothingEnabled = true
+      ctx.drawImage(off, 0, 0, w, h)
     }
     return frame
   }) as WarmupSceneFactory
-  factory.warmupFrames = 60 // build up trails so a frozen frame still reads as ink
+  factory.warmupFrames = 110
   return factory
 }

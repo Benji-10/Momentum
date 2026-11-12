@@ -5,10 +5,10 @@
 // a fixed layer behind the app (components/app/appearance/BackgroundLayer).
 //
 // Three categories:
-//   animated  canvas / CSS scenes with continuous (pausable) motion
+//   animated  canvas scenes with continuous (pausable) motion
 //   static    procedural SVG / canvas art, generated once per settings change
-//   image     image-style scenes — procedurally rendered *to* a static image
-//             (no binary assets shipped), plus the user's own upload
+//   image     image-style scenes — Mineral is a real photograph shipped with
+//             the app; the rest are rendered locally. Plus the user's upload.
 //
 // Each definition declares exactly the settings that make sense for it; the
 // settings UI renders only those ("Only expose settings relevant to the
@@ -91,7 +91,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     id: 'particle-field',
     name: 'Particle Fields',
     category: 'animated',
-    hint: 'Drifting particles + connecting lines',
+    hint: 'Crisp constellation — two-depth drift',
     renderer: 'particles',
     settings: [opacity(70), speed(100), { kind: 'slider', key: 'density', label: 'Particle density', min: 0, max: 100, step: 1, default: 45 }, { kind: 'slider', key: 'connections', label: 'Connecting lines', min: 0, max: 100, step: 1, default: 50 }, blur()],
   },
@@ -99,25 +99,25 @@ export const BACKGROUNDS: BackgroundDef[] = [
     id: 'fluid-mechanics',
     name: 'Fluid Mechanics',
     category: 'animated',
-    hint: 'Flowing ink, lightweight approximation',
+    hint: 'Live fluid solver — swirling dye',
     renderer: 'fluid',
-    settings: [opacity(80), speed(60), { kind: 'slider', key: 'density', label: 'Ink density', min: 0, max: 100, step: 1, default: 50 }, blur()],
+    settings: [opacity(80), speed(60), { kind: 'slider', key: 'density', label: 'Dye density', min: 0, max: 100, step: 1, default: 50 }, blur()],
   },
   {
     id: 'topography',
     name: 'Topography',
     category: 'static',
-    hint: 'Procedural contour lines',
+    hint: 'Random peaks, contour rings by steepness',
     renderer: 'topography',
-    settings: [opacity(45), { kind: 'slider', key: 'intensity', label: 'Pattern intensity', min: 0, max: 100, step: 1, default: 55 }, scale(100), blur()],
+    settings: [opacity(65), { kind: 'slider', key: 'intensity', label: 'Pattern intensity', min: 0, max: 100, step: 1, default: 55 }, scale(100), blur()],
   },
   {
     id: 'fractals',
     name: 'Fractals',
     category: 'static',
-    hint: 'Recursive branching patterns',
+    hint: 'Julia set — banded escape contours',
     renderer: 'fractals',
-    settings: [opacity(40), { kind: 'slider', key: 'intensity', label: 'Pattern intensity', min: 0, max: 100, step: 1, default: 50 }, scale(100), blur()],
+    settings: [opacity(85), { kind: 'slider', key: 'intensity', label: 'Pattern intensity', min: 0, max: 100, step: 1, default: 70 }, scale(100), blur()],
   },
   {
     id: 'vapourwave',
@@ -131,7 +131,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     id: 'bg-mycelium',
     name: 'Mycelium',
     category: 'image',
-    hint: 'Fungal networks, violet glow',
+    hint: 'Living hyphae — fused loops, spore light',
     renderer: 'mycelium',
     settings: [opacity(75), { kind: 'slider', key: 'density', label: 'Network density', min: 0, max: 100, step: 1, default: 50 }, { kind: 'slider', key: 'glow', label: 'Glow intensity', min: 0, max: 100, step: 1, default: 55 }, scale(100), blur()],
   },
@@ -139,15 +139,15 @@ export const BACKGROUNDS: BackgroundDef[] = [
     id: 'mineral',
     name: 'Mineral',
     category: 'image',
-    hint: 'Agate bands and layered stone',
+    hint: 'Real photograph — dark stone, quiet veining',
     renderer: 'mineral',
-    settings: [opacity(80), scale(100), blur()],
+    settings: [opacity(80), { kind: 'slider', key: 'scale', label: 'Zoom', min: 100, max: 220, step: 5, suffix: '%', default: 100 }, blur()],
   },
   {
     id: 'carbon',
     name: 'Carbon',
     category: 'image',
-    hint: 'Carbon-fibre weave',
+    hint: 'Near-black weave — whisper subtle',
     renderer: 'carbon',
     settings: [opacity(60), scale(100), blur()],
   },
@@ -155,7 +155,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     id: 'iridescence',
     name: 'Iridescence',
     category: 'image',
-    hint: 'Oil-slick rainbow reflections',
+    hint: 'Anodized sheen — restrained colour',
     renderer: 'iridescence',
     settings: [opacity(70), { kind: 'slider', key: 'intensity', label: 'Pattern intensity', min: 0, max: 100, step: 1, default: 60 }, blur()],
   },

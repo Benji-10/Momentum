@@ -267,7 +267,7 @@ function BackgroundSettingsPanel() {
           ? 'Animations pause when the tab is hidden and freeze entirely if you prefer reduced motion.'
           : def.category === 'static'
             ? 'The pattern is regenerated when these settings change — never per frame.'
-            : 'A procedurally rendered scene — no image download.'}
+            : 'Rendered locally, or shipped with the app (Mineral) — nothing to download.'}
       </p>
     </div>
   )
