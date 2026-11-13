@@ -35,7 +35,7 @@ import {
   MINERAL_IMAGE_URL,
 } from './generators'
 import { CanvasScene, CustomImageScene, NebulaScene, VapourwaveScene } from './animated'
-import { makeBioluminescence, makeFluidMechanics, makeParticleField } from './scenes'
+import { makeBioluminescence, makeFluidMechanics, makeParametric, makeParticleField, makeRipple } from './scenes'
 
 /** Read a CSS variable from the document root and re-read when the theme
  *  changes. Watches <html> attribute mutations (data-theme flips from
@@ -187,6 +187,12 @@ export function BackgroundLayer({
       break
     case 'fluid-mechanics':
       scene = <CanvasScene makeScene={makeFluidMechanics} settings={sceneSettings} settingsKey={settingsKey} />
+      break
+    case 'ripple':
+      scene = <CanvasScene makeScene={makeRipple} settings={sceneSettings} settingsKey={settingsKey} />
+      break
+    case 'parametric':
+      scene = <CanvasScene makeScene={makeParametric} settings={sceneSettings} settingsKey={settingsKey} />
       break
     case 'nebula':
       scene = <NebulaScene settings={config.settings} />

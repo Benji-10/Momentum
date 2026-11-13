@@ -37,6 +37,8 @@ export interface BackgroundDef {
     | 'nebula'
     | 'particles'
     | 'fluid'
+    | 'ripple'
+    | 'parametric'
     | 'topography'
     | 'fractals'
     | 'vapourwave'
@@ -91,7 +93,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     id: 'particle-field',
     name: 'Particle Fields',
     category: 'animated',
-    hint: '3D wire terrain — a noise-mesh of points',
+    hint: 'Deep point terrain — bokeh field of undulating points',
     renderer: 'particles',
     settings: [opacity(70), speed(100), { kind: 'slider', key: 'density', label: 'Grid density', min: 0, max: 100, step: 1, default: 45 }, blur()],
   },
@@ -102,6 +104,22 @@ export const BACKGROUNDS: BackgroundDef[] = [
     hint: 'Live fluid — fine dye, open edges',
     renderer: 'fluid',
     settings: [opacity(80), speed(60), { kind: 'slider', key: 'density', label: 'Dye density', min: 0, max: 100, step: 1, default: 50 }, blur()],
+  },
+  {
+    id: 'ripple',
+    name: 'Ripple',
+    category: 'animated',
+    hint: 'Rain on a puddle, seen from above',
+    renderer: 'ripple',
+    settings: [opacity(85), speed(100), { kind: 'slider', key: 'density', label: 'Rain intensity', min: 0, max: 100, step: 1, default: 62 }, blur()],
+  },
+  {
+    id: 'parametric',
+    name: 'Parametric Forms',
+    category: 'animated',
+    hint: 'A breathing harmonic ball — new form each visit',
+    renderer: 'parametric',
+    settings: [opacity(80), speed(100), { kind: 'slider', key: 'density', label: 'Wire density', min: 0, max: 100, step: 1, default: 50 }, blur()],
   },
   {
     id: 'topography',

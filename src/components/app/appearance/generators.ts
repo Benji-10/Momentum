@@ -107,8 +107,8 @@ function ensureContrast(
   if (!bg) return c
   const lc = luminance(c)
   const lb = luminance(bg)
-  if (Math.abs(lc - lb) < 0.24) {
-    return lb > 0.5 ? mixRgb(c, [15, 23, 42], 0.5) : mixRgb(c, [226, 232, 255], 0.42)
+  if (Math.abs(lc - lb) < 0.3) {
+    return lb > 0.5 ? mixRgb(c, [15, 23, 42], 0.6) : mixRgb(c, [226, 232, 255], 0.52)
   }
   return c
 }
@@ -177,15 +177,31 @@ export function generateTopography(opts: {
     peaks.push({
       x: 130 + rnd() * (W - 260),
       y: 100 + rnd() * (H - 200),
-      h: 0.45 + rnd() * 0.4,
+      h: 0.55 + rnd() * 0.35,
       // half the satellites are steep (tight rings), half gentle (wide
-      // fans) — the spread between them is what makes the map read as terrain
-      s: (i % 2 === 0 ? 45 + rnd() * 70 : 170 + rnd() * 130) * (scale / 100),
+      // fans, stretched further than before so neighbouring ring systems
+      // reach toward each other) — the spread between them is what makes
+      // the map read as terrain
+      s: (i % 2 === 0 ? 45 + rnd() * 70 : 185 + rnd() * 155) * (scale / 100),
     })
   }
   const basins: Peak[] = []
   for (let i = 0; i < 3; i++) {
     basins.push({ x: rnd() * W, y: rnd() * H, h: -(0.25 + rnd() * 0.3), s: (200 + rnd() * 220) * (scale / 100) })
+  }
+  // broad swells: very wide, low mounds and dips spanning most of the
+  // map. They give the land BETWEEN peaks a gentle gradient, so contour
+  // rings keep forming across the gaps and distant peak systems link into
+  // one connected map instead of isolated bullseyes — the "more rings,
+  // connecting the peaks even when far apart" ask.
+  const swells: Peak[] = []
+  for (let i = 0; i < 3; i++) {
+    swells.push({
+      x: rnd() * W,
+      y: rnd() * H,
+      h: (rnd() < 0.5 ? -1 : 1) * (0.1 + rnd() * 0.09),
+      s: (330 + rnd() * 190) * (scale / 100),
+    })
   }
   const field = (x: number, y: number) => {
     let h = 0.12 + 0.06 * (x / W) + 0.04 * (1 - y / H)
@@ -195,6 +211,9 @@ export function generateTopography(opts: {
     }
     for (const b of basins) {
       h += b.h * Math.exp(-(((x - b.x) ** 2 + (y - b.y) ** 2) / (b.s * b.s)))
+    }
+    for (const s of swells) {
+      h += s.h * Math.exp(-(((x - s.x) ** 2 + (y - s.y) ** 2) / (s.s * s.s)))
     }
     return h
   }
@@ -215,7 +234,10 @@ export function generateTopography(opts: {
     }
   }
 
-  // ---- 3) marching squares at ~18 levels, WITH edge interpolation ----------
+  // ---- 3) marching squares at ~30 levels, WITH edge interpolation ----------
+  // More, closer levels than the original 18 — plus the broad swells in
+  // the heightfield — mean rings also trace the gentle land between
+  // peaks, linking distant ring systems into one connected terrain.
   // The crossing point on each cell edge is placed by linear interpolation
   // between the two corner heights — that is the difference between smooth
   // circular contour rings and the chunky staircase you get from fixed
@@ -238,9 +260,9 @@ export function generateTopography(opts: {
     [[0, 3]], [[0, 2]], [], [[3, 1]],
     [[3, 1]], [[1, 2]], [[3, 2]], [],
   ]
-  const levels = 18
+  const levels = 30
   const paths: string[] = []
-  const baseA = Math.min(0.5, 0.14 + (0.3 * intensity) / 100)
+  const baseA = Math.min(0.5, 0.12 + (0.26 * intensity) / 100)
   for (let l = 1; l <= levels; l++) {
     const level = lo + ((hi - lo) * l) / (levels + 1)
     const d: string[] = []

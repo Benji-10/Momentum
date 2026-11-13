@@ -255,6 +255,12 @@ export function BackgroundThumb({ def }: { def: BackgroundDef }) {
     case 'fluid':
       visual = <AnimatedThumb id="fluid-mechanics" />
       break
+    case 'ripple':
+      visual = <AnimatedThumb id="ripple" />
+      break
+    case 'parametric':
+      visual = <AnimatedThumb id="parametric" />
+      break
     case 'nebula':
       visual = <NebulaScene settings={settings} />
       break

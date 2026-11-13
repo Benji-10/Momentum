@@ -831,6 +831,20 @@
   html {
     scrollbar-gutter: stable;
   }
+  /* …but react-remove-scroll (under every Radix Dialog) measures the
+     scrollbar and compensates with `body[data-scroll-locked] { margin-right:
+     <bar>px !important }` — it assumes the removed scrollbar FREES layout
+     space. With the stable gutter above, the space was already reserved and
+     stays reserved, so the compensation double-counts and shoves the whole
+     centred app a few pixels LEFT while a dialog is open (the settings
+     modal shift). Neutralize it: the stable gutter already does this job.
+     Higher specificity (html + body + attribute) beats the library's
+     injected sheet regardless of load order; browsers without
+     scrollbar-gutter support use overlay scrollbars and measure a gap of
+     0 anyway, so nothing regresses there either. */
+  html body[data-scroll-locked] {
+    margin-right: 0 !important;
+  }
   /* smooth theme transitions */
   body,
   .theme-anim body {

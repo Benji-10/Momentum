@@ -14,7 +14,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { NOISE_IMAGE_URL } from './generators'
 import { cn } from '@/lib/utils'
-import type { SceneFactory, WarmupSceneFactory } from './scenes'
+import { numOf, type SceneFactory, type WarmupSceneFactory } from './scenes'
 
 // matches scenes.ts (the theme's background colour rides along as a tuple)
 export type BgSettings = Record<string, number | string | [number, number, number]>
@@ -116,8 +116,8 @@ export function CanvasScene({
 // ---------------------------------------------------------------------------
 
 export function NebulaScene({ settings }: { settings: BgSettings }) {
-  const speed = Number(settings.speed) || 100
-  const scale = Number(settings.scale) || 100
+  const speed = numOf(settings.speed, 100) // 0 = genuinely still
+  const scale = numOf(settings.scale, 100)
   const s = scale / 100
   const dur = (base: number) => `${(base * 100) / Math.max(speed, 1)}s`
   const anim = speed < 5 ? ({ animation: 'none' } as const) : undefined
@@ -182,7 +182,7 @@ function mulberry32(seed: number): () => number {
 }
 
 export function VapourwaveScene({ settings }: { settings: BgSettings }) {
-  const speed = Number(settings.speed) || 70
+  const speed = numOf(settings.speed, 70) // 0 = the postcard holds still
   const gridDur = `${(3.2 * 100) / Math.max(speed, 1)}s`
   const sunDur = `${(9 * 100) / Math.max(speed, 1)}s`
   const still = speed < 5

@@ -26,14 +26,21 @@ function lumOf(rgb: [number, number, number]): number {
   return (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255
 }
 
+/** Numeric background setting with a proper default. `Number(x) || d` eats
+ * a legitimate 0 (speed 0% must freeze a scene, not fall back to 100) and
+ * `Number(x) ?? d` lets NaN through — this handles both. */
+export function numOf(v: unknown, fallback: number): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : fallback
+}
+
 // ---------------------------------------------------------------------------
 // Bioluminescence — dark water with glowing drifting particles
 // ---------------------------------------------------------------------------
 
 export function makeBioluminescence(settings: BgSettings): SceneFactory {
-  const speed = (Number(settings.speed) || 100) / 100
-  const density = Number(settings.density) ?? 50
-  const glow = Number(settings.glow) ?? 60
+  const speed = numOf(settings.speed, 100) / 100 // 0 = truly still
+  const density = numOf(settings.density, 50)
+  const glow = numOf(settings.glow, 60)
   const tb = themeBgOf(settings)
   const light = tb != null && lumOf(tb) > 0.5
   // the water itself adopts the theme's background colour — dark themes get
@@ -95,35 +102,97 @@ export function makeBioluminescence(settings: BgSettings): SceneFactory {
 }
 
 // ---------------------------------------------------------------------------
-// Particle Fields — a 3D wire terrain. A tight grid of points laid out on a
-// plane is displaced by animated 3D value noise (two octaves: the shapes
-// morph while the whole field slowly scrolls toward the viewer) and
-// projected in perspective from a raised camera. Hairline mesh links along
-// BOTH grid axes, depth-fogged, make it read as a technical surface; the
-// vertex dots carry the accent — crest highlights plus a few pulsing
-// beacons. The framing is auto-fitted (cover) to the projected flat plane,
-// so the terrain fills and centres itself on any viewport — phones
-// included. The canvas base adopts the theme's background colour; light
-// themes flip the whole field to slate ink on paper. A fresh noise lattice
-// is rolled on every scene build: each reload grows a different terrain.
+// Particle Fields — a deep starfield terrain. A wide point grid laid out on
+// a plane is displaced by three octaves of animated 3D value noise, each
+// octave with its OWN motion — one rolls toward the viewer, one slides
+// diagonally across, one only morphs in place — over a slow swirl of the
+// whole domain, so the undulations cross each other instead of marching in
+// a single direction. The plane is sized against the projected horizon so
+// its side edges sit off-screen at EVERY depth: the field reads as
+// infinite, never "narrower than the screen". There are no mesh lines.
+// Each point is drawn from a small atlas of pre-rendered sprites whose
+// softness encodes DEPTH OF FIELD: a focal band mid-field stays crisp
+// while the near rows dissolve into big bokeh rings and the far field
+// into haze. Points carry electric-blue tints and a heavy-tailed
+// magnitude — a few big bright beacons that twinkle, a mass of
+// almost-invisible grains. The whole scene runs at a fraction of its old
+// pace, and speed 0% is genuinely frozen (`numOf` keeps 0 from falling
+// back to the slider default). A fresh noise lattice rolls on every
+// build: each reload grows a different field. The canvas base adopts the
+// theme's background colour; light themes flip to deep electric-blue ink
+// dots on paper.
 // ---------------------------------------------------------------------------
 
 export function makeParticleField(settings: BgSettings): SceneFactory {
-  const speed = (Number(settings.speed) || 100) / 100
-  const density = Number(settings.density) ?? 45
+  const speed = numOf(settings.speed, 100) / 100 // 0 = genuinely frozen
+  const density = numOf(settings.density, 45)
   const tb = themeBgOf(settings)
   const light = tb != null && lumOf(tb) > 0.5
   const baseCss = tb ? `rgb(${tb[0]},${tb[1]},${tb[2]})` : '#05070c'
+  // the whole scene runs at a fraction of its old pace — the user asked for
+  // way more subtle motion; the speed slider then modulates around that
+  const SLOW = 0.22 * speed
   return (ctx: CanvasRenderingContext2D, w: number, h: number) => {
-    // --- the grid: tighter with density; rows follow the plane's aspect ----
-    const cols = Math.round(30 + (density / 100) * 28) // 30..58 points across
-    const PW = 2.35 // plane width, world units
-    const PD = 4.4 // plane depth — deep enough that the far edge reads as horizon
-    const AMP = 0.36 // hill amplitude
-    const rows = Math.max(14, Math.round(((cols * PD) / PW) * 0.62))
+    // --- camera: pitched down, raised and pulled back ---------------------
+    const pitch = 1.08 // ~62°
+    const cp = Math.cos(pitch)
+    const sp = Math.sin(pitch)
+    const camH = 1.35
+    const camD = 2.2
+    const PD = 4.4 // plane depth — the far edge reads as the horizon
+    /** perspective-project (x, y, z); out = [sx, sy, depth] in focal units */
+    const project = (x: number, y: number, z: number, out: Float32Array, k: number) => {
+      const ey = y - camH
+      const ez = z + camD
+      const zc = ez * cp - ey * sp
+      const yc = ey * cp + ez * sp
+      const inv = 1 / zc
+      out[k] = x * inv
+      out[k + 1] = -yc * inv
+      out[k + 2] = zc
+    }
+    const fitBuf = new Float32Array(3)
+    project(0, 0, 0, fitBuf, 0)
+    const nearY = fitBuf[1]!
+    const nearD = fitBuf[2]!
+    project(0, 0, PD, fitBuf, 0)
+    const farY = fitBuf[1]!
+    const farD = fitBuf[2]!
+
+    // --- framing: the vertical fit pins the horizon at 16% height and
+    //     pushes the near edge past the bottom of the frame. The plane
+    //     WIDTH is then sized so the FAR edge alone spans ~1.8 screens —
+    //     the side edges of the field are off-screen at every depth and
+    //     the mesh reads as infinite (the build this replaces sized the
+    //     plane for the near rows only, so the compressed far field fell
+    //     short of the sides and its edges were visible) ------------------
+    const fitScale = (0.92 * h) / Math.max(1e-4, nearY - farY)
+    const PW = (1.8 * w * farD) / fitScale
+    const cxf = w / 2
+    const cyf = 0.16 * h - farY * fitScale
+
+    // depth of the plane where it crosses the bottom edge of the frame
+    // (binary search on the flat projection — screen y is monotonic in z)
+    let zLo = 0
+    let zHi = PD
+    for (let i = 0; i < 22; i++) {
+      const zMid = (zLo + zHi) / 2
+      project(0, 0, zMid, fitBuf, 0)
+      if (cyf + fitBuf[1]! * fitScale > h) zLo = zMid
+      else zHi = zMid
+    }
+    project(0, 0, zHi, fitBuf, 0)
+    const dBottom = fitBuf[2]!
+
+    // --- the grid: cell size tuned at the bottom-edge depth, so the near
+    //     band carries sparse bokeh while perspective crowds the far field
+    const spacingPx = 46 - (density / 100) * 24 // 46..22 px at the bottom edge
+    const spacing = (spacingPx * dBottom) / fitScale // world units per cell
+    const cols = Math.max(26, Math.min(104, Math.ceil(PW / spacing) + 1))
+    const rows = Math.max(16, Math.min(64, Math.ceil(PD / spacing) + 1))
 
     // --- 3D value noise: a random lattice, trilinear + smoothstep ---------
-    // rolled per build → a fresh terrain every page load
+    // rolled per build → a fresh field every page load
     const L = 16
     const lat = new Float32Array(L * L * L)
     for (let i = 0; i < lat.length; i++) lat[i] = Math.random()
@@ -150,111 +219,116 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
       const f = c + (d - c) * fy
       return e + (f - e) * fz
     }
-    const F1 = 1.0
-    const F2 = 2.1
-    const zDrift = 0.14 * speed // terrain flows toward the viewer
-    const morph = 0.1 * speed // the field itself slowly changes shape
+
+    // --- the surface: three octaves, each with its own motion -------------
+    const F1 = 1.05
+    const F2 = 2.15
+    const F3 = 3.6
+    const AMP = 0.2 // gentler peaks than the wire-terrain build
+    const driftAz = 0.24 * SLOW // octave A: rolls toward the viewer
+    const driftBx = 0.2 * SLOW // octave B: slides diagonally across
+    const driftBz = -0.1 * SLOW
+    const swirlRate = 0.05 * SLOW // slow rotation of the whole domain
+    const morphRate = 0.3 * SLOW // the shapes themselves evolve
     /** normalized height at a plane point, roughly -1..1 */
     const heightAt = (x: number, z: number, t: number) => {
-      const zz = z + t * zDrift
-      let n = noise3(x * F1 + 41.7, zz * F1, t * morph) * 0.68
-      n += noise3(x * F2 + 7.3, zz * F2, t * morph * 1.6 + 33.3) * 0.32
-      let v = (n - 0.5) * 2.6
+      const ang = t * swirlRate
+      const ca = Math.cos(ang)
+      const sa = Math.sin(ang)
+      const rx = x * ca - z * sa
+      const rz = x * sa + z * ca
+      let n = 0.4 * noise3(rx * F1 + 41.7, (rz + t * driftAz) * F1 + 3.1, t * morphRate)
+      n += 0.34 * noise3((rx + t * driftBx) * F2 + 7.3, (rz + t * driftBz) * F2 + 19.9, t * morphRate * 1.7 + 33.3)
+      n += 0.26 * noise3(rx * F3 + 91.1, rz * F3 + 55.5, t * morphRate * 2.4 + 77.7)
+      let v = (n - 0.5) * 2.35
       if (v > 1) v = 1
       else if (v < -1) v = -1
       return v
     }
 
-    // --- camera: pitched down, raised and pulled back — a moderate depth
-    //     ratio between the near and far edge keeps the near cells from
-    //     blowing up to poster size under the perspective divide ----------
-    const pitch = 1.08 // ~62°
-    const cp = Math.cos(pitch)
-    const sp = Math.sin(pitch)
-    const camH = 1.35
-    const camD = 2.2
-    /** perspective-project (x, y, z); out = [sx, sy, depth] in focal units */
-    const project = (x: number, y: number, z: number, out: Float32Array, k: number) => {
-      const ey = y - camH
-      const ez = z + camD
-      const zc = ez * cp - ey * sp
-      const yc = ey * cp + ez * sp
-      const inv = 1 / zc
-      out[k] = x * inv
-      out[k + 1] = -yc * inv
-      out[k + 2] = zc
-    }
-
-    // --- framing: the mesh is laid out to FILL the frame — horizon (far
-    //     edge) at ~16% height, the near edge pushed BELOW the bottom edge
-    //     (so no dead band under the last row), near width overflowing the
-    //     sides. Centred by construction on every viewport, and the layout
-    //     is computed from the FLAT plane so it never "breathes" ----------
-    const fitBuf = new Float32Array(3)
-    project(PW / 2, 0, 0, fitBuf, 0)
-    const nearX = fitBuf[0]!
-    const nearY = fitBuf[1]!
-    const nearD = fitBuf[2]!
-    project(0, 0, PD, fitBuf, 0)
-    const farY = fitBuf[1]!
-    const farD = fitBuf[2]!
-    // vertical span (near edge 8% PAST the bottom, horizon at 16% height)
-    let fitScale = (0.92 * h) / Math.max(0.0001, nearY - farY)
-    // width floor: the near rows must overflow the sides
-    const fitFloor = (0.64 * w) / Math.max(0.0001, nearX)
-    if (fitScale < fitFloor) fitScale = fitFloor
-    const cxf = w / 2
-    const cyf = 0.16 * h - farY * fitScale
-    const dMin = nearD
-    const dSpan = Math.max(0.0001, farD - nearD)
-
-    // per-point projected coords + depth + height
-    const S = cols * rows
-    const sx = new Float32Array(S)
-    const sy = new Float32Array(S)
-    const dd = new Float32Array(S)
-    const hh = new Float32Array(S)
-
-    // beacons: a handful of pulsing accent dots, placed only where the FLAT
-    // projection lands comfortably inside the frame (heights wobble the
-    // points vertically, so leave generous margins) — a beacon clipped by
-    // the viewport reads as a bug, not a design choice
-    const beaconCount = Math.max(4, Math.round(S / 260))
-    const beacons: { idx: number; ph: number }[] = []
-    {
-      const cand: number[] = []
-      for (let j = 0; j < rows; j++) {
-        for (let i = 0; i < cols; i++) {
-          const x = (i / (cols - 1) - 0.5) * PW
-          const z = (j / (rows - 1)) * PD
-          project(x, 0, z, fitBuf, 0)
-          const bx = cxf + fitBuf[0]! * fitScale
-          const by = cyf + fitBuf[1]! * fitScale
-          if (bx > w * 0.16 && bx < w * 0.84 && by > h * 0.3 && by < h * 0.72) cand.push(j * cols + i)
+    // --- sprite atlas: depth-of-field, pre-rendered ------------------------
+    // 3 electric-blue tints × 6 softness levels. Level 0 is a crisp dot;
+    // the softest levels are bokeh RINGS (bright rim, hollow centre) like
+    // an out-of-focus lens. A point's level follows its distance from the
+    // focal band, so near bokeh and far haze both dissolve while the
+    // mid-field stays sharp — the focal-length illusion.
+    const TINTS: [number, number, number][] = light
+      ? [
+          [4, 104, 214], // deep electric-blue ink
+          [8, 134, 238], // electric blue
+          [66, 174, 255], // bright sky-blue spark
+        ]
+      : [
+          [34, 108, 238], // deep electric blue
+          [72, 168, 255], // electric blue glow
+          [198, 236, 255], // hot core, white-blue
+        ]
+    const LEVELS = 6
+    const SPR = 64
+    const sprites: HTMLCanvasElement[][] = TINTS.map((rgb, tix) =>
+      Array.from({ length: LEVELS }, (_, lv) => {
+        const f = lv / (LEVELS - 1) // 0 crisp → 1 soft
+        const c = document.createElement('canvas')
+        c.width = c.height = SPR
+        const g = c.getContext('2d')!
+        const grad = g.createRadialGradient(SPR / 2, SPR / 2, 0, SPR / 2, SPR / 2, SPR / 2)
+        const peak = 1 - 0.35 * f
+        const [r, gg, b] = rgb
+        const col = (a: number) => `rgba(${r},${gg},${b},${a.toFixed(3)})`
+        // the hot tint carries a white core on dark water
+        const core = !light && tix === 2 ? `rgba(240,250,255,${peak.toFixed(3)})` : col(peak)
+        if (f > 0.55) {
+          // bokeh ring: hollow centre, bright rim, soft skirt
+          grad.addColorStop(0, col(0.16 * peak))
+          grad.addColorStop(0.34, col(0.42 * peak))
+          grad.addColorStop(0.5, core)
+          grad.addColorStop(0.62, col(0.5 * peak))
+          grad.addColorStop(0.82, col(0.16 * peak))
+          grad.addColorStop(1, col(0))
+        } else {
+          // crisp dot: solid core, quick falloff; softens with f
+          const coreEnd = 0.34 - 0.24 * f
+          const mid = 0.6 - 0.08 * f
+          grad.addColorStop(0, core)
+          grad.addColorStop(coreEnd, core)
+          grad.addColorStop(mid, col(0.32 * peak))
+          grad.addColorStop(1, col(0))
         }
-      }
-      for (let i = 0; i < beaconCount && cand.length > 0; i++) {
-        const pick = cand.splice(Math.floor(Math.random() * cand.length), 1)[0]!
-        beacons.push({ idx: pick, ph: Math.random() * Math.PI * 2 })
-      }
-    }
+        g.fillStyle = grad
+        g.fillRect(0, 0, SPR, SPR)
+        return c
+      }),
+    )
 
-    // palette: silver hairlines + cyan accents on dark, slate ink + teal on
-    // light paper
-    const LINE = light ? 'rgba(51,65,85,' : 'rgba(148,163,184,'
-    const LINE_CREST = light ? 'rgba(8,145,178,' : 'rgba(56,189,248,'
-    const DOT = light ? 'rgba(30,41,59,' : 'rgba(226,232,240,'
-    const DOT_CREST = light ? 'rgba(8,145,178,' : 'rgba(125,211,252,'
-    const BEACON = light ? 'rgba(13,148,136,' : 'rgba(34,211,238,'
+    // --- focal band + per-point character ---------------------------------
+    const dSpan = Math.max(1e-4, farD - nearD)
+    const dFocus = nearD + 0.42 * dSpan // the crisp band, a touch nearer than mid
+    const blurOf = (d: number) => {
+      const b = Math.abs(d - dFocus) / (0.62 * dSpan)
+      return b > 1 ? 1 : b
+    }
+    const S2 = cols * rows
+    const pmag = new Float32Array(S2) // heavy-tailed magnitude
+    const ptint = new Uint8Array(S2)
+    const pph = new Float32Array(S2) // twinkle phase (bright points only)
+    for (let k = 0; k < S2; k++) {
+      // a few big bright beacons, a mass of near-invisible grains
+      let mag = Math.pow(Math.random(), 2.6)
+      if (Math.random() < 0.035) mag = 0.82 + Math.random() * 0.18
+      pmag[k] = mag
+      ptint[k] = mag > 0.72 ? 2 : mag > 0.34 ? 1 : 0
+      pph[k] = Math.random() * Math.PI * 2
+    }
 
     const px = new Float32Array(3)
     // the far edge's on-screen y (constant — computed from the flat plane):
     // the horizon line the sky glow below is anchored to
     const horizonY = cyf + farY * fitScale
+    const twinkleRate = 0.5 + 1.6 * SLOW // bright points breathe; frozen at speed 0
 
     return (t: number) => {
-      // themed technical base with a quiet top-corners falloff (kept away
-      // from the bottom, where the nearest — brightest — mesh rows live)
+      // themed base with a quiet top-corners falloff + horizon haze (depth
+      // cues, kept away from the bottom where the brightest bokeh lives)
       ctx.fillStyle = baseCss
       ctx.fillRect(0, 0, w, h)
       const vg = ctx.createRadialGradient(w / 2, h * 0.3, Math.min(w, h) * 0.45, w / 2, h * 0.3, Math.hypot(w, h) * 0.62)
@@ -262,8 +336,6 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
       vg.addColorStop(1, light ? 'rgba(0,0,0,0.06)' : 'rgba(0,0,0,0.16)')
       ctx.fillStyle = vg
       ctx.fillRect(0, 0, w, h)
-      // horizon atmosphere: a faint tinted band at the far edge, so the sky
-      // above the mesh reads as distance haze rather than dead space
       const hg = ctx.createLinearGradient(0, horizonY - h * 0.1, 0, horizonY + h * 0.06)
       hg.addColorStop(0, 'rgba(0,0,0,0)')
       hg.addColorStop(0.55, light ? 'rgba(51,65,85,0.05)' : 'rgba(56,130,184,0.07)')
@@ -271,97 +343,457 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
       ctx.fillStyle = hg
       ctx.fillRect(0, horizonY - h * 0.1, w, h * 0.16)
 
-      // --- project every grid point ----------------------------------------
-      // rows run far → near; near rows that fall entirely below the frame
-      // are skipped (the plane is deliberately pushed past the bottom edge)
+      // --- project + draw, far row → near row ------------------------------
+      // additive on dark (overlaps glow), plain ink on light paper
+      ctx.globalCompositeOperation = light ? 'source-over' : 'lighter'
       for (let j = 0; j < rows; j++) {
         const z = (j / (rows - 1)) * PD
         const rowOff = j * cols
         for (let i = 0; i < cols; i++) {
           const x = (i / (cols - 1) - 0.5) * PW
+          const k = rowOff + i
           const hgt = heightAt(x, z, t)
           project(x, hgt * AMP, z, px, 0)
-          const k = rowOff + i
-          sx[k] = cxf + px[0]! * fitScale
-          sy[k] = cyf + px[1]! * fitScale
-          dd[k] = px[2]!
-          hh[k] = hgt
+          const scrX = cxf + px[0]! * fitScale
+          const scrY = cyf + px[1]! * fitScale
+          if (scrX < -34 || scrX > w + 34 || scrY < -34 || scrY > h + 34) continue
+          const d = px[2]!
+          const fog = 1 - (d - nearD) / dSpan // 1 near → 0 far
+          if (fog < 0.1 && (i + j) % 2 === 1) continue // thin out only the deepest haze
+          const blur = blurOf(d)
+          const mag = pmag[k]!
+          // size: near points larger, blur inflates the bokeh, magnitude
+          // spans almost-invisible grains to big bright beacons
+          const rBase = 1.3 + 1.75 * fog
+          const r = rBase * (0.6 + 1.9 * mag) * (1 + 1.15 * blur)
+          let alpha = (0.1 + 0.6 * mag) * (0.42 + 0.58 * fog) * (1 - 0.4 * blur)
+          if (mag > 0.72) alpha *= 0.8 + 0.2 * Math.sin(t * twinkleRate + pph[k]!)
+          if (alpha <= 0.012) continue
+          const lv = Math.min(LEVELS - 1, Math.round(blur * (LEVELS - 1)))
+          ctx.globalAlpha = Math.min(1, alpha)
+          ctx.drawImage(sprites[ptint[k]]![lv]!, scrX - r, scrY - r, r * 2, r * 2)
         }
       }
+      ctx.globalAlpha = 1
+      ctx.globalCompositeOperation = 'source-over'
+    }
+  }
+}
 
-      // --- hairline mesh: links along both axes, depth-fogged --------------
-      // NEAR lines are the brightest and slightly thicker (they are the
-      // widest apart, so they can afford the weight); distance fades them
-      // hard so the compressed far field stays quiet. Crest segments tint
-      // cyan — but only in the near half, where the eye can separate them.
-      // No geometric LOD: density changes read as tears; the alpha fade IS
-      // the level of detail.
-      ctx.lineCap = 'round'
-      const drawSeg = (a: number, b: number) => {
-        const ay = sy[a]!
-        const by = sy[b]!
-        // cull segments that are entirely well outside the frame (the plane
-        // deliberately spills past the bottom edge and the sides)
-        if ((ay > h + 60 && by > h + 60) || (ay < -60 && by < -60)) return
-        if ((sx[a]! < -60 && sx[b]! < -60) || (sx[a]! > w + 60 && sx[b]! > w + 60)) return
-        const dAvg = (dd[a]! + dd[b]!) / 2
-        const fog = Math.max(0, 1 - (dAvg - dMin) / dSpan) // 1 near → 0 far
-        const hAvg = (hh[a]! + hh[b]!) / 2
-        const crest = hAvg > 0.5 && fog > 0.35
-        const alpha = (0.13 + 0.5 * Math.pow(fog, 1.45)) * (crest ? 1.3 : 1) * (0.72 + 0.28 * hAvg)
-        ctx.strokeStyle = (crest ? LINE_CREST : LINE) + Math.min(0.62, alpha).toFixed(3) + ')'
-        ctx.lineWidth = 0.85 + 0.45 * fog
+// ---------------------------------------------------------------------------
+// Ripple — rain falling on a still puddle, seen from directly above. Drops
+// land at random points; each rings out 2–4 decelerating circles that fade
+// as they widen, with a bright splash dot marking the impact for a beat.
+// Most drops are micro-patters (one small quick ring); a few are heavy
+// drops with wider, slower ring systems. Rain accumulates on sim time —
+// which the speed dial scales, so 0% is a frozen puddle between showers —
+// and the factory pre-rolls a few seconds of weather so the first visible
+// frame is already developed. The water adopts the theme's background
+// colour: dark themes get additive neon-cyan rings over deep water, light
+// themes an ink wash on pale paper.
+// ---------------------------------------------------------------------------
+
+export function makeRipple(settings: BgSettings): WarmupSceneFactory {
+  const speed = numOf(settings.speed, 100) / 100 // 0 = the shower pauses
+  const density = numOf(settings.density, 50)
+  const tb = themeBgOf(settings)
+  const light = tb != null && lumOf(tb) > 0.5
+  const BASE: [number, number, number] = tb ?? [7, 12, 20]
+  const factory = ((ctx: CanvasRenderingContext2D, w: number, h: number) => {
+    const SM = Math.min(w, h)
+    interface Ring {
+      x: number
+      y: number
+      born: number
+      delay: number
+      life: number
+      maxR: number
+      hue: number // 0..1 — cyan ↔ blue
+      weight: number // heavy drops draw a touch wider
+    }
+    const rings: Ring[] = []
+    let simT = 0
+    let acc = 0
+    // real rain is BUSY — dozens of impacts alive at once is what makes a
+    // still frame read as a shower (each ring system lives ~2-3s)
+    const rate = 2.6 + (density / 100) * 9.4 // drops per sim-second
+    const spawn = () => {
+      if (rings.length > 220) return // soft cap for dense settings on slow devices
+      const x = Math.random() * w
+      const y = Math.random() * h
+      const hue = Math.random()
+      const kind = Math.random()
+      if (kind < 0.42) {
+        // micro patter: one small quick ring
+        rings.push({
+          x,
+          y,
+          born: simT,
+          delay: 0,
+          life: 1.1 + Math.random() * 0.5,
+          maxR: (0.045 + Math.random() * 0.045) * SM,
+          hue,
+          weight: 0.85,
+        })
+        return
+      }
+      const heavy = kind > 0.82
+      const n = heavy ? 4 : 2 + (Math.random() < 0.6 ? 1 : 0)
+      const life = (heavy ? 3.4 : 2.3) + Math.random() * 0.8
+      const maxR = ((heavy ? 0.15 : 0.085) + Math.random() * 0.07) * SM
+      for (let i = 0; i < n; i++) {
+        rings.push({
+          x,
+          y,
+          born: simT,
+          delay: i * (heavy ? 0.34 : 0.27),
+          life: life * (1 - i * 0.08),
+          maxR: maxR * (1 - i * 0.14),
+          hue,
+          weight: heavy ? 1.25 : 1,
+        })
+      }
+    }
+    const advance = (dt: number) => {
+      simT += dt
+      acc += dt * rate
+      while (acc >= 1) {
+        acc -= 1
+        spawn()
+      }
+      for (let i = rings.length - 1; i >= 0; i--) {
+        const r = rings[i]!
+        if (simT - r.born > r.delay + r.life) rings.splice(i, 1)
+      }
+    }
+    // pre-roll ~4.5 s of weather on a wall-clock budget, so the first frame
+    // a user sees is a puddle already mid-shower, not a dry canvas
+    const prerollStart = performance.now()
+    while (simT < 4.5 && performance.now() - prerollStart < 350) advance(1 / 30)
+
+    let lastT = -1
+    const frame = (t: number) => {
+      const dt = lastT < 0 ? 0 : Math.min(0.1, t - lastT)
+      lastT = t
+      if (dt > 0) advance(dt * speed)
+      // the puddle itself
+      ctx.fillStyle = `rgb(${BASE[0]},${BASE[1]},${BASE[2]})`
+      ctx.fillRect(0, 0, w, h)
+      // a soft light pool — ambient sheen on the water
+      const g = ctx.createRadialGradient(w * 0.5, h * 0.42, 0, w * 0.5, h * 0.42, Math.max(w, h) * 0.75)
+      if (light) {
+        g.addColorStop(0, 'rgba(255,255,255,0.5)')
+        g.addColorStop(1, 'rgba(255,255,255,0)')
+      } else {
+        g.addColorStop(0, 'rgba(56,110,150,0.2)')
+        g.addColorStop(1, 'rgba(0,0,0,0)')
+      }
+      ctx.fillStyle = g
+      ctx.fillRect(0, 0, w, h)
+      ctx.globalCompositeOperation = light ? 'source-over' : 'lighter'
+      for (const r of rings) {
+        const age = simT - r.born - r.delay
+        if (age < 0) continue // not born yet
+        const p = age / r.life
+        if (p >= 1) continue
+        const ease = 1 - Math.pow(1 - p, 2.3) // decelerating expansion
+        const rad = Math.max(1, r.maxR * ease)
+        const fade = Math.pow(1 - p, 1.3)
+        // per-drop hue: cyan ↔ blue
+        const cr = light ? 30 + r.hue * 10 : 120 + r.hue * 60
+        const cg = light ? 110 + r.hue * 30 : 200 + r.hue * 30
+        const cb = light ? 210 + r.hue * 30 : 250
+        const a = fade * (light ? 0.62 : 0.95)
+        // halo + core double stroke reads as a wet neon ring on dark water
+        ctx.lineWidth = 4.2 * r.weight
+        ctx.strokeStyle = `rgba(${cr | 0},${cg | 0},${cb | 0},${(a * 0.3).toFixed(3)})`
         ctx.beginPath()
-        ctx.moveTo(sx[a]!, ay)
-        ctx.lineTo(sx[b]!, by)
+        ctx.arc(r.x, r.y, rad, 0, Math.PI * 2)
         ctx.stroke()
-      }
-      for (let j = 0; j < rows; j++) {
-        const rowOff = j * cols
-        for (let i = 0; i < cols - 1; i++) drawSeg(rowOff + i, rowOff + i + 1)
-      }
-      for (let i = 0; i < cols; i++) {
-        for (let j = 0; j < rows - 1; j++) drawSeg(j * cols + i, (j + 1) * cols + i)
-      }
-
-      // --- vertex dots: near points bigger and brighter ---------------------
-      for (let j = 0; j < rows; j++) {
-        const rowOff = j * cols
-        for (let i = 0; i < cols; i++) {
-          const k = rowOff + i
-          if (sy[k]! < -40 || sy[k]! > h + 40) continue
-          const fog = Math.max(0, 1 - (dd[k]! - dMin) / dSpan)
-          if (fog < 0.12 && (i + j) % 2 === 1) continue // sparse far dots
-          const crest = hh[k]! > 0.55 && fog > 0.3
-          const r = Math.max(0.55, Math.min(2.6, 1.0 + 1.6 * fog))
-          const alpha = (0.2 + 0.6 * fog) * (crest ? 1.3 : 1)
-          ctx.fillStyle = (crest ? DOT_CREST : DOT) + Math.min(0.95, alpha).toFixed(3) + ')'
+        ctx.lineWidth = 1.5 * r.weight
+        ctx.strokeStyle = `rgba(${cr | 0},${cg | 0},${cb | 0},${a.toFixed(3)})`
+        ctx.beginPath()
+        ctx.arc(r.x, r.y, rad, 0, Math.PI * 2)
+        ctx.stroke()
+        // impact splash — a bright dot for the first beat of the first ring
+        if (age < 0.5 && r.delay === 0) {
+          const sp = 1 - age / 0.5
+          const rr = (3 + (1 - sp) * 16) * r.weight
+          const sg = ctx.createRadialGradient(r.x, r.y, 0, r.x, r.y, rr)
+          const hot = light ? '255,255,255' : '225,245,255'
+          sg.addColorStop(0, `rgba(${hot},${(0.95 * sp).toFixed(3)})`)
+          sg.addColorStop(1, `rgba(${hot},0)`)
+          ctx.fillStyle = sg
           ctx.beginPath()
-          ctx.arc(sx[k]!, sy[k]!, crest ? r * 1.3 : r, 0, Math.PI * 2)
+          ctx.arc(r.x, r.y, rr, 0, Math.PI * 2)
           ctx.fill()
         }
       }
+      ctx.globalCompositeOperation = 'source-over'
+    }
+    return frame
+  }) as WarmupSceneFactory
+  factory.warmupFrames = 1
+  return factory
+}
 
-      // --- beacons: pulsing accent lights on the surface --------------------
-      for (const bc of beacons) {
-        const k = bc.idx
-        const pulse = 0.45 + 0.55 * Math.sin(t * 1.4 + bc.ph)
-        const fog = 1 - (dd[k]! - dMin) / dSpan
-        const a = (0.3 + 0.6 * pulse) * (0.35 + 0.65 * fog)
-        const r = 1.5 + 1.3 * pulse
-        const halo = r * (3 + pulse * 3)
-        const g = ctx.createRadialGradient(sx[k]!, sy[k]!, 0, sx[k]!, sy[k]!, halo)
-        g.addColorStop(0, BEACON + (a * 0.8).toFixed(3) + ')')
-        g.addColorStop(1, BEACON + '0)')
-        ctx.fillStyle = g
-        ctx.beginPath()
-        ctx.arc(sx[k]!, sy[k]!, halo, 0, Math.PI * 2)
-        ctx.fill()
-        ctx.fillStyle = BEACON + Math.min(1, a + 0.25).toFixed(3) + ')'
-        ctx.beginPath()
-        ctx.arc(sx[k]!, sy[k]!, r, 0, Math.PI * 2)
-        ctx.fill()
+// ---------------------------------------------------------------------------
+// Parametric Forms — a spherical-harmonics shell breathing at the exact
+// centre of the frame. One deformed sphere (r = R·(1 + Σ aₖ·Yₖ), nine
+// low-order terms, coefficients rolled fresh on every build — a cousin of
+// the same ball each refresh, per the user's ask) is drawn as a glowing
+// lat/long wireframe; 3–4 dimmer nested shells at shrinking scales drift
+// on their own slow rotations behind it, giving the layered-jelly contour
+// look of the reference. Colour walks the depth axis — deep violet far,
+// magenta-pink near — with a wide low-alpha bloom pass so the wires read
+// as neon, a glassy membrane gradient behind everything, and sparse
+// bright node dots on the near side. ALWAYS centred (phones included).
+// Motion (spin, wobble, coefficient breathing) rides the speed dial;
+// 0% holds the form still.
+// ---------------------------------------------------------------------------
+
+export function makeParametric(settings: BgSettings): SceneFactory {
+  const speed = numOf(settings.speed, 100) / 100 // 0 = the form holds still
+  const density = numOf(settings.density, 50)
+  const tb = themeBgOf(settings)
+  const light = tb != null && lumOf(tb) > 0.5
+  const baseCss = tb ? `rgb(${tb[0]},${tb[1]},${tb[2]})` : '#0d0d1f'
+  return (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+    // ---- per-refresh parameters -------------------------------------------
+    // nine low-order spherical-harmonic terms with rolled coefficients,
+    // bounded so the form stays lobed and smooth — 4–6 rounded bulges and
+    // dimples, never spikes — each with its own slow breathing phase
+    const A_BASE = [
+      0.14 + Math.random() * 0.12, // Y20 — polar stretch
+      (Math.random() * 2 - 1) * 0.26, // Y22 — big equatorial squash
+      (Math.random() * 2 - 1) * 0.18, // Y2-2
+      0.08 + Math.random() * 0.1, // Y30
+      (Math.random() * 2 - 1) * 0.16, // Y32
+      (Math.random() * 2 - 1) * 0.14, // Y3-2
+      (Math.random() * 2 - 1) * 0.2, // Y33 — tri-lobed twist
+      0.05 + Math.random() * 0.07, // Y40
+      (Math.random() * 2 - 1) * 0.12, // Y44 — fine quadrilobe ripple
+    ]
+    const N_H = A_BASE.length
+    const breathPh = Array.from({ length: N_H }, () => Math.random() * Math.PI * 2)
+    const breathRt = Array.from({ length: N_H }, () => 0.22 + Math.random() * 0.3)
+    const harm = (key: number, ct: number, st: number, phi: number): number => {
+      switch (key) {
+        case 0:
+          return 0.5 * (3 * ct * ct - 1)
+        case 1:
+          return st * st * Math.cos(2 * phi)
+        case 2:
+          return st * st * Math.sin(2 * phi)
+        case 3:
+          return 0.5 * (5 * ct * ct * ct - 3 * ct)
+        case 4:
+          return st * st * ct * Math.cos(2 * phi)
+        case 5:
+          return st * st * ct * Math.sin(2 * phi)
+        case 6:
+          return st * st * st * Math.cos(3 * phi)
+        case 7:
+          return 0.125 * (35 * ct * ct * ct * ct - 30 * ct * ct + 3)
+        default:
+          return st * st * st * st * Math.cos(4 * phi)
       }
+    }
+
+    // ---- nested shells: the layered contours of the reference ------------
+    const nestCount = 3 + Math.floor(Math.random() * 2)
+    const nests = Array.from({ length: nestCount }, (_, i) => ({
+      scale: (0.93 - i * 0.08) * (0.97 + Math.random() * 0.05),
+      rotY: Math.random() * Math.PI * 2,
+      tiltX: (Math.random() - 0.5) * 0.5,
+      spinMul: 0.45 + Math.random() * 0.75, // its own slow rotation
+      alpha: 0.26 - i * 0.05,
+    }))
+
+    // ---- wire density ------------------------------------------------------
+    const LAT = 13 + Math.round((density / 100) * 9)
+    const LON = 18 + Math.round((density / 100) * 16)
+    const NLAT = 9
+    const NLON = 14
+
+    // ---- framing: ALWAYS dead-centre (the phone requirement) --------------
+    const cx = w / 2
+    const cyc = h / 2
+    const Rs = 0.38 * Math.min(w, h) // undeformed radius; lobes reach ~1.3×
+    const D = 3.0 // camera distance, world units (ball radius ≈ 1)
+    const F = 3.0 // focal length — noticeable perspective, like the reference
+
+    // depth colour ramp: deep violet far → magenta-pink near, quantised into
+    // stroke buckets so the frame loop builds no colour strings
+    type Rgb = [number, number, number]
+    const FAR: Rgb = light ? [79, 56, 178] : [77, 68, 224]
+    const MID: Rgb = light ? [124, 58, 237] : [139, 92, 246]
+    const NEAR: Rgb = light ? [199, 44, 168] : [244, 114, 208]
+    const BUCKETS = 12
+    const mix = (a: Rgb, b: Rgb, t: number): Rgb => [
+      a[0] + (b[0] - a[0]) * t,
+      a[1] + (b[1] - a[1]) * t,
+      a[2] + (b[2] - a[2]) * t,
+    ]
+    const rampAt = (tc: number): Rgb => (tc < 0.5 ? mix(FAR, MID, tc * 2) : mix(MID, NEAR, (tc - 0.5) * 2))
+    const css = (c: Rgb, a: number) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a.toFixed(3)})`
+    const mainStrokes: string[] = []
+    const glowStrokes: string[] = []
+    const nestStrokes = nests.map((n) => [] as string[])
+    for (let b = 0; b < BUCKETS; b++) {
+      const tc = b / (BUCKETS - 1)
+      const c = rampAt(tc)
+      mainStrokes.push(css(c, (light ? 0.2 : 0.3) + (light ? 0.5 : 0.6) * tc))
+      glowStrokes.push(css(c, (light ? 0.05 : 0.11) + 0.09 * tc))
+      for (let si = 0; si < nests.length; si++) {
+        nestStrokes[si]!.push(css(c, nests[si]!.alpha * (0.65 + 0.35 * tc)))
+      }
+    }
+
+    // ---- motion (all rates ride `speed`; 0 freezes everything) ------------
+    const spinY = 0.1 * speed
+    const wobbleX = 0.033 * speed
+    const breathRate = 0.3 * speed
+    const baseTilt = 0.32 // resting tilt toward the viewer
+
+    // scratch projection buffers (sized for the main grid, the largest)
+    const pxs = new Float32Array(LAT * LON)
+    const pys = new Float32Array(LAT * LON)
+    const pzs = new Float32Array(LAT * LON)
+
+    /** draw one shell's wireframe (lat rings + lon lines) into the scratch
+     *  buffers, then stroke it: a wide dim glow pass first (optional), the
+     *  crisp wires on top, sparse node dots last (optional). */
+    const drawWire = (
+      scale: number,
+      rotY: number,
+      rotX: number,
+      latN: number,
+      lonN: number,
+      strokes: string[],
+      glow: boolean,
+      dots: boolean,
+      aNow: number[],
+    ) => {
+      const cyv = Math.cos(rotY)
+      const syv = Math.sin(rotY)
+      const cxv = Math.cos(rotX)
+      const sxv = Math.sin(rotX)
+      for (let j = 0; j < latN; j++) {
+        const th = (Math.PI * (j + 0.5)) / latN
+        const ct = Math.cos(th)
+        const st = Math.sin(th)
+        for (let i = 0; i < lonN; i++) {
+          const ph = (Math.PI * 2 * i) / lonN
+          let r = scale
+          for (let k = 0; k < N_H; k++) r += scale * aNow[k]! * harm(k, ct, st, ph)
+          const x0 = r * st * Math.cos(ph)
+          const y0 = r * ct
+          const z0 = r * st * Math.sin(ph)
+          // spin around Y, then tilt around X
+          const x1 = x0 * cyv + z0 * syv
+          const z1 = z0 * cyv - x0 * syv
+          const y2 = y0 * cxv - z1 * sxv
+          const z2 = y0 * sxv + z1 * cxv
+          const kf = F / (D - z2)
+          const idx = j * lonN + i
+          pxs[idx] = cx + x1 * kf * Rs
+          pys[idx] = cyc - y2 * kf * Rs
+          pzs[idx] = z2
+        }
+      }
+      const seg = (a: number, b: number, pass: 0 | 1) => {
+        let tc = ((pzs[a]! + pzs[b]!) * 0.5 + 1.35) / 2.7
+        if (tc < 0) tc = 0
+        else if (tc > 1) tc = 1
+        const bkt = Math.min(BUCKETS - 1, Math.round(tc * (BUCKETS - 1)))
+        ctx.strokeStyle = pass === 1 ? glowStrokes[bkt]! : strokes[bkt]!
+        ctx.lineWidth = pass === 1 ? 3.4 : 0.55 + 0.8 * tc
+        ctx.beginPath()
+        ctx.moveTo(pxs[a]!, pys[a]!)
+        ctx.lineTo(pxs[b]!, pys[b]!)
+        ctx.stroke()
+      }
+      // glow halo pass first — the neon bloom under the crisp wires
+      if (glow) {
+        for (let j = 0; j < latN; j++) {
+          for (let i = 0; i < lonN; i++) seg(j * lonN + i, j * lonN + ((i + 1) % lonN), 1)
+        }
+        for (let i = 0; i < lonN; i++) {
+          for (let j = 0; j < latN - 1; j++) seg(j * lonN + i, (j + 1) * lonN + i, 1)
+        }
+      }
+      // crisp wires
+      for (let j = 0; j < latN; j++) {
+        for (let i = 0; i < lonN; i++) seg(j * lonN + i, j * lonN + ((i + 1) % lonN), 0)
+      }
+      for (let i = 0; i < lonN; i++) {
+        for (let j = 0; j < latN - 1; j++) seg(j * lonN + i, (j + 1) * lonN + i, 0)
+      }
+      // sparse bright node dots on the near side (a reference detail)
+      if (dots) {
+        for (let j = 0; j < latN; j++) {
+          for (let i = 0; i < lonN; i++) {
+            if ((i + j) % 3 !== 0) continue
+            const idx = j * lonN + i
+            let tc = (pzs[idx]! + 1.35) / 2.7
+            if (tc < 0.62 || tc > 1) continue
+            const c = rampAt(tc)
+            ctx.fillStyle = light
+              ? css(c, 0.75 * tc)
+              : `rgba(${Math.min(255, c[0] + 60) | 0},${Math.min(255, c[1] + 60) | 0},${Math.min(255, c[2] + 40) | 0},${(0.8 * tc).toFixed(3)})`
+            ctx.beginPath()
+            ctx.arc(pxs[idx]!, pys[idx]!, 0.9 + 0.7 * tc, 0, Math.PI * 2)
+            ctx.fill()
+          }
+        }
+      }
+    }
+
+    const aNow: number[] = new Array(N_H).fill(0)
+    return (t: number) => {
+      ctx.fillStyle = baseCss
+      ctx.fillRect(0, 0, w, h)
+      // vignette — the corners fall off like the reference
+      const vg = ctx.createRadialGradient(cx, cyc, Rs, cx, cyc, Math.hypot(w, h) * 0.62)
+      vg.addColorStop(0, 'rgba(0,0,0,0)')
+      vg.addColorStop(1, light ? 'rgba(0,0,0,0.05)' : 'rgba(0,0,0,0.22)')
+      ctx.fillStyle = vg
+      ctx.fillRect(0, 0, w, h)
+      // glassy membrane behind the form — the faint jelly fill
+      const mg = ctx.createRadialGradient(cx, cyc, 0, cx, cyc, Rs * 1.12)
+      mg.addColorStop(0, light ? 'rgba(124,58,237,0.05)' : 'rgba(139,92,246,0.12)')
+      mg.addColorStop(0.7, light ? 'rgba(124,58,237,0.02)' : 'rgba(91,79,216,0.05)')
+      mg.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.fillStyle = mg
+      ctx.fillRect(0, 0, w, h)
+      const mg2 = ctx.createRadialGradient(cx + Rs * 0.22, cyc + Rs * 0.18, 0, cx + Rs * 0.22, cyc + Rs * 0.18, Rs * 0.8)
+      mg2.addColorStop(0, light ? 'rgba(199,44,168,0.04)' : 'rgba(244,114,208,0.09)')
+      mg2.addColorStop(1, 'rgba(0,0,0,0)')
+      ctx.fillStyle = mg2
+      ctx.fillRect(0, 0, w, h)
+
+      // breathing coefficients — shared by every shell (same form, own spins)
+      for (let k = 0; k < N_H; k++) {
+        aNow[k] = A_BASE[k]! * (1 + 0.1 * Math.sin(t * breathRate * breathRt[k]! + breathPh[k]!))
+      }
+      ctx.lineCap = 'round'
+      // nested shells first (they sit behind), main shell on top
+      for (let si = 0; si < nests.length; si++) {
+        const nst = nests[si]!
+        drawWire(
+          nst.scale,
+          nst.rotY + t * spinY * nst.spinMul,
+          nst.tiltX + Math.sin(t * wobbleX * 2 + nst.rotY) * 0.2,
+          NLAT,
+          NLON,
+          nestStrokes[si]!,
+          false,
+          false,
+          aNow,
+        )
+      }
+      drawWire(1, t * spinY, baseTilt + Math.sin(t * wobbleX) * 0.16, LAT, LON, mainStrokes, true, true, aNow)
     }
   }
 }
@@ -389,8 +821,8 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
 // ---------------------------------------------------------------------------
 
 export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
-  const speed = (Number(settings.speed) || 60) / 100
-  const density = Number(settings.density) ?? 50
+  const speed = numOf(settings.speed, 60) / 100 // 0 = the water holds still
+  const density = numOf(settings.density, 50)
   const tb = themeBgOf(settings)
   const light = tb != null && lumOf(tb) > 0.5
   // dye composites over the theme's background colour: dark themes get the
