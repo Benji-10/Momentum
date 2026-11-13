@@ -8,12 +8,23 @@
 // prefers-reduced-motion.
 // ---------------------------------------------------------------------------
 
-type BgSettings = Record<string, number | string>
+type BgSettings = Record<string, number | string | [number, number, number]>
 export type Scene = (tSec: number) => void
 export type SceneFactory = (ctx: CanvasRenderingContext2D, w: number, h: number) => Scene
 
 /** A scene that builds trails needs warm-up frames to look right frozen. */
 export type WarmupSceneFactory = SceneFactory & { warmupFrames?: number }
+
+/** The theme's background colour, injected by BackgroundLayer (undefined in
+ *  the offline preview harness → scenes fall back to their curated darks). */
+function themeBgOf(settings: BgSettings): [number, number, number] | null {
+  const v = settings.themeBg
+  return Array.isArray(v) ? [v[0], v[1], v[2]] : null
+}
+
+function lumOf(rgb: [number, number, number]): number {
+  return (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255
+}
 
 // ---------------------------------------------------------------------------
 // Bioluminescence — dark water with glowing drifting particles
@@ -23,9 +34,18 @@ export function makeBioluminescence(settings: BgSettings): SceneFactory {
   const speed = (Number(settings.speed) || 100) / 100
   const density = Number(settings.density) ?? 50
   const glow = Number(settings.glow) ?? 60
+  const tb = themeBgOf(settings)
+  const light = tb != null && lumOf(tb) > 0.5
+  // the water itself adopts the theme's background colour — dark themes get
+  // their own shade of deep water, light themes a bright one with deeper-
+  // toned plankton (additive glow is invisible on light, so the particles
+  // switch to normal compositing ink dots)
+  const baseCss = tb ? `rgb(${tb[0]},${tb[1]},${tb[2]})` : '#050a12'
   return (ctx: CanvasRenderingContext2D, w: number, h: number) => {
     const count = Math.round(24 + (density / 100) * 110)
-    const hues = ['186,240,255', '147,197,253', '196,181,253'] // cyan, blue, violet
+    const hues = light
+      ? ['8,145,178', '79,70,229', '124,58,237'] // teal / indigo / violet ink
+      : ['186,240,255', '147,197,253', '196,181,253'] // cyan, blue, violet glow
     const particles = Array.from({ length: count }, () => ({
       x: Math.random() * w,
       y: Math.random() * h,
@@ -37,15 +57,18 @@ export function makeBioluminescence(settings: BgSettings): SceneFactory {
       twinkle: 0.5 + Math.random() * 1.6,
     }))
     return (t: number) => {
-      ctx.fillStyle = '#050a12'
+      ctx.fillStyle = baseCss
       ctx.fillRect(0, 0, w, h)
-      const g = ctx.createRadialGradient(w * 0.5, h * 0.45, 0, w * 0.5, h * 0.5, Math.max(w, h) * 0.7)
-      g.addColorStop(0, 'rgba(12,22,40,0.55)')
-      g.addColorStop(1, 'rgba(3,6,12,0)')
-      ctx.fillStyle = g
-      ctx.fillRect(0, 0, w, h)
+      if (!light) {
+        // deep-water depth wash — pure glow dressing, meaningless on paper
+        const g = ctx.createRadialGradient(w * 0.5, h * 0.45, 0, w * 0.5, h * 0.5, Math.max(w, h) * 0.7)
+        g.addColorStop(0, 'rgba(12,22,40,0.55)')
+        g.addColorStop(1, 'rgba(3,6,12,0)')
+        ctx.fillStyle = g
+        ctx.fillRect(0, 0, w, h)
+      }
 
-      ctx.globalCompositeOperation = 'lighter'
+      ctx.globalCompositeOperation = light ? 'source-over' : 'lighter'
       for (const p of particles) {
         p.x += (p.vx * speed) / 60
         p.y += (p.vy * speed) / 60
@@ -73,16 +96,21 @@ export function makeBioluminescence(settings: BgSettings): SceneFactory {
 
 // ---------------------------------------------------------------------------
 // Particle Fields — a crisp technical starfield. Two parallax depth
-// layers of sharp dots (no halos, no additive glow, no connecting lines)
-// drifting on a quiet flow field — deliberately nothing like the soft
-// glowing plankton of bioluminescence. The old constellation links made it
-// busy and pushed it too close to a screensaver; without them it reads as
-// depth and stays out of the UI's way.
+// layers of sharp dots drifting on a quiet flow field, WITH hairline
+// constellation links between nearby near-layer particles — the links are
+// what give it the "network / telemetry" character (distance-faded, never
+// busy: only close pairs connect, and the far layer stays unlinked so the
+// depth read survives). The canvas base adopts the theme's background
+// colour; on light themes the dots flip to dark ink so the field reads on
+// paper too.
 // ---------------------------------------------------------------------------
 
 export function makeParticleField(settings: BgSettings): SceneFactory {
   const speed = (Number(settings.speed) || 100) / 100
   const density = Number(settings.density) ?? 45
+  const tb = themeBgOf(settings)
+  const light = tb != null && lumOf(tb) > 0.5
+  const baseCss = tb ? `rgb(${tb[0]},${tb[1]},${tb[2]})` : '#05070c'
   return (ctx: CanvasRenderingContext2D, w: number, h: number) => {
     const count = Math.round(30 + (density / 100) * 110)
     // every third particle joins the far layer: smaller, dimmer, slower —
@@ -100,17 +128,24 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
         accent: !far && i % 17 === 0,
       }
     })
+    // link pass works on the near layer only — precomputed once, no per-frame
+    // filtering
+    const near = parts.filter((p) => !p.far)
+    // link radius tuned to the viewport: local clusters on a phone, wider
+    // constellations on a desktop
+    const linkR = Math.min(130, Math.max(72, Math.min(w, h) * 0.16))
+    const linkR2 = linkR * linkR
     const field = (x: number, y: number, t: number) =>
       Math.sin(x * 0.0016 + t * 0.18) * 1.5 +
       Math.cos(y * 0.0021 - t * 0.14) * 1.5 +
       Math.sin((x + y) * 0.0009 + t * 0.1)
     return (t: number) => {
-      // flat technical base with a quiet corner falloff — no wash, no bloom
-      ctx.fillStyle = '#05070c'
+      // themed technical base with a quiet corner falloff — no wash, no bloom
+      ctx.fillStyle = baseCss
       ctx.fillRect(0, 0, w, h)
       const vg = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.hypot(w, h) * 0.62)
       vg.addColorStop(0, 'rgba(0,0,0,0)')
-      vg.addColorStop(1, 'rgba(0,0,0,0.28)')
+      vg.addColorStop(1, light ? 'rgba(0,0,0,0.10)' : 'rgba(0,0,0,0.28)')
       ctx.fillStyle = vg
       ctx.fillRect(0, 0, w, h)
 
@@ -125,13 +160,41 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
         if (p.y > h + 12) p.y = -12
       }
 
-      // crisp discs — far layer dim slate, near layer bright silver
+      // constellation links — hairline, distance-faded, UNDER the dots
+      ctx.lineWidth = 0.75
+      for (let i = 0; i < near.length; i++) {
+        const a = near[i]!
+        for (let j = i + 1; j < near.length; j++) {
+          const b = near[j]!
+          const dx = a.x - b.x
+          const dy = a.y - b.y
+          const d2 = dx * dx + dy * dy
+          if (d2 > linkR2) continue
+          const fade = 1 - Math.sqrt(d2) / linkR
+          ctx.strokeStyle = light
+            ? `rgba(51,65,85,${(fade * 0.24).toFixed(3)})`
+            : `rgba(148,163,184,${(fade * 0.3).toFixed(3)})`
+          ctx.beginPath()
+          ctx.moveTo(a.x, a.y)
+          ctx.lineTo(b.x, b.y)
+          ctx.stroke()
+        }
+      }
+
+      // crisp discs — far layer dim slate, near layer bright silver (or the
+      // ink equivalents on a light base)
       for (const p of parts) {
         ctx.fillStyle = p.far
-          ? 'rgba(148,163,184,0.22)'
+          ? light
+            ? 'rgba(71,85,105,0.28)'
+            : 'rgba(148,163,184,0.22)'
           : p.accent
-            ? 'rgba(56,189,248,0.95)'
-            : 'rgba(226,232,240,0.88)'
+            ? light
+              ? 'rgba(8,145,178,0.92)'
+              : 'rgba(56,189,248,0.95)'
+            : light
+              ? 'rgba(30,41,59,0.85)'
+              : 'rgba(226,232,240,0.88)'
         ctx.beginPath()
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
         ctx.fill()
@@ -159,11 +222,22 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
 export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
   const speed = (Number(settings.speed) || 60) / 100
   const density = Number(settings.density) ?? 50
+  const tb = themeBgOf(settings)
+  const light = tb != null && lumOf(tb) > 0.5
+  // dye composites over the theme's background colour: dark themes get the
+  // classic glow (dye lifts toward white), light themes a watercolour ink
+  // wash (dye darkens toward its own hue). No themeBg → the curated deep
+  // blue-black base, byte-identical to the look the preview clips ship.
+  const BASE: [number, number, number] = tb ?? [6, 10, 18]
   const factory = ((ctx: CanvasRenderingContext2D, w: number, h: number) => {
     // --- sim grid, shaped like the viewport: a portrait phone would only
     //     ever see the middle third of a fixed 128x80 grid ------------------
+    //     ~32k cells (up from ~20k): finer vortices, sharper dye filaments —
+    //     the upscale smooths them into “higher quality” water rather than
+    //     bigger blobs. Still comfortably inside a phone's frame budget at
+    //     the 34 Hz sim gate below.
     const AR = Math.max(0.3, Math.min(4, w / Math.max(1, h)))
-    const N = Math.max(48, Math.round(Math.sqrt(20480 * AR)))
+    const N = Math.max(48, Math.round(Math.sqrt(32000 * AR)))
     const M = Math.max(48, Math.round(N / AR))
     const S = N * M
     // detail scale: velocities/radii are tuned at ~10k cells; keep the same
@@ -402,7 +476,9 @@ export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
         }
       }
       pr.fill(0)
-      for (let it = 0; it < 20; it++) {
+      // 26 Gauss–Seidel sweeps (up from 20): a tighter incompressibility
+      // solve is visible as crisper swirl structure at the finer grid
+      for (let it = 0; it < 26; it++) {
         for (let y = 1; y < M - 1; y++) {
           for (let x = 1; x < N - 1; x++) {
             const i = at(x, y)
@@ -516,13 +592,37 @@ export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
       const data = img.data
       for (let i = 0; i < S; i++) {
         // 1.7× tonemap lift: the dye reads mid-bright instead of murk
-        const r = (1.7 * dye[0][i]) / (1 + 1.7 * dye[0][i])
-        const g = (1.7 * dye[1][i]) / (1 + 1.7 * dye[1][i])
-        const b = (1.7 * dye[2][i]) / (1 + 1.7 * dye[2][i])
+        const d0 = dye[0][i]!
+        const d1 = dye[1][i]!
+        const d2 = dye[2][i]!
+        const a0 = (1.7 * d0) / (1 + 1.7 * d0)
+        const a1 = (1.7 * d1) / (1 + 1.7 * d1)
+        const a2 = (1.7 * d2) / (1 + 1.7 * d2)
         const k = i * 4
-        data[k] = 6 + 235 * r
-        data[k + 1] = 10 + 235 * g
-        data[k + 2] = 18 + 235 * b
+        if (light) {
+          // watercolour ink: each channel blends toward a hue-preserving
+          // dark target (the dye's own colour ratios, deepened) — colour
+          // washes ON the light base instead of blowing out to white
+          const I = d0 + d1 + d2
+          if (I > 1e-4) {
+            const inkR = (d0 / I) * 340
+            const inkG = (d1 / I) * 340
+            const inkB = (d2 / I) * 340
+            data[k] = BASE[0] + (inkR - BASE[0]) * a0
+            data[k + 1] = BASE[1] + (inkG - BASE[1]) * a1
+            data[k + 2] = BASE[2] + (inkB - BASE[2]) * a2
+          } else {
+            data[k] = BASE[0]
+            data[k + 1] = BASE[1]
+            data[k + 2] = BASE[2]
+          }
+        } else {
+          // glow: dye lifts toward white over the (dark) base — this is the
+          // classic look, kept byte-compatible with the shipped preview clip
+          data[k] = BASE[0] + 235 * a0
+          data[k + 1] = BASE[1] + 235 * a1
+          data[k + 2] = BASE[2] + 235 * a2
+        }
         data[k + 3] = 255
       }
       octx.putImageData(img, 0, 0)

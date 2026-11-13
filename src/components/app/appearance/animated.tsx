@@ -11,12 +11,13 @@
 // disabled by the reduced-motion rules in globals.css.
 // ---------------------------------------------------------------------------
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NOISE_IMAGE_URL } from './generators'
 import { cn } from '@/lib/utils'
 import type { SceneFactory, WarmupSceneFactory } from './scenes'
 
-type BgSettings = Record<string, number | string>
+// matches scenes.ts (the theme's background colour rides along as a tuple)
+export type BgSettings = Record<string, number | string | [number, number, number]>
 
 function prefersReducedMotion(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -159,14 +160,74 @@ export function NebulaScene({ settings }: { settings: BgSettings }) {
 }
 
 // ---------------------------------------------------------------------------
-// Vapourwave — retro sky, striped sun, perspective grid, haze
+// Vapourwave — the full retro postcard: gradient dusk sky with stars, the
+// slatted sun, a city skyline silhouette on the horizon, the scrolling
+// perspective grid, a rippled sun reflection on the “floor”, a chrome
+// horizon line, atmospheric haze and a CRT scanline veil. Star positions,
+// twinkle phases and the skyline shape are seeded per page load — a fresh
+// city every visit, like the canvas scenes. All motion is transform/opacity
+// only (compositor-friendly), and everything freezes under reduced motion.
 // ---------------------------------------------------------------------------
+
+/** deterministic RNG so one load keeps one city (re-renders never reshuffle) */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0
+  return () => {
+    a |= 0
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
 
 export function VapourwaveScene({ settings }: { settings: BgSettings }) {
   const speed = Number(settings.speed) || 70
   const gridDur = `${(3.2 * 100) / Math.max(speed, 1)}s`
   const sunDur = `${(9 * 100) / Math.max(speed, 1)}s`
   const still = speed < 5
+  // one skyline + star field per page load (seeded, stable across re-renders)
+  const [sky] = useState(() => {
+    const rnd = mulberry32(Math.floor(Math.random() * 2 ** 31))
+    // stars: two layers of radial-gradient dot lists (tiled, low opacity)
+    const starLayer = (n: number, size: number) => {
+      const parts: string[] = []
+      for (let i = 0; i < n; i++) {
+        const x = (rnd() * 100).toFixed(2)
+        const y = (rnd() * 100).toFixed(2)
+        const r = (size * (0.5 + rnd())).toFixed(2)
+        const a = (0.35 + rnd() * 0.5).toFixed(2)
+        parts.push(`radial-gradient(circle ${r}px at ${x}% ${y}%, rgba(255,255,255,${a}) 0 ${r}px, transparent ${r}px)`)
+      }
+      return parts.join(',')
+    }
+    // skyline: one closed clip-path polygon tracing blocky towers (and the
+    // occasional antenna spike) along the horizon, baseline at the bottom
+    const clip: string[] = ['0% 100%']
+    let x = 0
+    while (x < 100) {
+      const w = 2.5 + rnd() * 5
+      const x2 = Math.min(100, x + w)
+      const h = 40 + rnd() * 50 // tower height, % of the strip
+      const top = (100 - h).toFixed(1)
+      clip.push(`${x.toFixed(1)}% 100%`, `${x.toFixed(1)}% ${top}%`)
+      if (rnd() < 0.35) {
+        // thin antenna spike traced up and back down within the tower top
+        const ax = x + (x2 - x) * 0.5
+        const aTop = (100 - h - 10 - rnd() * 8).toFixed(1)
+        clip.push(
+          `${(ax - 0.35).toFixed(2)}% ${top}%`,
+          `${(ax - 0.35).toFixed(2)}% ${aTop}%`,
+          `${(ax + 0.35).toFixed(2)}% ${aTop}%`,
+          `${(ax + 0.35).toFixed(2)}% ${top}%`,
+        )
+      }
+      clip.push(`${x2.toFixed(1)}% ${top}%`, `${x2.toFixed(1)}% 100%`)
+      x = x2
+    }
+    clip.push('100% 100%')
+    return { starsA: starLayer(26, 1.4), starsB: starLayer(18, 1.0), skyline: clip.join(',') }
+  })
   return (
     <div
       className="absolute inset-0 overflow-hidden"
@@ -176,6 +237,15 @@ export function VapourwaveScene({ settings }: { settings: BgSettings }) {
       }}
       aria-hidden
     >
+      {/* stars in the upper sky — two tiled layers, deterministic per load */}
+      <div
+        className="absolute inset-x-0 top-0 h-[46%]"
+        style={{ backgroundImage: sky.starsA, backgroundSize: '420px 240px', opacity: 0.5 }}
+      />
+      <div
+        className="absolute inset-x-0 top-0 h-[40%]"
+        style={{ backgroundImage: sky.starsB, backgroundSize: '300px 200px', opacity: 0.3 }}
+      />
       {/* sun with retro slats */}
       <div
         className={cn('absolute left-1/2 top-[14%] aspect-square w-[46vmin] -translate-x-1/2 rounded-full', !still && 'bg-sun-bob')}
@@ -189,6 +259,18 @@ export function VapourwaveScene({ settings }: { settings: BgSettings }) {
           WebkitMaskComposite: 'source-in',
           animationDuration: sunDur,
           filter: 'drop-shadow(0 0 40px rgba(251, 146, 60, 0.45))',
+        }}
+      />
+      {/* city skyline silhouette on the horizon (fresh shape each load) */}
+      <div
+        className="absolute inset-x-0 bottom-[46%] h-[12%] bg-[#14082e]"
+        style={{ clipPath: `polygon(${sky.skyline})` }}
+      />
+      {/* chrome horizon line where the grid begins */}
+      <div
+        className="absolute inset-x-0 bottom-[46%] h-[2px]"
+        style={{
+          background: 'linear-gradient(90deg, transparent, rgba(244,114,182,0.85) 30%, rgba(253,230,138,0.9) 50%, rgba(244,114,182,0.85) 70%, transparent)',
         }}
       />
       {/* perspective grid floor */}
@@ -206,10 +288,28 @@ export function VapourwaveScene({ settings }: { settings: BgSettings }) {
           }}
         />
       </div>
+      {/* rippled sun reflection on the floor — horizontal stripe mask reads
+          as water shimmering under the sun */}
+      <div
+        className="absolute bottom-[46%] left-1/2 h-[20%] w-[34vmin] -translate-x-1/2"
+        style={{
+          background: 'linear-gradient(180deg, rgba(251,146,60,0.4), rgba(244,63,94,0.18) 55%, transparent 85%)',
+          maskImage: 'repeating-linear-gradient(180deg, #000 0 6px, transparent 6px 16px)',
+          WebkitMaskImage: 'repeating-linear-gradient(180deg, #000 0 6px, transparent 6px 16px)',
+        }}
+      />
       {/* atmospheric haze */}
       <div
         className="absolute inset-x-0 bottom-0 h-[48%]"
         style={{ background: 'linear-gradient(180deg, transparent, rgba(23,11,46,0.72) 55%, rgba(9,5,20,0.94))' }}
+      />
+      {/* CRT scanlines over the whole postcard — the giveaway retro veil */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background: 'repeating-linear-gradient(180deg, rgba(10,4,24,0.22) 0 1px, transparent 1px 4px)',
+          opacity: 0.45,
+        }}
       />
     </div>
   )

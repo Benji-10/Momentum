@@ -259,6 +259,8 @@ function BackgroundSettingsPanel() {
             max={s.max}
             step={s.step ?? 1}
             suffix={s.suffix ?? ''}
+            // variant 0 = Auto: a seeded random Julia rule per page load
+            format={s.key === 'variant' ? (v) => (v === 0 ? 'Auto' : `Rule ${v}`) : undefined}
             onCommit={(v) => updateBackgroundSettings({ [s.key]: v })}
           />
         ))}
@@ -372,8 +374,8 @@ export function AppearanceTab() {
           <BackgroundSettingsPanel />
         ) : (
           <p className="text-[11px] leading-relaxed text-muted-foreground">
-            Backgrounds are independent of the colour theme — pair any palette with any background. Dark scenes sit
-            behind light themes too; lower their opacity if that gets busy.
+            Backgrounds are independent of the colour theme — pair any palette with any background. Procedural art rolls a
+            fresh seed every visit, and animated scenes tint to match your theme. Lower opacity if it gets busy.
           </p>
         )}
       </section>
@@ -395,8 +397,8 @@ export function AppearanceTab() {
           {appearance.surface === 'solid'
             ? 'Cards and overlays are fully opaque.'
             : appearance.surface === 'translucent'
-              ? 'Cards and overlays keep their colour but let the background show through, lightly blurred.'
-              : 'Frosted surfaces — see-through cards with a strong blur, best over animated backgrounds.'}
+              ? 'Nearly opaque cards with a whisper of the background — the safe pick over busy scenes.'
+              : 'Proper frosted glass — clearly see-through cards with a strong blur. Best over animated backgrounds.'}
         </p>
       </section>
 

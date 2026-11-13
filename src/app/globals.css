@@ -683,23 +683,26 @@
    SURFACE TREATMENTS  (data-surface on <html>)
 
    Cards and overlays keep their palette colour, but let the
-   background layer show through:
+   background layer show through — the two treatments are
+   deliberately FAR apart so switching is obvious:
      solid        fully opaque (default)
-     translucent  mostly opaque + light blur
-     glass        frosted — see-through + strong blur
+     translucent  barely-there: ~92% card, light blur — depth
+                  without readability risk, safe over busy scenes
+     glass        real frosted glass: ~40% card, strong blur +
+                  saturation boost — clearly see-through
    The palette stores --card-solid; treatments redefine --card.
    ============================================================ */
 
 [data-surface='translucent'] {
-  --card: color-mix(in oklab, var(--card-solid) 84%, transparent);
-  --popover: color-mix(in oklab, var(--popover-solid) 90%, transparent);
-  --surface-blur: 10px;
+  --card: color-mix(in oklab, var(--card-solid) 92%, transparent);
+  --popover: color-mix(in oklab, var(--popover-solid) 95%, transparent);
+  --surface-blur: 8px;
 }
 
 [data-surface='glass'] {
-  --card: color-mix(in oklab, var(--card-solid) 58%, transparent);
-  --popover: color-mix(in oklab, var(--popover-solid) 72%, transparent);
-  --surface-blur: 20px;
+  --card: color-mix(in oklab, var(--card-solid) 40%, transparent);
+  --popover: color-mix(in oklab, var(--popover-solid) 55%, transparent);
+  --surface-blur: 24px;
 }
 
 /* blur what's behind floating surfaces (progressive enhancement —
@@ -735,8 +738,8 @@
     [data-slot='command'],
     .frosted
   ) {
-    backdrop-filter: blur(var(--surface-blur)) saturate(1.5);
-    -webkit-backdrop-filter: blur(var(--surface-blur)) saturate(1.5);
+    backdrop-filter: blur(var(--surface-blur)) saturate(1.8);
+    -webkit-backdrop-filter: blur(var(--surface-blur)) saturate(1.8);
   }
 }
 

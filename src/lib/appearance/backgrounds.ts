@@ -91,7 +91,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     id: 'particle-field',
     name: 'Particle Fields',
     category: 'animated',
-    hint: 'Two-depth starfield — crisp drifting dots',
+    hint: 'Constellation starfield — drifting dots + links',
     renderer: 'particles',
     settings: [opacity(70), speed(100), { kind: 'slider', key: 'density', label: 'Particle density', min: 0, max: 100, step: 1, default: 45 }, blur()],
   },
@@ -107,7 +107,7 @@ export const BACKGROUNDS: BackgroundDef[] = [
     id: 'topography',
     name: 'Topography',
     category: 'static',
-    hint: 'Random peaks, contour rings by steepness',
+    hint: 'Contour rings — new terrain every visit',
     renderer: 'topography',
     settings: [opacity(65), { kind: 'slider', key: 'intensity', label: 'Pattern intensity', min: 0, max: 100, step: 1, default: 55 }, scale(100), blur()],
   },
@@ -115,15 +115,16 @@ export const BACKGROUNDS: BackgroundDef[] = [
     id: 'fractals',
     name: 'Fractals',
     category: 'static',
-    hint: 'Julia sets — banded escape contours',
+    hint: 'Julia sets — a fresh rule every visit',
     renderer: 'fractals',
-    settings: [opacity(85), { kind: 'slider', key: 'intensity', label: 'Pattern intensity', min: 0, max: 100, step: 1, default: 70 }, { kind: 'slider', key: 'variant', label: 'Variant', min: 1, max: 24, step: 1, suffix: ' / 24', default: 1 }, scale(100), blur()],
+    // variant 0 = Auto (seeded random rule per page load); 1..24 pin a rule
+    settings: [opacity(85), { kind: 'slider', key: 'intensity', label: 'Pattern intensity', min: 0, max: 100, step: 1, default: 70 }, { kind: 'slider', key: 'variant', label: 'Variant', min: 0, max: 24, step: 1, suffix: ' / 24', default: 0 }, scale(100), blur()],
   },
   {
     id: 'vapourwave',
     name: 'Vapourwave',
     category: 'static',
-    hint: 'Retro gradients + perspective grid',
+    hint: 'Retro sunset — stars, skyline, grid, scanlines',
     renderer: 'vapourwave',
     settings: [opacity(75), speed(70), blur()],
   },
@@ -185,11 +186,9 @@ export function defaultBackgroundConfig(id: string): BackgroundConfig | null {
   const def = backgroundDef(id)
   if (!def) return null
   const settings = defaultBackgroundSettings(def)
-  // Fractals rolls a random variant on every fresh selection — different
-  // Julia rule (c and iteration power) each time you pick it, then stored
-  // and stable until you change it. Legacy configs without a variant keep
-  // variant 1, the classic look, so nothing flickers between loads.
-  if (id === 'fractals') settings.variant = 1 + Math.floor(Math.random() * 24)
+  // Fractals defaults to variant 0 = "Auto": a seeded random Julia rule on
+  // every page load (a fresh fractal each visit), while pinning a specific
+  // variant on the slider keeps that rule stable across loads.
   return { id, settings }
 }
 

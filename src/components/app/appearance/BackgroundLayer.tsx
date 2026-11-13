@@ -9,12 +9,21 @@
 // opacity and blur settings so the scene blends with the palette underneath.
 // Animated scenes pause when hidden / under prefers-reduced-motion; static
 // art is generated once per settings change (memoized over primitives).
+//
+// Two inputs flow from the live theme into the art:
+//   --foreground  stroke/ink colour for line art (topography, fractals)
+//   --background  the canvas/substrate base for animated scenes + mycelium,
+//                 so a background you pick MATCHES the palette you picked
+// A per-load SEED feeds the static generators — every refresh grows a new
+// terrain / network / Julia rule (stable within the visit, so sliders
+// never flicker the art).
 // ---------------------------------------------------------------------------
 
 import { useEffect, useMemo, useState } from 'react'
 import type { BackgroundConfig } from '@/lib/appearance/types'
 import { bgNum } from '@/lib/appearance/backgrounds'
 import {
+  colorToRgb,
   generateCarbon,
   generateFractals,
   generateIridescence,
@@ -25,52 +34,78 @@ import {
 import { CanvasScene, CustomImageScene, NebulaScene, VapourwaveScene } from './animated'
 import { makeBioluminescence, makeFluidMechanics, makeParticleField } from './scenes'
 
-/** Read the live --foreground (oklch string) and re-read when the theme changes. */
-function useThemeForeground(): string {
-  const [fg, setFg] = useState('')
+/** Read a CSS variable from the document root and re-read when the theme
+ *  changes. Watches <html> attribute mutations (data-theme flips from
+ *  next-themes) AND the custom-palette <style> block (custom colour edits
+ *  mutate that element's text, not any attribute), so both preset switches
+ *  and live custom-colour tweaks refresh the derived art. */
+function useThemeVar(name: string): string {
+  const [v, setV] = useState('')
   useEffect(() => {
+    const root = document.documentElement
     const read = () => {
-      const v = getComputedStyle(document.documentElement).getPropertyValue('--foreground').trim()
-      if (v) setFg(v)
+      const val = getComputedStyle(root).getPropertyValue(name).trim()
+      if (val) setV(val)
     }
     read()
-    // data-theme flips and custom-var injection both land as attribute/style
-    // mutations on <html>
     const obs = new MutationObserver(read)
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style'] })
-    return () => obs.disconnect()
-  }, [])
-  return fg
+    obs.observe(root, { attributes: true, attributeFilter: ['data-theme', 'style', 'class'] })
+    // the custom-theme stylesheet appears lazily (first time a custom palette
+    // is applied) — poll briefly for it, then watch its text
+    let styleObs: MutationObserver | null = null
+    let timer = 0
+    let tries = 0
+    const watchStyle = (): boolean => {
+      const el = document.getElementById('momentum-custom-theme')
+      if (!el) return false
+      styleObs = new MutationObserver(read)
+      styleObs.observe(el, { childList: true, characterData: true, subtree: true })
+      return true
+    }
+    if (!watchStyle()) {
+      timer = window.setInterval(() => {
+        tries++
+        if (watchStyle() || tries > 60) window.clearInterval(timer)
+      }, 250)
+    }
+    return () => {
+      obs.disconnect()
+      styleObs?.disconnect()
+      window.clearInterval(timer)
+    }
+  }, [name])
+  return v
 }
 
 /**
  * Static art ("static" + "image" categories) for the current config — one
- * memo over primitive inputs, regenerated only when the relevant settings
- * (or the theme's foreground) actually change. Never per frame.
+ * memo over primitive inputs, regenerated only when the relevant settings,
+ * the theme's colours, or the per-load seed actually change. Never per frame.
  */
-function useStaticArt(config: BackgroundConfig, fg: string): string | null {
+function useStaticArt(config: BackgroundConfig, fg: string, themeBg: [number, number, number] | null, seed: number): string | null {
   const intensity = bgNum(config, 'intensity', 55)
   const scale = bgNum(config, 'scale', 100)
   const density = bgNum(config, 'density', 50)
   const glow = bgNum(config, 'glow', 55)
-  const variant = bgNum(config, 'variant', 1)
+  // variant 0 = Auto (a seeded random rule, fresh every load); 1..24 pin one
+  const variant = bgNum(config, 'variant', 0)
   const id = config.id
   return useMemo(() => {
     switch (id) {
       case 'topography':
-        return generateTopography({ fg: fg || 'oklch(0.2 0.01 80)', intensity, scale })
+        return generateTopography({ fg: fg || 'oklch(0.2 0.01 80)', intensity, scale, seed })
       case 'fractals':
-        return generateFractals({ fg: fg || 'oklch(0.2 0.01 80)', intensity, scale, variant })
+        return generateFractals({ fg: fg || 'oklch(0.2 0.01 80)', intensity, scale, variant, seed })
       case 'bg-mycelium':
-        return generateMycelium({ density, glow, scale })
+        return generateMycelium({ density, glow, scale, seed, themeBg })
       case 'carbon':
         return generateCarbon({ scale })
       case 'iridescence':
-        return generateIridescence({ intensity })
+        return generateIridescence({ intensity, seed })
       default:
         return null
     }
-  }, [id, fg, intensity, scale, density, glow, variant])
+  }, [id, fg, intensity, scale, density, glow, variant, themeBg, seed])
 }
 
 export function BackgroundLayer({
@@ -81,8 +116,14 @@ export function BackgroundLayer({
   /** object URL of the uploaded image (this device), when applicable */
   customImageUrl: string | null
 }) {
-  const fg = useThemeForeground()
-  const staticUrl = useStaticArt(config ?? { id: 'none', settings: {} }, fg)
+  const fg = useThemeVar('--foreground')
+  const bgVar = useThemeVar('--background')
+  const themeBg = useMemo(() => (bgVar ? colorToRgb(bgVar) : null), [bgVar])
+  // one seed per page load: every refresh grows a new terrain / network /
+  // Julia rule; within the visit it is stable, so slider tweaks never
+  // flicker the art (the seed is a memo input, not a roll per render)
+  const [loadSeed] = useState(() => Math.floor(Math.random() * 2 ** 31))
+  const staticUrl = useStaticArt(config ?? { id: 'none', settings: {} }, fg, themeBg, loadSeed)
   if (!config) return null
 
   const opacity = bgNum(config, 'opacity', 80) / 100
@@ -93,18 +134,21 @@ export function BackgroundLayer({
     ...(blur ? { filter: `blur(${blur}px)`, transform: 'scale(1.04)' } : {}),
   }
 
-  const settingsKey = JSON.stringify(config.settings)
+  // the theme base rides along with the user's slider settings — a theme
+  // flip rebuilds the scene with the new base (settingsKey includes it)
+  const sceneSettings = { ...config.settings, ...(themeBg ? { themeBg } : {}) }
+  const settingsKey = JSON.stringify({ s: config.settings, themeBg })
 
   let scene: React.ReactNode = null
   switch (config.id) {
     case 'bioluminescence':
-      scene = <CanvasScene makeScene={makeBioluminescence} settings={config.settings} settingsKey={settingsKey} />
+      scene = <CanvasScene makeScene={makeBioluminescence} settings={sceneSettings} settingsKey={settingsKey} />
       break
     case 'particle-field':
-      scene = <CanvasScene makeScene={makeParticleField} settings={config.settings} settingsKey={settingsKey} />
+      scene = <CanvasScene makeScene={makeParticleField} settings={sceneSettings} settingsKey={settingsKey} />
       break
     case 'fluid-mechanics':
-      scene = <CanvasScene makeScene={makeFluidMechanics} settings={config.settings} settingsKey={settingsKey} />
+      scene = <CanvasScene makeScene={makeFluidMechanics} settings={sceneSettings} settingsKey={settingsKey} />
       break
     case 'nebula':
       scene = <NebulaScene settings={config.settings} />

@@ -85,6 +85,7 @@ export function ColorField({
 /**
  * A labelled slider that stays responsive while dragging: local state for
  * the drag, the caller's value for truth, commit on release only.
+ * `format` renders the value chip (e.g. variant 0 → “Auto”).
  */
 export function BgSlider({
   label,
@@ -93,6 +94,7 @@ export function BgSlider({
   max,
   step = 1,
   suffix = '',
+  format,
   onCommit,
 }: {
   label: string
@@ -101,6 +103,7 @@ export function BgSlider({
   max: number
   step?: number
   suffix?: string
+  format?: (v: number) => string
   onCommit: (v: number) => void
 }) {
   const [local, setLocal] = useState(value)
@@ -118,8 +121,7 @@ export function BgSlider({
           {label}
         </span>
         <span className="text-xs font-semibold tabular-nums">
-          {Math.round(local)}
-          {suffix}
+          {format ? format(local) : `${Math.round(local)}${suffix}`}
         </span>
       </div>
       <Slider
