@@ -121,11 +121,89 @@ const rgbCss = (c: [number, number, number]) =>
 // (phones cover-crop the middle of the landscape art, so the main mountain
 // system must live there), satellite peaks with their own steepness, a
 // couple of basins and a continental tilt — traced with marching squares
-// WITH LINEAR INTERPOLATION along the cell edges, so the contour rings come
-// out as smooth curves instead of the blocky mid-point staircase. Closely
-// packed rings on steep slopes and gentle fans on shallow ones come out of
-// the field for free — that is what a topographic map actually is.
+// WITH LINEAR INTERPOLATION along the cell edges, then chained into
+// polylines and Chaikin-smoothed, so the contour rings come out as genuine
+// curves (the raw per-cell polygon wiggles at every 4px cell boundary,
+// which read as bumps along the lines). Ring COLOUR is an elevation ramp:
+// high rings on the peaks ride the theme's primary, low rings down in the
+// valleys its secondary accent. Closely packed rings on steep slopes and
+// gentle fans on shallow ones come out of the field for free — that is
+// what a topographic map actually is.
 // ---------------------------------------------------------------------------
+
+/** Chain marching-squares segments into polylines and Chaikin-smooth them.
+ *
+ *  Shared crossing points (computed from the same corner pair by both
+ *  neighbouring cells) chain unambiguously — each point belongs to at
+ *  most two segments. Two Chaikin passes then replace every segment pair
+ *  with corner-cut points, so the emitted polyline is visually C1-smooth:
+ *  open chains keep their endpoints, closed loops wrap. */
+function chainSmoothContours(segs: number[][]): string {
+  if (!segs.length) return ''
+  const pkey = (x: number, y: number) => `${x.toFixed(2)},${y.toFixed(2)}`
+  const byPoint = new Map<string, number[]>()
+  segs.forEach((s, i) => {
+    for (let e = 0; e < 4; e += 2) {
+      const k = pkey(s[e]!, s[e + 1]!)
+      const arr = byPoint.get(k)
+      if (arr) arr.push(i)
+      else byPoint.set(k, [i])
+    }
+  })
+  const used = new Array<boolean>(segs.length).fill(false)
+  const out: string[] = []
+  for (let i = 0; i < segs.length; i++) {
+    if (used[i]) continue
+    used[i] = true
+    const s = segs[i]!
+    const line: number[] = [s[0]!, s[1]!, s[2]!, s[3]!]
+    // extend forward from the tail until no unused segment shares it
+    for (;;) {
+      const k = pkey(line[line.length - 2]!, line[line.length - 1]!)
+      const next = (byPoint.get(k) ?? []).find((j) => !used[j])
+      if (next === undefined) break
+      used[next] = true
+      const n = segs[next]! as [number, number, number, number]
+      const atTail = pkey(n[0], n[1]) === k
+      line.push(atTail ? n[2] : n[0], atTail ? n[3] : n[1])
+    }
+    // extend backward from the head
+    for (;;) {
+      const k = pkey(line[0]!, line[1]!)
+      const prev = (byPoint.get(k) ?? []).find((j) => !used[j])
+      if (prev === undefined) break
+      used[prev] = true
+      const p = segs[prev]! as [number, number, number, number]
+      const atHead = pkey(p[2], p[3]) === k
+      line.unshift(atHead ? p[0] : p[2], atHead ? p[1] : p[3])
+    }
+    // a loop chains back onto its own head — detect, then drop the
+    // closing duplicate so the wrap segment stays representable
+    const closed =
+      line.length >= 10 && pkey(line[0]!, line[1]!) === pkey(line[line.length - 2]!, line[line.length - 1]!)
+    let pts: number[] = closed ? line.slice(0, line.length - 2) : line
+    // Chaikin ×2 — open lines keep their endpoints, closed lines wrap
+    for (let pass = 0; pass < 2; pass++) {
+      const m = pts.length / 2
+      if (m < 3) break
+      const nextPts: number[] = []
+      if (!closed) nextPts.push(pts[0]!, pts[1]!)
+      for (let q = 0; q < (closed ? m : m - 1); q++) {
+        const x0 = pts[q * 2]!
+        const y0 = pts[q * 2 + 1]!
+        const x1 = pts[((q + 1) % m) * 2]!
+        const y1 = pts[((q + 1) % m) * 2 + 1]!
+        nextPts.push(0.75 * x0 + 0.25 * x1, 0.75 * y0 + 0.25 * y1, 0.25 * x0 + 0.75 * x1, 0.25 * y0 + 0.75 * y1)
+      }
+      if (!closed) nextPts.push(pts[pts.length - 2]!, pts[pts.length - 1]!)
+      pts = nextPts
+    }
+    const parts: string[] = [`M${pts[0]!.toFixed(1)} ${pts[1]!.toFixed(1)}`]
+    for (let q = 1; q < pts.length / 2; q++) parts.push(`L${pts[q * 2]!.toFixed(1)} ${pts[q * 2 + 1]!.toFixed(1)}`)
+    out.push(parts.join(''))
+  }
+  return out.join('')
+}
 
 export function generateTopography(opts: {
   fg: string
@@ -142,15 +220,14 @@ export function generateTopography(opts: {
 }): string {
   const { fg, intensity, scale } = opts
   const rnd = mulberry32(opts.seed ?? 1337)
-  // the ring colours inherit the palette: regular rings ride the theme's
-  // primary hue, index contours (every 5th, the bolder map lines) the
-  // accent — both pushed off the paper if the theme puts them too close
-  // to the background to read
+  // the ring colours inherit the palette as an ELEVATION ramp: rings high
+  // on the peaks ride the theme's primary, rings down in the valleys its
+  // secondary accent — every level interpolates between the two, both
+  // pushed off the paper if the theme puts them too close to the
+  // background to read
   const fallback = colorToRgb(fg) ?? [154, 160, 173]
-  const mainRgb = ensureContrast(colorToRgb(opts.primary ?? '') ?? fallback, opts.themeBg)
-  const indexRgb = ensureContrast(colorToRgb(opts.accent2 ?? '') ?? mainRgb, opts.themeBg)
-  const strokeMain = rgbCss(mainRgb)
-  const strokeIndex = rgbCss(indexRgb)
+  const peakRgb = ensureContrast(colorToRgb(opts.primary ?? '') ?? fallback, opts.themeBg)
+  const valleyRgb = ensureContrast(colorToRgb(opts.accent2 ?? '') ?? peakRgb, opts.themeBg)
 
   // ---- 1) the heightfield -------------------------------------------------
   interface Peak {
@@ -265,7 +342,10 @@ export function generateTopography(opts: {
   const baseA = Math.min(0.5, 0.12 + (0.26 * intensity) / 100)
   for (let l = 1; l <= levels; l++) {
     const level = lo + ((hi - lo) * l) / (levels + 1)
-    const d: string[] = []
+    // this level's colour: valleys (t=0) → secondary, peaks (t=1) → primary
+    const t = (level - lo) / Math.max(1e-6, hi - lo)
+    const stroke = rgbCss(mixRgb(valleyRgb, peakRgb, t))
+    const segs: number[][] = []
     /** interpolated crossing point of `level` on cell edge `e`, in art px */
     const edgePoint = (
       x: number,
@@ -301,30 +381,36 @@ export function generateTopography(opts: {
         if (br >= level) cse |= 2
         if (bl >= level) cse |= 1
         if (cse === 0 || cse === 15) continue
-        let segs: number[][]
+        let caseSegs: number[][]
         if (cse === 5 || cse === 10) {
           // saddle: does the level pass above or below the cell centre?
           const center = (tl + tr + br + bl) / 4
           const up = cse === 5 ? center >= level : center < level
-          segs = cse === 5 ? (up ? [[0, 3], [1, 2]] : [[0, 1], [3, 2]]) : up ? [[0, 1], [3, 2]] : [[0, 3], [1, 2]]
+          caseSegs = cse === 5 ? (up ? [[0, 3], [1, 2]] : [[0, 1], [3, 2]]) : up ? [[0, 1], [3, 2]] : [[0, 3], [1, 2]]
         } else {
-          segs = TABLE[cse]!
+          caseSegs = TABLE[cse]!
         }
-        for (const [ea, eb] of segs) {
+        for (const [ea, eb] of caseSegs) {
           const [ax, ay] = edgePoint(x, y, corners, ea)
           const [bx, by] = edgePoint(x, y, corners, eb)
-          d.push(`M${ax.toFixed(1)} ${ay.toFixed(1)}L${bx.toFixed(1)} ${by.toFixed(1)}`)
+          segs.push([ax, ay, bx, by])
         }
       }
     }
-    if (!d.length) continue
+    if (!segs.length) continue
+    // chain the raw segments into polylines + Chaikin-smooth: the per-cell
+    // polygon kinks at every cell boundary and reads as bumps along the
+    // contour; the smoothed chain is the curve the field actually describes
+    const d = chainSmoothContours(segs)
+    if (!d) continue
     // index contours (every 5th) read a touch stronger, like real maps.
-    // stroke widths are tuned for PHONE display: the 1600-wide art lands at
-    // ~23% on a 375px screen, so 1-unit lines would vanish — 4.5/7 reads as
-    // ~1.1/1.7px there and stays elegant on desktop.
+    // stroke widths are hairlines: the 1600-wide art lands at ~23% on a
+    // 375px phone (dpr 3 rasterizes it near 1:1 there) and at 120% on a
+    // 1920 desktop — 2.6/4.2 units reads as ~0.6/0.9 CSS px on the phone
+    // and ~3.1/4.8px on desktop, elegant at both.
     const index = l % 5 === 0
     paths.push(
-      `<path d="${d.join('')}" fill="none" stroke="${index ? strokeIndex : strokeMain}" stroke-width="${index ? 7 : 4.5}" opacity="${(baseA * (index ? 1.4 : 1)).toFixed(3)}" stroke-linecap="round" stroke-linejoin="round"/>`,
+      `<path d="${d}" fill="none" stroke="${stroke}" stroke-width="${index ? 4.2 : 2.6}" opacity="${(baseA * (index ? 1.4 : 1)).toFixed(3)}" stroke-linecap="round" stroke-linejoin="round"/>`,
     )
   }
   return svgUrl(
@@ -402,9 +488,9 @@ export function generateFractalRule(
   rule: FractalRule,
   opts: {
     fg: string
-    /** the theme's primary — outer escape bands (falls back to fg) */
+    /** the theme's primary — the set body + the bands hugging it (falls back to fg) */
     primary?: string
-    /** the theme's accent — inner bands hugging the set (falls back to primary) */
+    /** the theme's accent — the faint outer bands far from the set (falls back to primary) */
     accent2?: string
     /** the theme's background colour — contrast guard for the band colours */
     themeBg?: [number, number, number] | null
@@ -422,26 +508,32 @@ export function generateFractalRule(
   const cy = (fr() - 0.5) * 0.24
   const zoom = 0.88 + fr() * 0.3
   const rgb = colorToRgb(fg) ?? [150, 160, 175]
-  // the escape bands inherit the palette: a duotone ramp from the theme's
-  // primary (far, faint outer rings) to its accent (the bright rings
-  // hugging the set), each pushed off the paper when the theme puts them
-  // too close to the background to read. No themed colours passed (thumbs,
-  // the candidate sheet) → the classic monochrome fg bands.
+  // the theme's primary paints the SET BODY — "primary where the black
+  // is": the interior used to be left transparent, which read as a black
+  // hole over the theme background. The escape bands then walk OUTWARD
+  // from primary at the set's rim to the secondary far away, so the whole
+  // figure reads as a primary mass gradienting into its secondary accent.
+  // No themed colours passed (thumbs, the candidate sheet) → the classic
+  // monochrome fg.
   const primaryC = ensureContrast(colorToRgb(opts.primary ?? '') ?? rgb, opts.themeBg)
   const accentC = ensureContrast(colorToRgb(opts.accent2 ?? '') ?? primaryC, opts.themeBg)
-  // precompute the fourteen quantized band colours (band 0 far → 13 near
-  // the set) — finer than the old ten because the art UPSCALES on phones
-  // (640px canvas → ~2× screen), so thin rings survive
-  const BANDS = 14
+  // eighteen quantized band colours (band 0 far → 17 hugging the set) —
+  // the finer rings resolve at the doubled render resolution below
+  const BANDS = 18
   const bandC: [number, number, number][] = []
-  for (let b = 0; b < BANDS; b++) bandC.push(mixRgb(primaryC, accentC, b / (BANDS - 1)))
+  for (let b = 0; b < BANDS; b++) bandC.push(mixRgb(accentC, primaryC, b / (BANDS - 1)))
   const [cr, ci] = rule.c
   const power = rule.power
 
   // scale = zoom: 40% shows the whole neighbourhood, 220% crops into detail.
   const halfW = rule.baseHalf * zoom * (110 / Math.max(40, Math.min(220, scale)))
-  const cw = 640
-  const ch = 400
+  // the fractal is static art, so it renders at DOUBLE the old resolution
+  // (1280×800 = 4× the pixels): the fine ring systems near the set
+  // boundary survive on desktop (the 640-wide canvas upscaled 3× there
+  // and blurred) and land near 1:1 on phone rasters. One-off cost per
+  // settings change, memoized by the caller.
+  const cw = 1280
+  const ch = 800
   const halfH = (halfW * ch) / cw
   const canvas = document.createElement('canvas')
   canvas.width = cw
@@ -451,55 +543,82 @@ export function generateFractalRule(
   const data = img.data
   const maxIter = rule.maxIter
   const step = (2 * halfW) / cw
-  // quantized into ~10 fat bands: thin sub-pixel rings would vanish when the
-  // browser downsamples the art to a phone screen
+  // the body tracks the intensity dial like the innermost bands do
   const baseA2 = Math.min(0.95, 0.45 + (0.5 * intensity) / 100)
+  const bodyA = Math.round(255 * Math.min(1, baseA2))
 
-  /** render the window centred on (ccx, ccy) into `data`; returns the
-   *  centroid of the inside pixels in IMAGE pixels. */
-  const renderAt = (ccx: number, ccy: number): [number, number] => {
+  /** the escape iteration count for one point — shared by the probe scan
+   *  and the full render */
+  const escape = (x: number, y: number): number => {
+    let zx = x
+    let zy = y
+    let n = 0
+    let zx2 = zx * zx
+    let zy2 = zy * zy
+    while (n < maxIter && zx2 + zy2 < 16) {
+      if (power === 2) {
+        zy = 2 * zx * zy + ci
+        zx = zx2 - zy2 + cr
+      } else if (power === 3) {
+        // z³ by the binomial: x(x²−3y²) + i·y(3x²−y²)
+        const t = zx * (zx2 - 3 * zy2) + cr
+        zy = zy * (3 * zx2 - zy2) + ci
+        zx = t
+      } else {
+        // z⁴ = square twice
+        const a = zx2 - zy2
+        const b = 2 * zx * zy
+        zx = a * a - b * b + cr
+        zy = 2 * a * b + ci
+      }
+      zx2 = zx * zx
+      zy2 = zy * zy
+      n++
+    }
+    return n
+  }
+
+  /** a coarse 1/4-scale scan that only locates the inside pixels' centroid
+   *  (in full-res pixel units) — a sixteenth of the full render's cost, so
+   *  the centring pass no longer doubles the total work */
+  const probeCentroid = (ccx: number, ccy: number): [number, number] => {
+    const pw = cw >> 2
+    const ph = ch >> 2
     let sx = 0
     let sy = 0
     let inside = 0
+    for (let py = 0; py < ph; py++) {
+      const y = ccy - halfH + (py * 4) * ((2 * halfH) / ch)
+      for (let px = 0; px < pw; px++) {
+        const x = ccx - halfW + (px * 4) * step
+        if (escape(x, y) >= maxIter) {
+          sx += px * 4
+          sy += py * 4
+          inside++
+        }
+      }
+    }
+    return inside > 0 ? [sx / inside, sy / inside] : [cw / 2, ch / 2]
+  }
+
+  /** render the window centred on (ccx, ccy) into `data` */
+  const renderAt = (ccx: number, ccy: number): void => {
     for (let py = 0; py < ch; py++) {
       const y = ccy - halfH + py * ((2 * halfH) / ch)
       for (let px = 0; px < cw; px++) {
         const x = ccx - halfW + px * step
-        let zx = x
-        let zy = y
-        let n = 0
-        let zx2 = zx * zx
-        let zy2 = zy * zy
-        while (n < maxIter && zx2 + zy2 < 16) {
-          if (power === 2) {
-            zy = 2 * zx * zy + ci
-            zx = zx2 - zy2 + cr
-          } else if (power === 3) {
-            // z³ by the binomial: x(x²−3y²) + i·y(3x²−y²)
-            const t = zx * (zx2 - 3 * zy2) + cr
-            zy = zy * (3 * zx2 - zy2) + ci
-            zx = t
-          } else {
-            // z⁴ = square twice
-            const a = zx2 - zy2
-            const b = 2 * zx * zy
-            zx = a * a - b * b + cr
-            zy = 2 * a * b + ci
-          }
-          zx2 = zx * zx
-          zy2 = zy * zy
-          n++
-        }
+        const n = escape(x, y)
         const k = (py * cw + px) * 4
         if (n >= maxIter) {
-          data[k + 3] = 0 // inside the set: leave the theme background untouched
-          sx += px
-          sy += py
-          inside++
+          // inside the set: the body carries the theme's primary
+          data[k] = primaryC[0]
+          data[k + 1] = primaryC[1]
+          data[k + 2] = primaryC[2]
+          data[k + 3] = bodyA
           continue
         }
         // banded: quantized escape counts give concentric contour rings,
-        // each band walking the theme's primary→accent duotone ramp
+        // each band walking the secondary(far) → primary(near) ramp
         const band = Math.min(BANDS - 1, Math.floor((n / maxIter) * BANDS))
         const bandA = baseA2 * (0.5 + 0.5 * (band / (BANDS - 1)))
         const bc = bandC[band]!
@@ -509,21 +628,29 @@ export function generateFractalRule(
         data[k + 3] = Math.round(bandA * 255)
       }
     }
-    return inside > 0 ? [sx / inside, sy / inside] : [cw / 2, ch / 2]
   }
 
-  // pass 1: the seeded window; measure where the set actually sits
-  let [gcx, gcy] = renderAt(cx, cy)
-  // pass 2 (only when needed): shift the window so the set's centroid lands
-  // on the canvas centre — threshold ~2% of the canvas, beyond which the
-  // off-centre drift starts pushing the set toward a phone's crop edge
-  const dx = gcx - cw / 2
-  const dy = gcy - ch / 2
+  // locate the set with the cheap probe, then ONE full-res render centred
+  // on it (the old code rendered the full canvas twice). Pixel offsets map
+  // to complex-plane shifts as px × step — pixels are square in complex
+  // space (vertical step == horizontal step) — and the window centre must
+  // stay in COMPLEX coordinates; the probe's centroid is in image pixels,
+  // so every measurement is folded back through × step.
+  let winX = cx
+  let winY = cy
+  // re-centre threshold ~2% of the canvas, beyond which the off-centre
+  // drift starts pushing the set toward a phone's crop edge
+  let [gcx, gcy] = probeCentroid(winX, winY)
+  let dx = gcx - cw / 2
+  let dy = gcy - ch / 2
   if (Math.hypot(dx, dy) > cw * 0.02) {
-    // pixels are square in complex space (vertical step == horizontal step),
-    // so both shifts are simply px × step
-    ;[gcx, gcy] = renderAt(cx + dx * step, cy + dy * step)
+    winX += dx * step
+    winY += dy * step
+    ;[gcx, gcy] = probeCentroid(winX, winY)
+    dx = gcx - cw / 2
+    dy = gcy - ch / 2
   }
+  renderAt(winX + dx * step, winY + dy * step)
   ctx.putImageData(img, 0, 0)
   return canvas.toDataURL('image/png')
 }
@@ -555,9 +682,10 @@ export function generateFractals(opts: {
 
 // ---------------------------------------------------------------------------
 // Mycelium — a glowing node network: bright synapse-like nodes strung
-// together by fine luminous filaments in blue-violet and cyan, on a deep
-// substrate (the reference look). Nodes come from a jittered grid (even
-// coverage, organic spacing); each node links to a handful of near
+// together by fine luminous filaments in the theme's primary and secondary
+// accents, on a deep substrate (the reference look). Nodes come from a
+// jittered grid (even coverage, organic spacing); each node links to a
+// handful of near
 // neighbours with gently bowed curves — a few thick trunk lines carry the
 // structure, the rest are hairlines. Every filament is drawn twice (wide
 // soft halo + crisp core) with additive blending on dark substrates, so
@@ -574,8 +702,13 @@ export function generateMycelium(opts: {
   seed?: number
   /** the theme's background colour — the substrate adopts it (dark themes
    *  get a violet-tinted version of their own bg, light themes keep their
-   *  light bg and the network switches to deep-violet ink) */
+   *  light bg and the network switches to deep ink) */
   themeBg?: [number, number, number] | null
+  /** the theme's primary — the strands (falls back to the classic violet) */
+  primary?: string
+  /** the theme's accent — the bright junction sparkles (falls back to a
+   *  lightness-shifted primary) */
+  accent2?: string
 }): string {
   const { density, glow, scale } = opts
   const rnd = mulberry32(opts.seed ?? 90210)
@@ -590,13 +723,35 @@ export function generateMycelium(opts: {
   const sc = scale / 100
 
   // substrate — themed: dark themes mix their own background colour into the
-  // deep violet humus (the theme's hue survives, the darkness keeps the
+  // deep humus (the theme's hue survives, the darkness keeps the
   // glowy identity); light themes keep their light background and the whole
   // network flips to ink-on-paper. No themeBg (previews/thumbnails) keeps
   // the classic fixed violet-black substrate.
   const DEEP: [number, number, number] = [11, 8, 22]
   const tb = opts.themeBg ?? null
   const light = tb != null && luminance(tb) > 0.5
+  // the network's two hues follow the palette: strands ride the theme's
+  // primary, the bright junction accents its secondary. A secondary that
+  // IS the primary (or none at all) falls back to a lightness shift of the
+  // primary so the pair still spreads. No theme colours → the classic
+  // violet/cyan the reference look shipped.
+  const tp = colorToRgb(opts.primary ?? '')
+  const ta = colorToRgb(opts.accent2 ?? '')
+  let VIOLET: [number, number, number]
+  let CYAN: [number, number, number]
+  if (tp) {
+    const sec =
+      ta && Math.hypot(ta[0] - tp[0], ta[1] - tp[1], ta[2] - tp[2]) >= 26
+        ? ta
+        : light
+          ? mixRgb(tp, [15, 18, 30], 0.45)
+          : mixRgb(tp, [240, 244, 255], 0.4)
+    VIOLET = light ? mixRgb(tp, [15, 18, 30], 0.35) : mixRgb(tp, [240, 244, 255], 0.3)
+    CYAN = light ? mixRgb(sec, [15, 18, 30], 0.35) : mixRgb(sec, [240, 244, 255], 0.3)
+  } else {
+    VIOLET = light ? [82, 58, 190] : [167, 139, 250]
+    CYAN = light ? [8, 145, 178] : [125, 211, 252]
+  }
   const sub =
     tb == null
       ? { c0: '#191230', c1: '#120c22', c2: '#0b0816' }
@@ -618,10 +773,10 @@ export function generateMycelium(opts: {
     const wy = rnd() * LH
     const wr = 140 + rnd() * 170
     const wg = ctx.createRadialGradient(wx, wy, 0, wx, wy, wr)
-    // violet humus washes — on a light substrate they would grey it out
+    // primary humus washes — on a light substrate they would grey it out
     const washA = light ? 0.02 : 0.05
-    wg.addColorStop(0, `rgba(124,110,200,${washA})`)
-    wg.addColorStop(1, 'rgba(124,110,200,0)')
+    wg.addColorStop(0, `rgba(${VIOLET[0]},${VIOLET[1]},${VIOLET[2]},${washA})`)
+    wg.addColorStop(1, `rgba(${VIOLET[0]},${VIOLET[1]},${VIOLET[2]},0)`)
     ctx.fillStyle = wg
     ctx.fillRect(0, 0, LW, LH)
   }
@@ -650,8 +805,6 @@ export function generateMycelium(opts: {
   // On dark substrates everything composites additively so crossings pool
   // their light like the reference.
   const glowK = glow / 100
-  const VIOLET: [number, number, number] = light ? [82, 58, 190] : [167, 139, 250]
-  const CYAN: [number, number, number] = light ? [8, 145, 178] : [125, 211, 252]
   const edgeCol = () => mixRgb(VIOLET, CYAN, rnd() * 0.6)
   interface Filament {
     ax: number
@@ -895,7 +1048,9 @@ export function generateMycelium(opts: {
   // --- junctions: bright pinpoints on the strand vertices (thicker strand
   //     → brighter dot), each with a TIGHT glow — many small sparkles, not
   //     bokeh balls ----------------------------------------------------------
-  const CORE = light ? 'rgba(46,29,124,0.95)' : 'rgba(214,202,250,0.93)'
+  const CORE = light
+    ? `rgba(${mixRgb(VIOLET, [10, 12, 24], 0.5).map((v) => Math.round(v)).join(',')},0.95)`
+    : `rgba(${mixRgb(VIOLET, [235, 240, 255], 0.75).map((v) => Math.round(v)).join(',')},0.93)`
   for (const v of vertices) {
     // bright tier on ~40% of vertices (trunk ends and hub vertices
     // favoured), dim tier on another ~30% — the rest stay unlit so the

@@ -125,7 +125,15 @@ function useStaticArt(
           seed,
         })
       case 'bg-mycelium':
-        return generateMycelium({ density, glow, scale, seed, themeBg })
+        return generateMycelium({
+          density,
+          glow,
+          scale,
+          seed,
+          themeBg,
+          primary: primary || undefined,
+          accent2: accent2 || undefined,
+        })
       case 'carbon':
         return generateCarbon({ scale })
       case 'iridescence':

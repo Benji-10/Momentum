@@ -34,6 +34,51 @@ export function numOf(v: unknown, fallback: number): number {
 }
 
 // ---------------------------------------------------------------------------
+// Shared theme-accent plumbing for the canvas scenes.
+//
+// BackgroundLayer injects the live palette's two accents into every scene's
+// settings as themePrimary / themeAccent tuples. The generated scenes all
+// follow the same rule — the art is painted in the theme's PRIMARY accent
+// with the SECONDARY accent arriving as the gradient partner (or, in a few
+// scenes, as the sparkle on top) — so a background MATCHES the palette you
+// pick, in both directions of the pair.
+//
+// No theme colours (offline preview harness) → each scene keeps its
+// curated fallback palette.
+// ---------------------------------------------------------------------------
+
+/** channel-wise mix of two rgb triples */
+function mixRgb3(
+  a: [number, number, number],
+  b: [number, number, number],
+  t: number,
+): [number, number, number] {
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * t),
+    Math.round(a[1] + (b[1] - a[1]) * t),
+    Math.round(a[2] + (b[2] - a[2]) * t),
+  ]
+}
+
+/** the ink light themes pull toward — glow colours wash out on paper */
+const SCENE_INK: [number, number, number] = [24, 26, 38]
+/** the white dark themes lift toward — additive glow needs bright sources */
+const SCENE_GLOW: [number, number, number] = [228, 240, 255]
+
+/** Is the candidate secondary distinct enough from the primary to carry a
+ *  gradient on its own? (Near-identical pairs collapse every ramp to one
+ *  hue, so they fall back to a hue-rotated cousin of the primary.) */
+function distinctSecondary(
+  primary: [number, number, number],
+  candidate: [number, number, number] | null,
+): [number, number, number] | null {
+  if (!candidate) return null
+  return Math.hypot(candidate[0] - primary[0], candidate[1] - primary[1], candidate[2] - primary[2]) < 26
+    ? null
+    : candidate
+}
+
+// ---------------------------------------------------------------------------
 // Bioluminescence — dark water with glowing drifting particles
 // ---------------------------------------------------------------------------
 
@@ -48,18 +93,36 @@ export function makeBioluminescence(settings: BgSettings): SceneFactory {
   // toned plankton (additive glow is invisible on light, so the particles
   // switch to normal compositing ink dots)
   const baseCss = tb ? `rgb(${tb[0]},${tb[1]},${tb[2]})` : '#050a12'
-  return (ctx: CanvasRenderingContext2D, w: number, h: number) => {
-    const count = Math.round(24 + (density / 100) * 110)
-    const hues = light
+  // the plankton follow the palette: most drift in the theme's primary (a
+  // deep shade + a bright shade), a minority sparkle in the secondary —
+  // "all the generated themes use a gradient of primary and secondary
+  // accents", here as a weighted three-tint roll. No theme colours (preview
+  // harness) → the curated teal/indigo/violet the clips shipped.
+  const tp = rgbSettingOf(settings, 'themePrimary')
+  const ta = distinctSecondary(tp ?? [0, 0, 0], rgbSettingOf(settings, 'themeAccent'))
+  let hues: string[]
+  if (tp) {
+    const sec = ta ?? hueShiftRgb(tp, 30)
+    const c0 = light ? mixRgb3(tp, SCENE_INK, 0.55) : mixRgb3(tp, [6, 10, 18], 0.5)
+    const c1 = light ? mixRgb3(tp, SCENE_INK, 0.28) : tp
+    const c2 = light ? mixRgb3(sec, SCENE_INK, 0.42) : mixRgb3(sec, SCENE_GLOW, 0.38)
+    hues = [c0, c1, c2].map((c) => `${c[0]},${c[1]},${c[2]}`)
+  } else {
+    hues = light
       ? ['8,145,178', '79,70,229', '124,58,237'] // teal / indigo / violet ink
       : ['186,240,255', '147,197,253', '196,181,253'] // cyan, blue, violet glow
+  }
+  return (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+    const count = Math.round(24 + (density / 100) * 110)
     const particles = Array.from({ length: count }, () => ({
       x: Math.random() * w,
       y: Math.random() * h,
       vx: (Math.random() - 0.5) * 14,
       vy: (Math.random() - 0.5) * 14,
       r: 0.9 + Math.random() * 2.2,
-      hue: hues[Math.floor(Math.random() * hues.length)],
+      // weighted roll: half deep primary, a third primary, the rest a
+      // secondary-accent sparkle
+      hue: hues[(() => { const hr = Math.random(); return hr < 0.5 ? 0 : hr < 0.82 ? 1 : 2 })()],
       phase: Math.random() * Math.PI * 2,
       twinkle: 0.5 + Math.random() * 1.6,
     }))
@@ -112,14 +175,16 @@ export function makeBioluminescence(settings: BgSettings): SceneFactory {
 // infinite, never "narrower than the screen". There are no mesh lines.
 // Each point is drawn from a small atlas of pre-rendered sprites whose
 // softness encodes DEPTH OF FIELD: a focal band mid-field stays crisp
-// while the near rows dissolve into big bokeh rings and the far field
-// into haze. Points carry electric-blue tints and a heavy-tailed
-// magnitude — a few big bright beacons that twinkle, a mass of
-// almost-invisible grains. The whole scene runs at a fraction of its old
-// pace, and speed 0% is genuinely frozen (`numOf` keeps 0 from falling
+// while the near rows dissolve into big blurred filled dots of varying
+// sizes and the far field into haze. Points carry the theme's primary
+// tint (deep grains + bright field) with the secondary accent as the
+// sparse big beacons, and a heavy-tailed magnitude — a few big bright
+// beacons that twinkle, a mass of almost-invisible grains. The whole
+// scene runs at a fraction of its old pace behind a ~30fps render gate,
+// and speed 0% is genuinely frozen (`numOf` keeps 0 from falling
 // back to the slider default). A fresh noise lattice rolls on every
 // build: each reload grows a different field. The canvas base adopts the
-// theme's background colour; light themes flip to deep electric-blue ink
+// theme's background colour; light themes flip to deep primary-ink
 // dots on paper.
 // ---------------------------------------------------------------------------
 
@@ -185,11 +250,21 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
     const dBottom = fitBuf[2]!
 
     // --- the grid: cell size tuned at the bottom-edge depth, so the near
-    //     band carries sparse bokeh while perspective crowds the far field
-    const spacingPx = 46 - (density / 100) * 24 // 46..22 px at the bottom edge
-    const spacing = (spacingPx * dBottom) / fitScale // world units per cell
-    const cols = Math.max(26, Math.min(104, Math.ceil(PW / spacing) + 1))
-    const rows = Math.max(16, Math.min(64, Math.ceil(PD / spacing) + 1))
+    //     band carries sparse dots while perspective crowds the far field.
+    //     The slider spans 52..14 px (the old 46..22 range hit its caps:
+    //     on desktop the count was pinned at the ceiling for the WHOLE
+    //     slider, so the dial did nothing), and a per-frame point budget
+    //     trims extreme devices instead of dead-ending the dial.
+    const spacingPx = 52 - (density / 100) * 38 // 52..14 px at the bottom edge
+    let spacing = (spacingPx * dBottom) / fitScale // world units per cell
+    const budget = 14000 // points per frame, any device
+    let cols = Math.max(26, Math.ceil(PW / spacing) + 1)
+    let rows = Math.max(16, Math.ceil(PD / spacing) + 1)
+    if (cols * rows > budget) {
+      spacing *= Math.sqrt((cols * rows) / budget)
+      cols = Math.max(26, Math.ceil(PW / spacing) + 1)
+      rows = Math.max(16, Math.ceil(PD / spacing) + 1)
+    }
 
     // --- 3D value noise: a random lattice, trilinear + smoothstep ---------
     // rolled per build → a fresh field every page load
@@ -247,22 +322,45 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
     }
 
     // --- sprite atlas: depth-of-field, pre-rendered ------------------------
-    // 3 electric-blue tints × 6 softness levels. Level 0 is a crisp dot;
-    // the softest levels are bokeh RINGS (bright rim, hollow centre) like
-    // an out-of-focus lens. A point's level follows its distance from the
-    // focal band, so near bokeh and far haze both dissolve while the
+    // 3 tints × 6 softness levels. Level 0 is a crisp dot; the softest
+    // levels are blurred filled dots (solid core, soft skirt) — out-of-
+    // focus points of light at different sizes, per the "no circles, just
+    // blurred dots" ask. A point's level follows its distance from the
+    // focal band, so near dots and far haze both dissolve while the
     // mid-field stays sharp — the focal-length illusion.
-    const TINTS: [number, number, number][] = light
-      ? [
-          [4, 104, 214], // deep electric-blue ink
-          [8, 134, 238], // electric blue
-          [66, 174, 255], // bright sky-blue spark
-        ]
-      : [
-          [34, 108, 238], // deep electric blue
-          [72, 168, 255], // electric blue glow
-          [198, 236, 255], // hot core, white-blue
-        ]
+    // The tints follow the palette: deep primary + primary for the field,
+    // the secondary accent for the sparse bright beacons (the white-core
+    // rule below makes those sparkle on dark water). No theme colours
+    // (preview harness) → the curated electric blues.
+    const tp = rgbSettingOf(settings, 'themePrimary')
+    const ta = distinctSecondary(tp ?? [0, 0, 0], rgbSettingOf(settings, 'themeAccent'))
+    const TINTS: [number, number, number][] = (() => {
+      if (!tp) {
+        return light
+          ? [
+              [4, 104, 214], // deep electric-blue ink
+              [8, 134, 238], // electric blue
+              [66, 174, 255], // bright sky-blue spark
+            ]
+          : [
+              [34, 108, 238], // deep electric blue
+              [72, 168, 255], // electric blue glow
+              [198, 236, 255], // hot core, white-blue
+            ]
+      }
+      const sec = ta ?? hueShiftRgb(tp, 30)
+      return light
+        ? [
+            mixRgb3(tp, SCENE_INK, 0.55), // deep primary ink
+            mixRgb3(tp, SCENE_INK, 0.28), // primary ink
+            mixRgb3(sec, SCENE_INK, 0.42), // secondary-ink beacon
+          ]
+        : [
+            mixRgb3(tp, [6, 10, 18], 0.5), // deep primary grain
+            tp, // primary glow, as the theme mixes it
+            mixRgb3(sec, SCENE_GLOW, 0.4), // secondary beacon glow
+          ]
+    })()
     const LEVELS = 6
     const SPR = 64
     const sprites: HTMLCanvasElement[][] = TINTS.map((rgb, tix) =>
@@ -278,12 +376,11 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
         // the hot tint carries a white core on dark water
         const core = !light && tix === 2 ? `rgba(240,250,255,${peak.toFixed(3)})` : col(peak)
         if (f > 0.55) {
-          // bokeh ring: hollow centre, bright rim, soft skirt
-          grad.addColorStop(0, col(0.16 * peak))
-          grad.addColorStop(0.34, col(0.42 * peak))
-          grad.addColorStop(0.5, core)
-          grad.addColorStop(0.62, col(0.5 * peak))
-          grad.addColorStop(0.82, col(0.16 * peak))
+          // blurred filled dot: solid core with a soft skirt — an out-of-
+          // focus point of light, never a ring
+          grad.addColorStop(0, core)
+          grad.addColorStop(0.4, col(0.82 * peak))
+          grad.addColorStop(0.7, col(0.3 * peak))
           grad.addColorStop(1, col(0))
         } else {
           // crisp dot: solid core, quick falloff; softens with f
@@ -325,10 +422,20 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
     // the horizon line the sky glow below is anchored to
     const horizonY = cyf + farY * fitScale
     const twinkleRate = 0.5 + 1.6 * SLOW // bright points breathe; frozen at speed 0
+    // the tint used for the horizon haze — the field's primary, whatever
+    // the theme (fallback keeps the old curated blue)
+    const hazeTint = TINTS[1]!
 
+    let lastDrawn = -1
     return (t: number) => {
+      // ~30fps internal render gate — the field is very slow, and the
+      // denser grid (up to the 14k-point budget) halves its draw rate to
+      // stay kind to phone batteries. Frozen at speed 0, like every scene.
+      const tA = t * speed
+      if (lastDrawn >= 0 && tA - lastDrawn < 1 / 31) return
+      lastDrawn = tA
       // themed base with a quiet top-corners falloff + horizon haze (depth
-      // cues, kept away from the bottom where the brightest bokeh lives)
+      // cues, kept away from the bottom where the brightest dots live)
       ctx.fillStyle = baseCss
       ctx.fillRect(0, 0, w, h)
       const vg = ctx.createRadialGradient(w / 2, h * 0.3, Math.min(w, h) * 0.45, w / 2, h * 0.3, Math.hypot(w, h) * 0.62)
@@ -338,7 +445,7 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
       ctx.fillRect(0, 0, w, h)
       const hg = ctx.createLinearGradient(0, horizonY - h * 0.1, 0, horizonY + h * 0.06)
       hg.addColorStop(0, 'rgba(0,0,0,0)')
-      hg.addColorStop(0.55, light ? 'rgba(51,65,85,0.05)' : 'rgba(56,130,184,0.07)')
+      hg.addColorStop(0.55, `rgba(${hazeTint[0]},${hazeTint[1]},${hazeTint[2]},${light ? 0.05 : 0.07})`)
       hg.addColorStop(1, 'rgba(0,0,0,0)')
       ctx.fillStyle = hg
       ctx.fillRect(0, horizonY - h * 0.1, w, h * 0.16)
@@ -362,7 +469,7 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
           if (fog < 0.1 && (i + j) % 2 === 1) continue // thin out only the deepest haze
           const blur = blurOf(d)
           const mag = pmag[k]!
-          // size: near points larger, blur inflates the bokeh, magnitude
+          // size: near points larger, blur inflates the soft dots, magnitude
           // spans almost-invisible grains to big bright beacons
           const rBase = 1.3 + 1.75 * fog
           const r = rBase * (0.6 + 1.9 * mag) * (1 + 1.15 * blur)
@@ -385,12 +492,14 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
 // land at random points; each rings out 2–4 decelerating circles that fade
 // as they widen, with a bright splash dot marking the impact for a beat.
 // Most drops are micro-patters (one small quick ring); a few are heavy
-// drops with wider, slower ring systems. Rain accumulates on sim time —
-// which the speed dial scales, so 0% is a frozen puddle between showers —
-// and the factory pre-rolls a few seconds of weather so the first visible
-// frame is already developed. The water adopts the theme's background
-// colour: dark themes get additive neon-cyan rings over deep water, light
-// themes an ink wash on pale paper.
+// drops with wider, slower ring systems. Every ring is born in the theme's
+// PRIMARY at the impact and slides to the SECONDARY accent as it radiates
+// outward — the colour rides each ring's own expansion progress, so a
+// spreading system reads as primary → secondary from the middle out.
+// Rain accumulates on sim time — which the speed dial scales, so 0% is a
+// frozen puddle between showers — and the factory pre-rolls a few seconds
+// of weather so the first visible frame is already developed. The water
+// adopts the theme's background colour.
 // ---------------------------------------------------------------------------
 
 export function makeRipple(settings: BgSettings): WarmupSceneFactory {
@@ -399,6 +508,22 @@ export function makeRipple(settings: BgSettings): WarmupSceneFactory {
   const tb = themeBgOf(settings)
   const light = tb != null && lumOf(tb) > 0.5
   const BASE: [number, number, number] = tb ?? [7, 12, 20]
+  // ring colour: impact = the theme's primary, rim = the secondary. No
+  // theme colours (preview harness) → the curated cyan ↔ pale-blue the
+  // preview clips shipped. Light themes ink both ends (glow washes out on
+  // paper), dark themes lift them (additive neon needs bright sources).
+  const tp = rgbSettingOf(settings, 'themePrimary')
+  const ta = distinctSecondary(tp ?? [0, 0, 0], rgbSettingOf(settings, 'themeAccent'))
+  let ringA: [number, number, number]
+  let ringB: [number, number, number]
+  if (tp) {
+    const sec = ta ?? hueShiftRgb(tp, 30)
+    ringA = light ? mixRgb3(tp, SCENE_INK, 0.35) : mixRgb3(tp, SCENE_GLOW, 0.22)
+    ringB = light ? mixRgb3(sec, SCENE_INK, 0.35) : mixRgb3(sec, SCENE_GLOW, 0.22)
+  } else {
+    ringA = light ? [30, 110, 210] : [120, 200, 250]
+    ringB = light ? [40, 140, 240] : [180, 230, 250]
+  }
   const factory = ((ctx: CanvasRenderingContext2D, w: number, h: number) => {
     const SM = Math.min(w, h)
     interface Ring {
@@ -408,7 +533,6 @@ export function makeRipple(settings: BgSettings): WarmupSceneFactory {
       delay: number
       life: number
       maxR: number
-      hue: number // 0..1 — cyan ↔ blue
       weight: number // heavy drops draw a touch wider
     }
     const rings: Ring[] = []
@@ -421,7 +545,6 @@ export function makeRipple(settings: BgSettings): WarmupSceneFactory {
       if (rings.length > 220) return // soft cap for dense settings on slow devices
       const x = Math.random() * w
       const y = Math.random() * h
-      const hue = Math.random()
       const kind = Math.random()
       if (kind < 0.42) {
         // micro patter: one small quick ring
@@ -432,7 +555,6 @@ export function makeRipple(settings: BgSettings): WarmupSceneFactory {
           delay: 0,
           life: 1.1 + Math.random() * 0.5,
           maxR: (0.045 + Math.random() * 0.045) * SM,
-          hue,
           weight: 0.85,
         })
         return
@@ -449,7 +571,6 @@ export function makeRipple(settings: BgSettings): WarmupSceneFactory {
           delay: i * (heavy ? 0.34 : 0.27),
           life: life * (1 - i * 0.08),
           maxR: maxR * (1 - i * 0.14),
-          hue,
           weight: heavy ? 1.25 : 1,
         })
       }
@@ -499,10 +620,11 @@ export function makeRipple(settings: BgSettings): WarmupSceneFactory {
         const ease = 1 - Math.pow(1 - p, 2.3) // decelerating expansion
         const rad = Math.max(1, r.maxR * ease)
         const fade = Math.pow(1 - p, 1.3)
-        // per-drop hue: cyan ↔ blue
-        const cr = light ? 30 + r.hue * 10 : 120 + r.hue * 60
-        const cg = light ? 110 + r.hue * 30 : 200 + r.hue * 30
-        const cb = light ? 210 + r.hue * 30 : 250
+        // primary at the impact → secondary at the rim: the colour rides
+        // this ring's own expansion progress p
+        const cr = Math.round(ringA[0] + (ringB[0] - ringA[0]) * p)
+        const cg = Math.round(ringA[1] + (ringB[1] - ringA[1]) * p)
+        const cb = Math.round(ringA[2] + (ringB[2] - ringA[2]) * p)
         const a = fade * (light ? 0.62 : 0.95)
         // halo + core double stroke reads as a wet neon ring on dark water
         ctx.lineWidth = 4.2 * r.weight
@@ -546,16 +668,17 @@ export function makeRipple(settings: BgSettings): WarmupSceneFactory {
 // like form undulating in place. Deformation parameters roll fresh on
 // every page load (seeded, so a resize or theme flip keeps the SAME form;
 // each refresh grows a new cousin of the blob). The wires carry the
-// PALETTE: stroke colour walks a gradient from the theme's primary to a
-// slightly shifted cousin — mixed toward the theme's accent when one
-// exists, else a small hue rotation — from the top of the frame to the
-// bottom, per the "blend from the theme colour to a slightly different
-// colour" ask. Faces fill at whisper alpha for the translucent see-through
-// volume; the far side's wires fade but stay drawn. ALWAYS dead-centre
-// (phones included), wave motion rides the speed dial (0% freezes it), and
-// an internal ~30fps render gate keeps the 20k-face mesh cheap: faces and
-// edges are grouped into shared paths by (colour, alpha, width) bucket so
-// a frame costs ~200 draw calls instead of ~50k.
+// PALETTE: stroke colour walks a gradient from the theme's PRIMARY at the
+// form's top-left to its SECONDARY accent at the bottom-right, mapped
+// along the TL→BR diagonal over the blob's own live extent (a secondary
+// that IS the primary falls back to a small hue rotation). The form is
+// framed at twice its old size — it fills the frame on phones. Faces fill
+// at whisper alpha for the translucent see-through volume; the far side's
+// wires fade but stay drawn. ALWAYS dead-centre (phones included), wave
+// motion rides the speed dial (0% freezes it), and an internal ~30fps
+// render gate keeps the 20k-face mesh cheap: faces and edges are grouped
+// into shared paths by (colour, alpha, width) bucket so a frame costs
+// ~200 draw calls instead of ~50k.
 // ---------------------------------------------------------------------------
 
 /** deterministic RNG (mirrors the one in animated.tsx; a local copy keeps
@@ -618,24 +741,14 @@ export function makeParametric(settings: BgSettings): SceneFactory {
   const base: [number, number, number] = tb ?? [9, 8, 22]
   const baseCss = `rgb(${base[0]},${base[1]},${base[2]})`
 
-  // ---- the gradient: the theme's primary → a slightly different cousin --
-  // half-way toward the theme's accent stays recognisably "the theme
-  // colour, shifted"; no accent (or an accent that IS the primary) falls
-  // back to a small hue rotation
+  // ---- the gradient: the theme's primary → its secondary accent ----------
+  // the form's top-left carries the primary, its bottom-right the secondary;
+  // a secondary that IS the primary (or none at all) falls back to a small
+  // hue rotation so the gradient still breathes
   const tp = rgbSettingOf(settings, 'themePrimary')
-  const ta = rgbSettingOf(settings, 'themeAccent')
+  const ta = distinctSecondary(tp ?? [0, 0, 0], rgbSettingOf(settings, 'themeAccent'))
   let cA: [number, number, number] = tp ?? (light ? [124, 58, 237] : [216, 138, 232])
-  let cB: [number, number, number]
-  if (ta) {
-    cB = [
-      Math.round(cA[0] + (ta[0] - cA[0]) * 0.55),
-      Math.round(cA[1] + (ta[1] - cA[1]) * 0.55),
-      Math.round(cA[2] + (ta[2] - cA[2]) * 0.55),
-    ]
-    if (Math.hypot(cB[0] - cA[0], cB[1] - cA[1], cB[2] - cA[2]) < 26) cB = hueShiftRgb(cA, 28)
-  } else {
-    cB = hueShiftRgb(cA, 28)
-  }
+  let cB: [number, number, number] = ta ?? hueShiftRgb(cA, 28)
   if (light) {
     // translucent brights wash out on paper — pull both ends toward ink
     const ink = [26, 26, 40] as const
@@ -801,7 +914,9 @@ export function makeParametric(settings: BgSettings): SceneFactory {
     const spit = Math.sin(PITCH)
     const cx = w / 2
     const cyc = h / 2
-    const scale = Math.min(w, h) * 0.9
+    // twice the old 0.9 multiplier — the form now fills the frame on
+    // phones instead of sitting in the middle third
+    const scale = Math.min(w, h) * 1.8
 
     // ---- style tables: 12 gradient stops × alpha/width buckets ----------
     const NCOL = 12
@@ -863,6 +978,8 @@ export function makeParametric(settings: BgSettings): SceneFactory {
       // --- deform + rotate + project every vertex (fused, no allocation) --
       let yLo = Infinity
       let yHi = -Infinity
+      let xLo = Infinity
+      let xHi = -Infinity
       for (let v = 0; v < nv; v++) {
         const x = verts[v * 3]!
         const y = verts[v * 3 + 1]!
@@ -898,13 +1015,19 @@ export function makeParametric(settings: BgSettings): SceneFactory {
         SX[v] = cx + rx * inv
         SY[v] = cyc - ry * inv
         SZ[v] = depth
-        // the blob's live vertical extent — the gradient maps over THIS,
-        // not the screen: the object only spans the middle ~35% of the
-        // frame, so a screen-height ramp would compress it to one colour
+        // the blob's live extent — the gradient maps over THIS, not the
+        // screen: the ramp has to span the form's own diagonal or it would
+        // compress to one colour
         if (SY[v]! < yLo) yLo = SY[v]!
         if (SY[v]! > yHi) yHi = SY[v]!
+        if (SX[v]! < xLo) xLo = SX[v]!
+        if (SX[v]! > xHi) xHi = SX[v]!
       }
+      const xSpan = Math.max(1, xHi - xLo)
       const ySpan = Math.max(1, yHi - yLo)
+      /** gradient position on the top-left → bottom-right diagonal, over
+       *  the blob's own live extent: 0 at its TL corner, 1 at its BR */
+      const diag = (vi: number) => 0.5 * ((SX[vi]! - xLo) / xSpan) + 0.5 * ((SY[vi]! - yLo) / ySpan)
 
       // --- bucket the faces + edges by colour / alpha / width -------------
       for (let i = 0; i < faceBk.length; i++) faceBk[i]!.length = 0
@@ -914,8 +1037,8 @@ export function makeParametric(settings: BgSettings): SceneFactory {
         const b = faces[f + 1]!
         const c = faces[f + 2]!
         const frontness = 1 - smoothstep(4.5, 7, (SZ[a]! + SZ[b]! + SZ[c]!) / 3)
-        const yAvg = (SY[a]! + SY[b]! + SY[c]!) / 3
-        let col = Math.floor(((yAvg - yLo) / ySpan) * NCOL)
+        // colour = the face's average position on the TL→BR diagonal
+        let col = Math.floor(((diag(a) + diag(b) + diag(c)) / 3) * NCOL)
         if (col < 0) col = 0
         else if (col > NCOL - 1) col = NCOL - 1
         const bk = faceBk[col * NF + Math.round(frontness * (NF - 1))]!
@@ -926,8 +1049,7 @@ export function makeParametric(settings: BgSettings): SceneFactory {
         const b = edges[e + 1]!
         const vis = 1 - smoothstep(5.8, 7.4, (SZ[a]! + SZ[b]!) / 2)
         if (vis < 0.015) continue // the far-side cutoff from the reference
-        const yAvg = (SY[a]! + SY[b]!) / 2
-        let col = Math.floor(((yAvg - yLo) / ySpan) * NCOL)
+        let col = Math.floor(((diag(a) + diag(b)) / 2) * NCOL)
         if (col < 0) col = 0
         else if (col > NCOL - 1) col = NCOL - 1
         const bk = edgeBk[(col * NE + Math.round(vis * (NE - 1))) * NW + Math.round(vis * (NW - 1))]!
@@ -1001,6 +1123,29 @@ export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
   // wash (dye darkens toward its own hue). No themeBg → the curated deep
   // blue-black base, byte-identical to the look the preview clips ship.
   const BASE: [number, number, number] = tb ?? [6, 10, 18]
+  // the dye follows the palette: five stops walking the theme's primary →
+  // secondary accent, so every filament of the fluid is a variation of the
+  // two accents (the old curated cyan/violet/teal + one warm ember is
+  // retired). No theme colours (preview harness) → the curated set the
+  // clips shipped. Light themes ink the stops (watercolour wash), dark
+  // themes lift them (additive glow needs bright dye).
+  const tp = rgbSettingOf(settings, 'themePrimary')
+  const ta = distinctSecondary(tp ?? [0, 0, 0], rgbSettingOf(settings, 'themeAccent'))
+  const PALETTE: [number, number, number][] = (() => {
+    if (!tp) {
+      return [
+        [56, 189, 248], // cyan
+        [129, 140, 248], // indigo
+        [167, 139, 250], // violet
+        [45, 212, 191], // teal
+        [251, 146, 60], // one warm ember note
+      ]
+    }
+    const sec = ta ?? hueShiftRgb(tp, 25)
+    const p1 = light ? mixRgb3(tp, SCENE_INK, 0.3) : mixRgb3(tp, SCENE_GLOW, 0.15)
+    const p2 = light ? mixRgb3(sec, SCENE_INK, 0.3) : mixRgb3(sec, SCENE_GLOW, 0.15)
+    return [p1, mixRgb3(p1, p2, 0.25), mixRgb3(p1, p2, 0.5), mixRgb3(p1, p2, 0.75), p2]
+  })()
   const factory = ((ctx: CanvasRenderingContext2D, w: number, h: number) => {
     // --- sim grid, shaped like the viewport: a portrait phone would only
     //     ever see the middle third of a fixed 128x80 grid ------------------
@@ -1043,14 +1188,8 @@ export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
     }
 
     // --- stirrers: slowly drifting vortices on a jittered grid so the
-    //     whole frame is covered — no empty halves -------------------------
-    const PALETTE: [number, number, number][] = [
-      [56, 189, 248], // cyan
-      [129, 140, 248], // indigo
-      [167, 139, 250], // violet
-      [45, 212, 191], // teal
-      [251, 146, 60], // one warm ember note
-    ]
+    //     whole frame is covered — no empty halves. Dye colours come from
+    //     the outer-scope PALETTE (theme primary → secondary ramp) --------
     const count = 5 + Math.round((density / 100) * 5)
     const cols = Math.max(2, Math.round(Math.sqrt(count * AR)))
     const rows = Math.max(1, Math.ceil(count / cols))

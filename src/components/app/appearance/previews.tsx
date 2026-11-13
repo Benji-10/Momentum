@@ -301,7 +301,12 @@ export function BackgroundThumb({ def }: { def: BackgroundDef }) {
       )
       break
     case 'mycelium':
-      visual = <StaticThumb id="mycelium" make={() => generateMycelium({ density: 50, glow: 55, scale: 100 })} />
+      visual = (
+        <StaticThumb
+          id="mycelium"
+          make={() => generateMycelium({ density: 50, glow: 55, scale: 100, primary: THUMB_PRIMARY, accent2: THUMB_ACCENT })}
+        />
+      )
       break
     case 'mineral':
       visual = <div className="h-full w-full" style={{ backgroundImage: `url("${MINERAL_IMAGE_URL}")`, backgroundSize: 'cover', backgroundPosition: 'center' }} aria-hidden />

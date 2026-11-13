@@ -397,8 +397,8 @@ export function AppearanceTab() {
           {appearance.surface === 'solid'
             ? 'Cards and overlays are fully opaque.'
             : appearance.surface === 'translucent'
-              ? 'Nearly opaque cards with a whisper of the background — the safe pick over busy scenes.'
-              : 'Proper frosted glass — clearly see-through cards with a strong blur. Best over animated backgrounds.'}
+              ? 'Clearly see-through cards — the background shows through, softly dimmed by a light blur.'
+              : 'True frosted glass — a heavy blur smears the background into a soft wash behind the cards.'}
         </p>
       </section>
 

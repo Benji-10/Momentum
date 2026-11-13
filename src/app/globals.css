@@ -684,25 +684,28 @@
 
    Cards and overlays keep their palette colour, but let the
    background layer show through — the two treatments are
-   deliberately FAR apart so switching is obvious:
+   deliberately FAR apart so switching is obvious (reported from
+   phones: translucent read as "solid" and glass as "translucent",
+   so both were recalibrated):
      solid        fully opaque (default)
-     translucent  barely-there: ~92% card, light blur — depth
-                  without readability risk, safe over busy scenes
-     glass        real frosted glass: ~40% card, strong blur +
-                  saturation boost — clearly see-through
+     translucent  clearly see-through: ~82% card, light blur —
+                  the background is visibly there behind the card
+     glass        true frosted glass: ~58% card, heavy 32px blur +
+                  saturation boost — the background is smeared into
+                  a soft colour wash, milky like ground glass
    The palette stores --card-solid; treatments redefine --card.
    ============================================================ */
 
 [data-surface='translucent'] {
-  --card: color-mix(in oklab, var(--card-solid) 92%, transparent);
-  --popover: color-mix(in oklab, var(--popover-solid) 95%, transparent);
+  --card: color-mix(in oklab, var(--card-solid) 82%, transparent);
+  --popover: color-mix(in oklab, var(--popover-solid) 90%, transparent);
   --surface-blur: 8px;
 }
 
 [data-surface='glass'] {
-  --card: color-mix(in oklab, var(--card-solid) 40%, transparent);
-  --popover: color-mix(in oklab, var(--popover-solid) 55%, transparent);
-  --surface-blur: 24px;
+  --card: color-mix(in oklab, var(--card-solid) 58%, transparent);
+  --popover: color-mix(in oklab, var(--popover-solid) 70%, transparent);
+  --surface-blur: 32px;
 }
 
 /* blur what's behind floating surfaces (progressive enhancement —
