@@ -117,9 +117,9 @@ export const BACKGROUNDS: BackgroundDef[] = [
     id: 'parametric',
     name: 'Parametric Forms',
     category: 'animated',
-    hint: 'A breathing harmonic ball — new form each visit',
+    hint: 'An organic noise blob — a new form every visit',
     renderer: 'parametric',
-    settings: [opacity(80), speed(100), { kind: 'slider', key: 'density', label: 'Wire density', min: 0, max: 100, step: 1, default: 50 }, blur()],
+    settings: [opacity(90), speed(100), { kind: 'slider', key: 'density', label: 'Wire density', min: 0, max: 100, step: 1, default: 70 }, blur()],
   },
   {
     id: 'topography',

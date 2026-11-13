@@ -15,8 +15,9 @@
 //   --background  the canvas/substrate base for animated scenes + mycelium,
 //                 so a background you pick MATCHES the palette you picked
 //   --primary / --chart-2  the palette's own hues for contour rings and
-//                 fractal bands — the art inherits the colours, not just
-//                 the paper
+//                 fractal bands — and for the Parametric Forms gradient
+//                 (theme primary → a slightly shifted cousin of it), so the
+//                 art inherits the colours, not just the paper
 // A per-load SEED feeds the static generators — every refresh grows a new
 // terrain / network / Julia rule (stable within the visit, so sliders
 // never flicker the art).
@@ -150,6 +151,10 @@ export function BackgroundLayer({
   const primaryVar = useThemeVar('--primary')
   const accent2Var = useThemeVar('--chart-2')
   const themeBg = useMemo(() => (bgVar ? colorToRgb(bgVar) : null), [bgVar])
+  // parsed once per theme change — they ride along with the settings into
+  // the canvas scenes (parametric builds its gradient from them)
+  const themePrimary = useMemo(() => (primaryVar ? colorToRgb(primaryVar) : null), [primaryVar])
+  const themeAccent = useMemo(() => (accent2Var ? colorToRgb(accent2Var) : null), [accent2Var])
   // one seed per page load: every refresh grows a new terrain / network /
   // Julia rule; within the visit it is stable, so slider tweaks never
   // flicker the art (the seed is a memo input, not a roll per render)
@@ -172,10 +177,16 @@ export function BackgroundLayer({
     ...(blur ? { filter: `blur(${blur}px)`, transform: 'scale(1.04)' } : {}),
   }
 
-  // the theme base rides along with the user's slider settings — a theme
-  // flip rebuilds the scene with the new base (settingsKey includes it)
-  const sceneSettings = { ...config.settings, ...(themeBg ? { themeBg } : {}) }
-  const settingsKey = JSON.stringify({ s: config.settings, themeBg })
+  // the theme base + accent colours ride along with the user's slider
+  // settings — a theme flip rebuilds the scene with the new palette
+  // (settingsKey includes them all)
+  const sceneSettings = {
+    ...config.settings,
+    ...(themeBg ? { themeBg } : {}),
+    ...(themePrimary ? { themePrimary } : {}),
+    ...(themeAccent ? { themeAccent } : {}),
+  }
+  const settingsKey = JSON.stringify({ s: config.settings, themeBg, themePrimary, themeAccent })
 
   let scene: React.ReactNode = null
   switch (config.id) {

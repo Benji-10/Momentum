@@ -538,262 +538,433 @@ export function makeRipple(settings: BgSettings): WarmupSceneFactory {
 }
 
 // ---------------------------------------------------------------------------
-// Parametric Forms — a spherical-harmonics shell breathing at the exact
-// centre of the frame. One deformed sphere (r = R·(1 + Σ aₖ·Yₖ), nine
-// low-order terms, coefficients rolled fresh on every build — a cousin of
-// the same ball each refresh, per the user's ask) is drawn as a glowing
-// lat/long wireframe; 3–4 dimmer nested shells at shrinking scales drift
-// on their own slow rotations behind it, giving the layered-jelly contour
-// look of the reference. Colour walks the depth axis — deep violet far,
-// magenta-pink near — with a wide low-alpha bloom pass so the wires read
-// as neon, a glassy membrane gradient behind everything, and sparse
-// bright node dots on the near side. ALWAYS centred (phones included).
-// Motion (spin, wobble, coefficient breathing) rides the speed dial;
-// 0% holds the form still.
+// Parametric Forms — an organic noise blob on an icosphere (ported from the
+// user's reference sketch): a subdivided icosahedron whose vertices are
+// displaced by seeded 3D Perlin noise over a domain-warped sphere, layered
+// with two animated cosine wave systems — one sweeping vertically, one
+// horizontally — whose product cross-modulates the surface into a jelly-
+// like form undulating in place. Deformation parameters roll fresh on
+// every page load (seeded, so a resize or theme flip keeps the SAME form;
+// each refresh grows a new cousin of the blob). The wires carry the
+// PALETTE: stroke colour walks a gradient from the theme's primary to a
+// slightly shifted cousin — mixed toward the theme's accent when one
+// exists, else a small hue rotation — from the top of the frame to the
+// bottom, per the "blend from the theme colour to a slightly different
+// colour" ask. Faces fill at whisper alpha for the translucent see-through
+// volume; the far side's wires fade but stay drawn. ALWAYS dead-centre
+// (phones included), wave motion rides the speed dial (0% freezes it), and
+// an internal ~30fps render gate keeps the 20k-face mesh cheap: faces and
+// edges are grouped into shared paths by (colour, alpha, width) bucket so
+// a frame costs ~200 draw calls instead of ~50k.
 // ---------------------------------------------------------------------------
 
+/** deterministic RNG (mirrors the one in animated.tsx; a local copy keeps
+ *  this module import-free for the headless preview harness) */
+function mulberry32Local(seed: number): () => number {
+  let a = seed >>> 0
+  return () => {
+    a |= 0
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/** one seed per page load: every refresh grows a new blob; rebuilds within
+ *  the visit (resize, theme flip) keep the SAME form */
+const PARAMETRIC_LOAD_SEED = Math.floor(Math.random() * 2 ** 31)
+
+/** rotate a colour's hue by `deg` — the fallback "slightly different
+ *  colour" when the theme has no usable second hue */
+function hueShiftRgb(c: [number, number, number], deg: number): [number, number, number] {
+  const r = c[0] / 255
+  const g = c[1] / 255
+  const b = c[2] / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const l = (max + min) / 2
+  let h = 0
+  let s = 0
+  if (max !== min) {
+    const d = max - min
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0)
+    else if (max === g) h = (b - r) / d + 2
+    else h = (r - g) / d + 4
+    h /= 6
+  }
+  h = (h + deg / 360 + 1) % 1
+  const f = (n: number): number => {
+    const k = (n + h * 12) % 12
+    const a = s * Math.min(l, 1 - l)
+    return l - a * Math.max(-1, Math.min(Math.min(k - 3, 9 - k), 1))
+  }
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)]
+}
+
+/** an rgb triple riding along in the settings (themeBg / themePrimary /
+ *  themeAccent are injected by BackgroundLayer) */
+function rgbSettingOf(settings: BgSettings, key: string): [number, number, number] | null {
+  const v = settings[key]
+  return Array.isArray(v) ? [v[0] as number, v[1] as number, v[2] as number] : null
+}
+
 export function makeParametric(settings: BgSettings): SceneFactory {
-  const speed = numOf(settings.speed, 100) / 100 // 0 = the form holds still
-  const density = numOf(settings.density, 50)
+  const speed = numOf(settings.speed, 100) / 100 // 0 = the waves hold still
+  const density = numOf(settings.density, 70)
   const tb = themeBgOf(settings)
   const light = tb != null && lumOf(tb) > 0.5
-  const baseCss = tb ? `rgb(${tb[0]},${tb[1]},${tb[2]})` : '#0d0d1f'
-  return (ctx: CanvasRenderingContext2D, w: number, h: number) => {
-    // ---- per-refresh parameters -------------------------------------------
-    // nine low-order spherical-harmonic terms with rolled coefficients,
-    // bounded so the form stays lobed and smooth — 4–6 rounded bulges and
-    // dimples, never spikes — each with its own slow breathing phase
-    const A_BASE = [
-      0.14 + Math.random() * 0.12, // Y20 — polar stretch
-      (Math.random() * 2 - 1) * 0.26, // Y22 — big equatorial squash
-      (Math.random() * 2 - 1) * 0.18, // Y2-2
-      0.08 + Math.random() * 0.1, // Y30
-      (Math.random() * 2 - 1) * 0.16, // Y32
-      (Math.random() * 2 - 1) * 0.14, // Y3-2
-      (Math.random() * 2 - 1) * 0.2, // Y33 — tri-lobed twist
-      0.05 + Math.random() * 0.07, // Y40
-      (Math.random() * 2 - 1) * 0.12, // Y44 — fine quadrilobe ripple
+  const base: [number, number, number] = tb ?? [9, 8, 22]
+  const baseCss = `rgb(${base[0]},${base[1]},${base[2]})`
+
+  // ---- the gradient: the theme's primary → a slightly different cousin --
+  // half-way toward the theme's accent stays recognisably "the theme
+  // colour, shifted"; no accent (or an accent that IS the primary) falls
+  // back to a small hue rotation
+  const tp = rgbSettingOf(settings, 'themePrimary')
+  const ta = rgbSettingOf(settings, 'themeAccent')
+  let cA: [number, number, number] = tp ?? (light ? [124, 58, 237] : [216, 138, 232])
+  let cB: [number, number, number]
+  if (ta) {
+    cB = [
+      Math.round(cA[0] + (ta[0] - cA[0]) * 0.55),
+      Math.round(cA[1] + (ta[1] - cA[1]) * 0.55),
+      Math.round(cA[2] + (ta[2] - cA[2]) * 0.55),
     ]
-    const N_H = A_BASE.length
-    const breathPh = Array.from({ length: N_H }, () => Math.random() * Math.PI * 2)
-    const breathRt = Array.from({ length: N_H }, () => 0.22 + Math.random() * 0.3)
-    const harm = (key: number, ct: number, st: number, phi: number): number => {
-      switch (key) {
-        case 0:
-          return 0.5 * (3 * ct * ct - 1)
-        case 1:
-          return st * st * Math.cos(2 * phi)
-        case 2:
-          return st * st * Math.sin(2 * phi)
-        case 3:
-          return 0.5 * (5 * ct * ct * ct - 3 * ct)
-        case 4:
-          return st * st * ct * Math.cos(2 * phi)
-        case 5:
-          return st * st * ct * Math.sin(2 * phi)
-        case 6:
-          return st * st * st * Math.cos(3 * phi)
-        case 7:
-          return 0.125 * (35 * ct * ct * ct * ct - 30 * ct * ct + 3)
-        default:
-          return st * st * st * st * Math.cos(4 * phi)
+    if (Math.hypot(cB[0] - cA[0], cB[1] - cA[1], cB[2] - cA[2]) < 26) cB = hueShiftRgb(cA, 28)
+  } else {
+    cB = hueShiftRgb(cA, 28)
+  }
+  if (light) {
+    // translucent brights wash out on paper — pull both ends toward ink
+    const ink = [26, 26, 40] as const
+    cA = [Math.round(cA[0] * 0.78 + ink[0] * 0.22), Math.round(cA[1] * 0.78 + ink[1] * 0.22), Math.round(cA[2] * 0.78 + ink[2] * 0.22)]
+    cB = [Math.round(cB[0] * 0.78 + ink[0] * 0.22), Math.round(cB[1] * 0.78 + ink[1] * 0.22), Math.round(cB[2] * 0.78 + ink[2] * 0.22)]
+  }
+
+  return (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+    const rnd = mulberry32Local(PARAMETRIC_LOAD_SEED)
+
+    // ---- deformation parameters (the reference sketch's curated ranges) ---
+    const TAU = Math.PI * 2
+    const choose = <T>(xs: T[]): T => xs[Math.floor(rnd() * xs.length)]!
+    const P = {
+      noiseAmplitude: 0.15 + rnd() * 0.25,
+      noiseScale: 1 + rnd(),
+      verticalAmplitude: 0.1 + rnd() * 0.1,
+      verticalFrequency: choose([1, 1.5, 2]),
+      verticalPhase: rnd() * TAU,
+      horizontalAmplitude: 0.1 + rnd() * 0.1,
+      horizontalFrequency: choose([1, 1.5, 2]),
+      horizontalPhase: rnd() * TAU,
+      cross: 0.1 + rnd() * 0.6,
+      warp: 0.03 + rnd() * 0.17,
+      animation: 0.08 + rnd() * 0.42, // rad/s of wave phase
+    }
+    const animRate = P.animation * speed
+
+    // ---- 3D Perlin noise, seeded per page load ---------------------------
+    const perm = new Uint8Array(512)
+    {
+      const vals = Array.from({ length: 256 }, (_, i) => i)
+      for (let i = 255; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1))
+        const tmp = vals[i]!
+        vals[i] = vals[j]!
+        vals[j] = tmp
+      }
+      for (let i = 0; i < 512; i++) perm[i] = vals[i & 255]!
+    }
+    const fade = (t: number) => t * t * t * (t * (t * 6 - 15) + 10)
+    const lp = (a: number, b: number, t: number) => a + (b - a) * t
+    const grad = (hash: number, x: number, y: number, z: number): number => {
+      const hh = hash & 15
+      const u = hh < 8 ? x : y
+      const v = hh < 4 ? y : hh === 12 || hh === 14 ? x : z
+      return (hh & 1 ? -u : u) + (hh & 2 ? -v : v)
+    }
+    const noise = (x: number, y: number, z: number): number => {
+      const X = Math.floor(x) & 255
+      const Y = Math.floor(y) & 255
+      const Z = Math.floor(z) & 255
+      x -= Math.floor(x)
+      y -= Math.floor(y)
+      z -= Math.floor(z)
+      const u = fade(x)
+      const v = fade(y)
+      const ww = fade(z)
+      const A = perm[X]! + Y
+      const AA = perm[A]! + Z
+      const AB = perm[A + 1]! + Z
+      const B = perm[X + 1]! + Y
+      const BA = perm[B]! + Z
+      const BB = perm[B + 1]! + Z
+      return lp(
+        lp(
+          lp(grad(perm[AA]!, x, y, z), grad(perm[BA]!, x - 1, y, z), u),
+          lp(grad(perm[AB]!, x, y - 1, z), grad(perm[BB]!, x - 1, y - 1, z), u),
+          v,
+        ),
+        lp(
+          lp(grad(perm[AA + 1]!, x, y, z - 1), grad(perm[BA + 1]!, x - 1, y, z - 1), u),
+          lp(grad(perm[AB + 1]!, x, y - 1, z - 1), grad(perm[BB + 1]!, x - 1, y - 1, z - 1), u),
+          v,
+        ),
+        ww,
+      )
+    }
+
+    // ---- icosphere (the reference's subdivided icosahedron) --------------
+    const SUBDIV = density >= 62 ? 5 : density >= 25 ? 4 : 3
+    const phi = (1 + Math.sqrt(5)) / 2
+    const norm = (p: number[]): number[] => {
+      const l = Math.hypot(p[0]!, p[1]!, p[2]!)
+      return [p[0]! / l, p[1]! / l, p[2]! / l]
+    }
+    let vs: number[][] = [
+      [-1, phi, 0], [1, phi, 0], [-1, -phi, 0], [1, -phi, 0],
+      [0, -1, phi], [0, 1, phi], [0, -1, -phi], [0, 1, -phi],
+      [phi, 0, -1], [phi, 0, 1], [-phi, 0, -1], [-phi, 0, 1],
+    ].map(norm)
+    let fs: number[][] = [
+      [0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11],
+      [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+      [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9],
+      [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1],
+    ]
+    {
+      const cache = new Map<string, number>()
+      const mid = (a: number, b: number): number => {
+        const key = a < b ? `${a},${b}` : `${b},${a}`
+        const hit = cache.get(key)
+        if (hit !== undefined) return hit
+        const pa = vs[a]!
+        const pb = vs[b]!
+        const idx = vs.length
+        vs.push(norm([(pa[0]! + pb[0]!) / 2, (pa[1]! + pb[1]!) / 2, (pa[2]! + pb[2]!) / 2]))
+        cache.set(key, idx)
+        return idx
+      }
+      for (let s = 0; s < SUBDIV; s++) {
+        const next: number[][] = []
+        for (const [a, b, c] of fs) {
+          const ab = mid(a!, b!)
+          const bc = mid(b!, c!)
+          const ca = mid(c!, a!)
+          next.push([a!, ab, ca], [b!, bc, ab], [c!, ca, bc], [ab, bc, ca])
+        }
+        fs = next
+        cache.clear()
+      }
+    }
+    const nv = vs.length
+    const verts = new Float32Array(nv * 3)
+    for (let i = 0; i < nv; i++) {
+      verts[i * 3] = vs[i]![0]!
+      verts[i * 3 + 1] = vs[i]![1]!
+      verts[i * 3 + 2] = vs[i]![2]!
+    }
+    const faces = new Uint32Array(fs.length * 3)
+    for (let i = 0; i < fs.length; i++) {
+      faces[i * 3] = fs[i]![0]!
+      faces[i * 3 + 1] = fs[i]![1]!
+      faces[i * 3 + 2] = fs[i]![2]!
+    }
+    // unique edges (each shared face edge once — the wireframe)
+    const eset = new Set<string>()
+    for (let i = 0; i < faces.length; i += 3) {
+      const a = faces[i]!
+      const b = faces[i + 1]!
+      const c = faces[i + 2]!
+      eset.add(a < b ? `${a},${b}` : `${b},${a}`)
+      eset.add(b < c ? `${b},${c}` : `${c},${b}`)
+      eset.add(c < a ? `${c},${a}` : `${a},${c}`)
+    }
+    const edges = new Uint32Array(eset.size * 2)
+    {
+      let k = 0
+      for (const s of eset) {
+        const comma = s.indexOf(',')
+        edges[k++] = Number(s.slice(0, comma))
+        edges[k++] = Number(s.slice(comma + 1))
       }
     }
 
-    // ---- nested shells: the layered contours of the reference ------------
-    const nestCount = 3 + Math.floor(Math.random() * 2)
-    const nests = Array.from({ length: nestCount }, (_, i) => ({
-      scale: (0.93 - i * 0.08) * (0.97 + Math.random() * 0.05),
-      rotY: Math.random() * Math.PI * 2,
-      tiltX: (Math.random() - 0.5) * 0.5,
-      spinMul: 0.45 + Math.random() * 0.75, // its own slow rotation
-      alpha: 0.26 - i * 0.05,
-    }))
-
-    // ---- wire density ------------------------------------------------------
-    const LAT = 13 + Math.round((density / 100) * 9)
-    const LON = 18 + Math.round((density / 100) * 16)
-    const NLAT = 9
-    const NLON = 14
-
-    // ---- framing: ALWAYS dead-centre (the phone requirement) --------------
+    // ---- camera (the reference's framing), always dead-centre ------------
+    const CAM = 5.8
+    const YAW = -0.4
+    const PITCH = 0.12
+    const cyaw = Math.cos(YAW)
+    const syaw = Math.sin(YAW)
+    const cpit = Math.cos(PITCH)
+    const spit = Math.sin(PITCH)
     const cx = w / 2
     const cyc = h / 2
-    const Rs = 0.38 * Math.min(w, h) // undeformed radius; lobes reach ~1.3×
-    const D = 3.0 // camera distance, world units (ball radius ≈ 1)
-    const F = 3.0 // focal length — noticeable perspective, like the reference
+    const scale = Math.min(w, h) * 0.9
 
-    // depth colour ramp: deep violet far → magenta-pink near, quantised into
-    // stroke buckets so the frame loop builds no colour strings
-    type Rgb = [number, number, number]
-    const FAR: Rgb = light ? [79, 56, 178] : [77, 68, 224]
-    const MID: Rgb = light ? [124, 58, 237] : [139, 92, 246]
-    const NEAR: Rgb = light ? [199, 44, 168] : [244, 114, 208]
-    const BUCKETS = 12
-    const mix = (a: Rgb, b: Rgb, t: number): Rgb => [
-      a[0] + (b[0] - a[0]) * t,
-      a[1] + (b[1] - a[1]) * t,
-      a[2] + (b[2] - a[2]) * t,
-    ]
-    const rampAt = (tc: number): Rgb => (tc < 0.5 ? mix(FAR, MID, tc * 2) : mix(MID, NEAR, (tc - 0.5) * 2))
-    const css = (c: Rgb, a: number) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a.toFixed(3)})`
-    const mainStrokes: string[] = []
-    const glowStrokes: string[] = []
-    const nestStrokes = nests.map((n) => [] as string[])
-    for (let b = 0; b < BUCKETS; b++) {
-      const tc = b / (BUCKETS - 1)
-      const c = rampAt(tc)
-      mainStrokes.push(css(c, (light ? 0.2 : 0.3) + (light ? 0.5 : 0.6) * tc))
-      glowStrokes.push(css(c, (light ? 0.05 : 0.11) + 0.09 * tc))
-      for (let si = 0; si < nests.length; si++) {
-        nestStrokes[si]!.push(css(c, nests[si]!.alpha * (0.65 + 0.35 * tc)))
-      }
+    // ---- style tables: 12 gradient stops × alpha/width buckets ----------
+    const NCOL = 12
+    const NF = 4 // face alpha levels (front → back)
+    const NE = 5 // edge alpha levels (near → far)
+    const NW = 3 // edge width levels
+    const ramp: string[] = []
+    for (let c = 0; c < NCOL; c++) {
+      const t = c / (NCOL - 1)
+      ramp.push(
+        `${Math.round(cA[0] + (cB[0] - cA[0]) * t)},${Math.round(cA[1] + (cB[1] - cA[1]) * t)},${Math.round(cA[2] + (cB[2] - cA[2]) * t)}`,
+      )
+    }
+    const faceStyles: string[][] = ramp.map((rgb) =>
+      Array.from({ length: NF }, (_, f) => `rgba(${rgb},${(0.025 + 0.035 * (f / (NF - 1)) * (light ? 1.6 : 1)).toFixed(3)})`),
+    )
+    const edgeStyles: string[][][] = ramp.map((rgb) =>
+      Array.from({ length: NE }, (_, e) => Array.from({ length: NW }, () => `rgba(${rgb},${(0.18 + 0.66 * (e / (NE - 1))).toFixed(3)})`)),
+    )
+    const edgeWidths = Array.from({ length: NW }, (_, i) => 0.65 + 0.25 * (i / (NW - 1)))
+
+    // scratch: projected screen coords + depth per vertex
+    const SX = new Float32Array(nv)
+    const SY = new Float32Array(nv)
+    const SZ = new Float32Array(nv)
+    // reused coordinate buckets — one shared path per (colour, alpha, width)
+    const faceBk: number[][] = Array.from({ length: NCOL * NF }, () => [])
+    const edgeBk: number[][] = Array.from({ length: NCOL * NE * NW }, () => [])
+
+    const smoothstep = (a: number, b: number, x: number): number => {
+      const t = Math.max(0, Math.min(1, (x - a) / (b - a)))
+      return t * t * (3 - 2 * t)
     }
 
-    // ---- motion (all rates ride `speed`; 0 freezes everything) ------------
-    const spinY = 0.1 * speed
-    const wobbleX = 0.033 * speed
-    const breathRate = 0.3 * speed
-    const baseTilt = 0.32 // resting tilt toward the viewer
-
-    // scratch projection buffers (sized for the main grid, the largest)
-    const pxs = new Float32Array(LAT * LON)
-    const pys = new Float32Array(LAT * LON)
-    const pzs = new Float32Array(LAT * LON)
-
-    /** draw one shell's wireframe (lat rings + lon lines) into the scratch
-     *  buffers, then stroke it: a wide dim glow pass first (optional), the
-     *  crisp wires on top, sparse node dots last (optional). */
-    const drawWire = (
-      scale: number,
-      rotY: number,
-      rotX: number,
-      latN: number,
-      lonN: number,
-      strokes: string[],
-      glow: boolean,
-      dots: boolean,
-      aNow: number[],
-    ) => {
-      const cyv = Math.cos(rotY)
-      const syv = Math.sin(rotY)
-      const cxv = Math.cos(rotX)
-      const sxv = Math.sin(rotX)
-      for (let j = 0; j < latN; j++) {
-        const th = (Math.PI * (j + 0.5)) / latN
-        const ct = Math.cos(th)
-        const st = Math.sin(th)
-        for (let i = 0; i < lonN; i++) {
-          const ph = (Math.PI * 2 * i) / lonN
-          let r = scale
-          for (let k = 0; k < N_H; k++) r += scale * aNow[k]! * harm(k, ct, st, ph)
-          const x0 = r * st * Math.cos(ph)
-          const y0 = r * ct
-          const z0 = r * st * Math.sin(ph)
-          // spin around Y, then tilt around X
-          const x1 = x0 * cyv + z0 * syv
-          const z1 = z0 * cyv - x0 * syv
-          const y2 = y0 * cxv - z1 * sxv
-          const z2 = y0 * sxv + z1 * cxv
-          const kf = F / (D - z2)
-          const idx = j * lonN + i
-          pxs[idx] = cx + x1 * kf * Rs
-          pys[idx] = cyc - y2 * kf * Rs
-          pzs[idx] = z2
-        }
-      }
-      const seg = (a: number, b: number, pass: 0 | 1) => {
-        let tc = ((pzs[a]! + pzs[b]!) * 0.5 + 1.35) / 2.7
-        if (tc < 0) tc = 0
-        else if (tc > 1) tc = 1
-        const bkt = Math.min(BUCKETS - 1, Math.round(tc * (BUCKETS - 1)))
-        ctx.strokeStyle = pass === 1 ? glowStrokes[bkt]! : strokes[bkt]!
-        ctx.lineWidth = pass === 1 ? 3.4 : 0.55 + 0.8 * tc
-        ctx.beginPath()
-        ctx.moveTo(pxs[a]!, pys[a]!)
-        ctx.lineTo(pxs[b]!, pys[b]!)
-        ctx.stroke()
-      }
-      // glow halo pass first — the neon bloom under the crisp wires
-      if (glow) {
-        for (let j = 0; j < latN; j++) {
-          for (let i = 0; i < lonN; i++) seg(j * lonN + i, j * lonN + ((i + 1) % lonN), 1)
-        }
-        for (let i = 0; i < lonN; i++) {
-          for (let j = 0; j < latN - 1; j++) seg(j * lonN + i, (j + 1) * lonN + i, 1)
-        }
-      }
-      // crisp wires
-      for (let j = 0; j < latN; j++) {
-        for (let i = 0; i < lonN; i++) seg(j * lonN + i, j * lonN + ((i + 1) % lonN), 0)
-      }
-      for (let i = 0; i < lonN; i++) {
-        for (let j = 0; j < latN - 1; j++) seg(j * lonN + i, (j + 1) * lonN + i, 0)
-      }
-      // sparse bright node dots on the near side (a reference detail)
-      if (dots) {
-        for (let j = 0; j < latN; j++) {
-          for (let i = 0; i < lonN; i++) {
-            if ((i + j) % 3 !== 0) continue
-            const idx = j * lonN + i
-            let tc = (pzs[idx]! + 1.35) / 2.7
-            if (tc < 0.62 || tc > 1) continue
-            const c = rampAt(tc)
-            ctx.fillStyle = light
-              ? css(c, 0.75 * tc)
-              : `rgba(${Math.min(255, c[0] + 60) | 0},${Math.min(255, c[1] + 60) | 0},${Math.min(255, c[2] + 40) | 0},${(0.8 * tc).toFixed(3)})`
-            ctx.beginPath()
-            ctx.arc(pxs[idx]!, pys[idx]!, 0.9 + 0.7 * tc, 0, Math.PI * 2)
-            ctx.fill()
-          }
-        }
-      }
-    }
-
-    const aNow: number[] = new Array(N_H).fill(0)
+    let lastDrawn = -1
     return (t: number) => {
+      const tA = t * speed
+      // ~30fps internal gate (the reference's frame cap). Frozen at speed 0:
+      // one frame renders and then nothing until the dial moves again.
+      if (lastDrawn >= 0 && tA - lastDrawn < 1 / 31) return
+      lastDrawn = tA
+
+      // background + centre glow (the reference's depth pool, themed)
       ctx.fillStyle = baseCss
       ctx.fillRect(0, 0, w, h)
-      // vignette — the corners fall off like the reference
-      const vg = ctx.createRadialGradient(cx, cyc, Rs, cx, cyc, Math.hypot(w, h) * 0.62)
-      vg.addColorStop(0, 'rgba(0,0,0,0)')
-      vg.addColorStop(1, light ? 'rgba(0,0,0,0.05)' : 'rgba(0,0,0,0.22)')
-      ctx.fillStyle = vg
-      ctx.fillRect(0, 0, w, h)
-      // glassy membrane behind the form — the faint jelly fill
-      const mg = ctx.createRadialGradient(cx, cyc, 0, cx, cyc, Rs * 1.12)
-      mg.addColorStop(0, light ? 'rgba(124,58,237,0.05)' : 'rgba(139,92,246,0.12)')
-      mg.addColorStop(0.7, light ? 'rgba(124,58,237,0.02)' : 'rgba(91,79,216,0.05)')
-      mg.addColorStop(1, 'rgba(0,0,0,0)')
-      ctx.fillStyle = mg
-      ctx.fillRect(0, 0, w, h)
-      const mg2 = ctx.createRadialGradient(cx + Rs * 0.22, cyc + Rs * 0.18, 0, cx + Rs * 0.22, cyc + Rs * 0.18, Rs * 0.8)
-      mg2.addColorStop(0, light ? 'rgba(199,44,168,0.04)' : 'rgba(244,114,208,0.09)')
-      mg2.addColorStop(1, 'rgba(0,0,0,0)')
-      ctx.fillStyle = mg2
+      const glow = ctx.createRadialGradient(cx, cyc, 0, cx, cyc, Math.max(w, h) * 0.65)
+      if (light) {
+        glow.addColorStop(0, `rgb(${Math.round(base[0] + (255 - base[0]) * 0.3)},${Math.round(base[1] + (255 - base[1]) * 0.3)},${Math.round(base[2] + (255 - base[2]) * 0.3)})`)
+        glow.addColorStop(1, baseCss)
+      } else {
+        // tint the pool toward the theme colour, like the reference's #17112b
+        glow.addColorStop(0, `rgb(${Math.round(base[0] + (cA[0] - base[0]) * 0.14)},${Math.round(base[1] + (cA[1] - base[1]) * 0.14)},${Math.round(base[2] + (cA[2] - base[2]) * 0.14)})`)
+        glow.addColorStop(0.55, `rgb(${Math.round(base[0] + (cA[0] - base[0]) * 0.06)},${Math.round(base[1] + (cA[1] - base[1]) * 0.06)},${Math.round(base[2] + (cA[2] - base[2]) * 0.06)})`)
+        glow.addColorStop(1, baseCss)
+      }
+      ctx.fillStyle = glow
       ctx.fillRect(0, 0, w, h)
 
-      // breathing coefficients — shared by every shell (same form, own spins)
-      for (let k = 0; k < N_H; k++) {
-        aNow[k] = A_BASE[k]! * (1 + 0.1 * Math.sin(t * breathRate * breathRt[k]! + breathPh[k]!))
+      // --- deform + rotate + project every vertex (fused, no allocation) --
+      let yLo = Infinity
+      let yHi = -Infinity
+      for (let v = 0; v < nv; v++) {
+        const x = verts[v * 3]!
+        const y = verts[v * 3 + 1]!
+        const z = verts[v * 3 + 2]!
+        // domain warp
+        const wx = noise(x * 1.5 + 8, y * 1.5, z * 1.5)
+        const wy = noise(x * 1.5, y * 1.5 + 8, z * 1.5)
+        const wz = noise(x * 1.5, y * 1.5, z * 1.5 + 8)
+        const sx = x + wx * P.warp
+        const sy = y + wy * P.warp
+        const sz = z + wz * P.warp
+        // broad noise deformation
+        const n = noise(sx * P.noiseScale, sy * P.noiseScale, sz * P.noiseScale)
+        // the two animated wave systems + their cross modulation
+        const vWave = Math.cos(Math.PI * P.verticalFrequency * sy + P.verticalPhase + tA * animRate)
+        const hWave = Math.cos(Math.PI * P.horizontalFrequency * sx + P.horizontalPhase - tA * animRate * 0.8)
+        const disp =
+          1 +
+          n * P.noiseAmplitude +
+          P.verticalAmplitude * vWave +
+          P.horizontalAmplitude * hWave +
+          P.cross * 0.08 * vWave * hWave
+        const px = x * disp
+        const py = y * disp
+        const pz = z * disp
+        // rotate + perspective
+        const rx = px * cyaw - pz * syaw
+        const rz = px * syaw + pz * cyaw
+        const ry = py * cpit - rz * spit
+        const rz2 = py * spit + rz * cpit
+        const depth = CAM - rz2
+        const inv = scale / depth
+        SX[v] = cx + rx * inv
+        SY[v] = cyc - ry * inv
+        SZ[v] = depth
+        // the blob's live vertical extent — the gradient maps over THIS,
+        // not the screen: the object only spans the middle ~35% of the
+        // frame, so a screen-height ramp would compress it to one colour
+        if (SY[v]! < yLo) yLo = SY[v]!
+        if (SY[v]! > yHi) yHi = SY[v]!
       }
+      const ySpan = Math.max(1, yHi - yLo)
+
+      // --- bucket the faces + edges by colour / alpha / width -------------
+      for (let i = 0; i < faceBk.length; i++) faceBk[i]!.length = 0
+      for (let i = 0; i < edgeBk.length; i++) edgeBk[i]!.length = 0
+      for (let f = 0; f < faces.length; f += 3) {
+        const a = faces[f]!
+        const b = faces[f + 1]!
+        const c = faces[f + 2]!
+        const frontness = 1 - smoothstep(4.5, 7, (SZ[a]! + SZ[b]! + SZ[c]!) / 3)
+        const yAvg = (SY[a]! + SY[b]! + SY[c]!) / 3
+        let col = Math.floor(((yAvg - yLo) / ySpan) * NCOL)
+        if (col < 0) col = 0
+        else if (col > NCOL - 1) col = NCOL - 1
+        const bk = faceBk[col * NF + Math.round(frontness * (NF - 1))]!
+        bk.push(SX[a]!, SY[a]!, SX[b]!, SY[b]!, SX[c]!, SY[c]!)
+      }
+      for (let e = 0; e < edges.length; e += 2) {
+        const a = edges[e]!
+        const b = edges[e + 1]!
+        const vis = 1 - smoothstep(5.8, 7.4, (SZ[a]! + SZ[b]!) / 2)
+        if (vis < 0.015) continue // the far-side cutoff from the reference
+        const yAvg = (SY[a]! + SY[b]!) / 2
+        let col = Math.floor(((yAvg - yLo) / ySpan) * NCOL)
+        if (col < 0) col = 0
+        else if (col > NCOL - 1) col = NCOL - 1
+        const bk = edgeBk[(col * NE + Math.round(vis * (NE - 1))) * NW + Math.round(vis * (NW - 1))]!
+        bk.push(SX[a]!, SY[a]!, SX[b]!, SY[b]!)
+      }
+
+      // --- draw: translucent faces first (the volume), wires on top -------
       ctx.lineCap = 'round'
-      // nested shells first (they sit behind), main shell on top
-      for (let si = 0; si < nests.length; si++) {
-        const nst = nests[si]!
-        drawWire(
-          nst.scale,
-          nst.rotY + t * spinY * nst.spinMul,
-          nst.tiltX + Math.sin(t * wobbleX * 2 + nst.rotY) * 0.2,
-          NLAT,
-          NLON,
-          nestStrokes[si]!,
-          false,
-          false,
-          aNow,
-        )
+      ctx.lineJoin = 'round'
+      for (let key = 0; key < faceBk.length; key++) {
+        const bk = faceBk[key]!
+        if (!bk.length) continue
+        ctx.fillStyle = faceStyles[Math.floor(key / NF)]![key % NF]!
+        ctx.beginPath()
+        for (let i = 0; i < bk.length; i += 6) {
+          ctx.moveTo(bk[i]!, bk[i + 1]!)
+          ctx.lineTo(bk[i + 2]!, bk[i + 3]!)
+          ctx.lineTo(bk[i + 4]!, bk[i + 5]!)
+          ctx.closePath()
+        }
+        ctx.fill()
       }
-      drawWire(1, t * spinY, baseTilt + Math.sin(t * wobbleX) * 0.16, LAT, LON, mainStrokes, true, true, aNow)
+      for (let key = 0; key < edgeBk.length; key++) {
+        const bk = edgeBk[key]!
+        if (!bk.length) continue
+        const col = Math.floor(key / (NE * NW))
+        const rest = key % (NE * NW)
+        const wl = rest % NW
+        ctx.strokeStyle = edgeStyles[col]![Math.floor(rest / NW)]![wl]!
+        ctx.lineWidth = edgeWidths[wl]!
+        ctx.beginPath()
+        for (let i = 0; i < bk.length; i += 4) {
+          ctx.moveTo(bk[i]!, bk[i + 1]!)
+          ctx.lineTo(bk[i + 2]!, bk[i + 3]!)
+        }
+        ctx.stroke()
+      }
     }
   }
 }
