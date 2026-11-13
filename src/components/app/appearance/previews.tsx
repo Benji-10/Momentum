@@ -7,11 +7,16 @@
 // matches [data-theme='…'] on ANY element, so each preview card scopes a
 // small mock-UI with its own data-theme and the cascade does the rendering.
 //
-// Background thumbnails reuse the real generators/scenes at thumbnail size —
-// animated scenes render a single warm-up frame (no loop).
+// Animated canvas backgrounds (bioluminescence, particle fields, fluid)
+// show pre-rendered looping clips — generated offline by
+// scripts/gen-bg-previews.mjs, which drives the same scene factories in a
+// headless browser and encodes with ffmpeg (animated WebP: no GIF palette
+// banding, a fraction of the size). Browsing settings then costs zero
+// canvas work, and the tiles show real motion instead of a frozen
+// warm-up frame (with a still frame for prefers-reduced-motion).
 // ---------------------------------------------------------------------------
 
-import { useEffect, useMemo, useRef } from 'react'
+import { useMemo } from 'react'
 import { Check, ImagePlus } from 'lucide-react'
 import type { CustomTheme } from '@/lib/appearance/types'
 import { PALETTES, type PaletteMeta } from '@/lib/appearance/palettes'
@@ -26,7 +31,6 @@ import {
   MINERAL_IMAGE_URL,
 } from './generators'
 import { NebulaScene, VapourwaveScene } from './animated'
-import { makeBioluminescence, makeFluidMechanics, makeParticleField, type SceneFactory, type WarmupSceneFactory } from './scenes'
 
 // ---------------------------------------------------------------------------
 // Palette → custom theme (for "start from a preset")
@@ -192,24 +196,28 @@ export function CustomThemeCard({ active, colors, onClick }: { active: boolean; 
 // Background thumbnails
 // ---------------------------------------------------------------------------
 
-/** One warm-up frame of a canvas scene — no animation loop in thumbnails. */
-function CanvasThumb({ make }: { make: SceneFactory }) {
-  const ref = useRef<HTMLCanvasElement>(null)
-  useEffect(() => {
-    const canvas = ref.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    const w = canvas.clientWidth || 96
-    const h = canvas.clientHeight || 56
-    canvas.width = w * 2
-    canvas.height = h * 2
-    ctx.setTransform(2, 0, 0, 2, 0, 0)
-    const scene = make(ctx, w, h)
-    const warmup = (make as WarmupSceneFactory).warmupFrames ?? 14
-    for (let i = 1; i <= Math.min(warmup, 40); i++) scene(i * 0.09)
-  }, [make])
-  return <canvas ref={ref} className="h-full w-full" aria-hidden />
+/** Looping pre-rendered preview for an animated canvas background. The
+ *  clip plays normally; under prefers-reduced-motion a still first frame
+ *  shows instead (motion-safe / motion-reduce swap). */
+function AnimatedThumb({ id }: { id: string }) {
+  return (
+    <>
+      <img
+        src={`/backgrounds/previews/${id}.webp`}
+        alt=""
+        aria-hidden
+        draggable={false}
+        className="hidden h-full w-full object-cover motion-safe:block"
+      />
+      <img
+        src={`/backgrounds/previews/${id}-still.webp`}
+        alt=""
+        aria-hidden
+        draggable={false}
+        className="hidden h-full w-full object-cover motion-reduce:block"
+      />
+    </>
+  )
 }
 
 /** Static thumbs always use default settings — generate once per session. */
@@ -236,13 +244,13 @@ export function BackgroundThumb({ def }: { def: BackgroundDef }) {
   let visual: React.ReactNode
   switch (def.renderer) {
     case 'bioluminescence':
-      visual = <CanvasThumb make={makeBioluminescence(settings)} />
+      visual = <AnimatedThumb id="bioluminescence" />
       break
     case 'particles':
-      visual = <CanvasThumb make={makeParticleField(settings)} />
+      visual = <AnimatedThumb id="particle-field" />
       break
     case 'fluid':
-      visual = <CanvasThumb make={makeFluidMechanics(settings)} />
+      visual = <AnimatedThumb id="fluid-mechanics" />
       break
     case 'nebula':
       visual = <NebulaScene settings={settings} />
@@ -253,25 +261,25 @@ export function BackgroundThumb({ def }: { def: BackgroundDef }) {
     case 'topography':
       visual = (
         <StaticThumb
-          id="topography" make={() => generateTopography({ fg: THUMB_NEUTRAL_FG, intensity: 60, scale: 100 })}
-          
+          id="topography"
+          make={() => generateTopography({ fg: THUMB_NEUTRAL_FG, intensity: 60, scale: 100 })}
         />
       )
       break
     case 'fractals':
-      visual = <StaticThumb id="fractals" make={() => generateFractals({ fg: THUMB_NEUTRAL_FG, intensity: 55, scale: 100 })}  />
+      visual = <StaticThumb id="fractals" make={() => generateFractals({ fg: THUMB_NEUTRAL_FG, intensity: 55, scale: 100, variant: 5 })} />
       break
     case 'mycelium':
-      visual = <StaticThumb id="mycelium" make={() => generateMycelium({ density: 50, glow: 55, scale: 100 })}  />
+      visual = <StaticThumb id="mycelium" make={() => generateMycelium({ density: 50, glow: 55, scale: 100 })} />
       break
     case 'mineral':
       visual = <div className="h-full w-full" style={{ backgroundImage: `url("${MINERAL_IMAGE_URL}")`, backgroundSize: 'cover', backgroundPosition: 'center' }} aria-hidden />
       break
     case 'carbon':
-      visual = <StaticThumb id="carbon" make={() => generateCarbon({ scale: 100 })}  />
+      visual = <StaticThumb id="carbon" make={() => generateCarbon({ scale: 100 })} />
       break
     case 'iridescence':
-      visual = <StaticThumb id="iridescence" make={() => generateIridescence({ intensity: 60 })}  />
+      visual = <StaticThumb id="iridescence" make={() => generateIridescence({ intensity: 60 })} />
       break
     default:
       visual = null

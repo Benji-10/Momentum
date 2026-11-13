@@ -91,15 +91,15 @@ export const BACKGROUNDS: BackgroundDef[] = [
     id: 'particle-field',
     name: 'Particle Fields',
     category: 'animated',
-    hint: 'Crisp constellation — two-depth drift',
+    hint: 'Two-depth starfield — crisp drifting dots',
     renderer: 'particles',
-    settings: [opacity(70), speed(100), { kind: 'slider', key: 'density', label: 'Particle density', min: 0, max: 100, step: 1, default: 45 }, { kind: 'slider', key: 'connections', label: 'Connecting lines', min: 0, max: 100, step: 1, default: 50 }, blur()],
+    settings: [opacity(70), speed(100), { kind: 'slider', key: 'density', label: 'Particle density', min: 0, max: 100, step: 1, default: 45 }, blur()],
   },
   {
     id: 'fluid-mechanics',
     name: 'Fluid Mechanics',
     category: 'animated',
-    hint: 'Live fluid solver — swirling dye',
+    hint: 'Live fluid — rising dye, living vortices',
     renderer: 'fluid',
     settings: [opacity(80), speed(60), { kind: 'slider', key: 'density', label: 'Dye density', min: 0, max: 100, step: 1, default: 50 }, blur()],
   },
@@ -115,9 +115,9 @@ export const BACKGROUNDS: BackgroundDef[] = [
     id: 'fractals',
     name: 'Fractals',
     category: 'static',
-    hint: 'Julia set — banded escape contours',
+    hint: 'Julia sets — banded escape contours',
     renderer: 'fractals',
-    settings: [opacity(85), { kind: 'slider', key: 'intensity', label: 'Pattern intensity', min: 0, max: 100, step: 1, default: 70 }, scale(100), blur()],
+    settings: [opacity(85), { kind: 'slider', key: 'intensity', label: 'Pattern intensity', min: 0, max: 100, step: 1, default: 70 }, { kind: 'slider', key: 'variant', label: 'Variant', min: 1, max: 24, step: 1, suffix: ' / 24', default: 1 }, scale(100), blur()],
   },
   {
     id: 'vapourwave',
@@ -184,7 +184,13 @@ export function defaultBackgroundSettings(def: BackgroundDef): Record<string, nu
 export function defaultBackgroundConfig(id: string): BackgroundConfig | null {
   const def = backgroundDef(id)
   if (!def) return null
-  return { id, settings: defaultBackgroundSettings(def) }
+  const settings = defaultBackgroundSettings(def)
+  // Fractals rolls a random variant on every fresh selection — different
+  // Julia rule (c and iteration power) each time you pick it, then stored
+  // and stable until you change it. Legacy configs without a variant keep
+  // variant 1, the classic look, so nothing flickers between loads.
+  if (id === 'fractals') settings.variant = 1 + Math.floor(Math.random() * 24)
+  return { id, settings }
 }
 
 /**

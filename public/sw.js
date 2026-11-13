@@ -19,7 +19,7 @@
  * Deliberately dependency-free and tiny — no Workbox, no build step.
  */
 
-const CACHE = 'momentum-shell-v1'
+const CACHE = 'momentum-shell-v2'
 
 // assets worth precaching on install: the icons + manifest (small, stable).
 // The full shell is cached lazily on the first successful navigation.

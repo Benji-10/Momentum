@@ -72,16 +72,17 @@ export function makeBioluminescence(settings: BgSettings): SceneFactory {
 }
 
 // ---------------------------------------------------------------------------
-// Particle Fields — a crisp technical constellation. Two parallax depth
-// layers of sharp dots (no halos, no additive glow) with thin links between
-// the near layer only — deliberately nothing like the soft glowing plankton
-// of bioluminescence.
+// Particle Fields — a crisp technical starfield. Two parallax depth
+// layers of sharp dots (no halos, no additive glow, no connecting lines)
+// drifting on a quiet flow field — deliberately nothing like the soft
+// glowing plankton of bioluminescence. The old constellation links made it
+// busy and pushed it too close to a screensaver; without them it reads as
+// depth and stays out of the UI's way.
 // ---------------------------------------------------------------------------
 
 export function makeParticleField(settings: BgSettings): SceneFactory {
   const speed = (Number(settings.speed) || 100) / 100
   const density = Number(settings.density) ?? 45
-  const connections = Number(settings.connections) ?? 50
   return (ctx: CanvasRenderingContext2D, w: number, h: number) => {
     const count = Math.round(30 + (density / 100) * 110)
     // every third particle joins the far layer: smaller, dimmer, slower —
@@ -92,18 +93,17 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
         far,
         x: Math.random() * w,
         y: Math.random() * h,
-        r: far ? 0.65 + Math.random() * 0.35 : 1.35 + Math.random() * 0.65,
+        // the depth gap is deliberately wide: at phone size the two layers
+        // must read as foreground vs background, not one uniform grain
+        r: far ? 0.55 + Math.random() * 0.3 : 1.5 + Math.random() * 0.8,
         // a handful of near-layer "navigation stars" in accent cyan
         accent: !far && i % 17 === 0,
       }
     })
-    const near = parts.filter((p) => !p.far)
     const field = (x: number, y: number, t: number) =>
       Math.sin(x * 0.0016 + t * 0.18) * 1.5 +
       Math.cos(y * 0.0021 - t * 0.14) * 1.5 +
       Math.sin((x + y) * 0.0009 + t * 0.1)
-    const linkDist = 42 + connections * 0.55
-    const linkAlpha = (connections / 100) * 0.2
     return (t: number) => {
       // flat technical base with a quiet corner falloff — no wash, no bloom
       ctx.fillStyle = '#05070c'
@@ -125,33 +125,13 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
         if (p.y > h + 12) p.y = -12
       }
 
-      // links only inside the near layer — fewer, thinner, quieter
-      if (connections > 3) {
-        ctx.lineWidth = 0.6
-        for (let i = 0; i < near.length; i++) {
-          for (let j = i + 1; j < near.length; j++) {
-            const dx = near[i].x - near[j].x
-            const dy = near[i].y - near[j].y
-            const d2 = dx * dx + dy * dy
-            if (d2 < linkDist * linkDist) {
-              const d = Math.sqrt(d2)
-              const a = (1 - d / linkDist) * linkAlpha
-              ctx.strokeStyle = `rgba(148,163,184,${a.toFixed(3)})`
-              ctx.beginPath()
-              ctx.moveTo(near[i].x, near[i].y)
-              ctx.lineTo(near[j].x, near[j].y)
-              ctx.stroke()
-            }
-          }
-        }
-      }
       // crisp discs — far layer dim slate, near layer bright silver
       for (const p of parts) {
         ctx.fillStyle = p.far
-          ? 'rgba(148,163,184,0.28)'
+          ? 'rgba(148,163,184,0.22)'
           : p.accent
-            ? 'rgba(56,189,248,0.9)'
-            : 'rgba(226,232,240,0.8)'
+            ? 'rgba(56,189,248,0.95)'
+            : 'rgba(226,232,240,0.88)'
         ctx.beginPath()
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
         ctx.fill()
@@ -164,8 +144,16 @@ export function makeParticleField(settings: BgSettings): SceneFactory {
 // Fluid Mechanics — an actual fluid solver (Stam's "stable fluids"):
 // a coarse velocity + dye grid, semi-Lagrangian advection, a pressure
 // projection each frame so the field stays incompressible, and orbiting
-// vortex stirrers that inject spin and dye. Rendered at grid resolution
-// and upscaled — the upscale is the antialias.
+// vortex stirrers that inject spin and dye. Two things make it read as
+// REAL fluid rather than a swirl toy:
+//   • dye buoyancy — dye is warm and rises, so arms curl upward into
+//     mushroom plumes the way smoke does under glass
+//   • vorticity confinement — the small-scale curl that grid diffusion
+//     eats is re-injected each frame, so vortices stay crisp and alive
+//     instead of decaying into gradient mush
+// Rendered at grid resolution and upscaled — the upscale is the antialias.
+// The sim itself advances at most ~34 Hz even on a 60 Hz display: the
+// motion is slow enough that nobody can tell, and a phone's battery can.
 // ---------------------------------------------------------------------------
 
 export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
@@ -187,8 +175,12 @@ export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
     const v2 = new Float32Array(S)
     const dye = [new Float32Array(S), new Float32Array(S), new Float32Array(S)]
     const dye2 = [new Float32Array(S), new Float32Array(S), new Float32Array(S)]
+    const dyeB = [new Float32Array(S), new Float32Array(S), new Float32Array(S)]
+    const dyeMn = new Float32Array(S)
+    const dyeMx = new Float32Array(S)
     const pr = new Float32Array(S)
     const dv = new Float32Array(S)
+    const curl = new Float32Array(S)
 
     const at = (x: number, y: number) => y * N + x
     const clampI = (n: number, lo: number, hi: number) => (n < lo ? lo : n > hi ? hi : n)
@@ -215,7 +207,7 @@ export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
       [45, 212, 191], // teal
       [251, 146, 60], // one warm ember note
     ]
-    const count = 3 + Math.round((density / 100) * 4)
+    const count = 4 + Math.round((density / 100) * 4)
     const cols = Math.max(2, Math.round(Math.sqrt(count * AR)))
     const rows = Math.max(1, Math.ceil(count / cols))
     const stir: {
@@ -239,9 +231,9 @@ export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
           ar: 0.06 + Math.random() * 0.08, // slow drift orbit
           ph: Math.random() * Math.PI * 2,
           om: (0.04 + Math.random() * 0.06) * (Math.random() < 0.5 ? -1 : 1),
-          gw: (10 + Math.random() * 6) * K, // vortex radius in cells — big enough to read
+          gw: (12 + Math.random() * 7) * K, // vortex radius in cells — big enough to read
           spin: (Math.random() < 0.5 ? -1 : 1) * (0.9 + Math.random() * 0.5),
-          emit: 0.6 + Math.random() * 0.6,
+          emit: 1.0 + Math.random() * 0.6,
         })
       }
     }
@@ -255,8 +247,14 @@ export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
     let simT = 0
     let lastT = -1
     let primed = false
+    let lastMaxVel = 4 // for the CFL guard (updated every advance)
 
-    const advance = (dt: number) => {
+    const advance = (dtRaw: number) => {
+      // CFL guard for the MacCormack dye advection below: 2nd-order
+      // advection is only stable while a parcel moves < ~1 cell per step.
+      // Velocities are hard-capped (energy ceiling) and dt is clamped
+      // against the fastest cell, so the scheme can never ring.
+      const dt = Math.min(dtRaw, 0.9 / Math.max(lastMaxVel, 4))
       simT += dt
       // time-based decays so the look is frame-rate independent
       const vDecay = Math.pow(0.9995, dt / 0.0167) // rotation persists between pulses
@@ -287,17 +285,25 @@ export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
             if (d > s.gw || d < 0.001) continue
             const fall = (1 - d / s.gw) ** 2
             const i = at(x, y)
-            u[i] += (-dy / d) * s.spin * 35 * K * fall * dt
-            v[i] += (dx / d) * s.spin * 35 * K * fall * dt
+            u[i] += (-dy / d) * s.spin * 42 * K * fall * dt
+            v[i] += (dx / d) * s.spin * 42 * K * fall * dt
           }
         }
-        // 10s pulse cycle, 5.5s duty, phase-staggered; always on during the
-        // opening so the first visible frame is a fully drawn swirl
-        const emitting = simT < 5.5 || (simT + s.ph * 1.6) % 10 < 5.5
-        if (emitting) {
+        // 9s pulse cycle, 6s duty, phase-staggered. During the PRIMING
+        // window (which the pre-roll covers) emission is continuous —
+        // broad coverage fast, so the opening frame is developed water.
+        // Priming stays SHORT: longer continuous emission over-saturates
+        // the field and the long-run look collapses into fog. After
+        // priming, emission is also STROBED (~0.5s bursts): a continuous
+        // stream wraps into an Archimedean spiral whose turns sit closer
+        // than a grid cell and merge into a blob; discrete bursts become
+        // separate comet arms the vortex flings around — that is what
+        // makes the rotation READ.
+        const emitting = simT < 6 || (simT + s.ph * 1.6) % 9 < 6
+        if (emitting && ((simT * 1.25 + s.ph * 2.1) % 1) < 0.5) {
           const sx = gx + s.gw * 0.45 // on the fast side of the spin
           const sy = gy
-          const rDye = 2.2 * K
+          const rDye = 2.6 * K
           const ix0 = clampI(Math.floor(sx - rDye), 1, N - 2)
           const ix1 = clampI(Math.ceil(sx + rDye), 1, N - 2)
           const iy0 = clampI(Math.floor(sy - rDye), 1, M - 2)
@@ -317,6 +323,17 @@ export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
         }
       }
 
+      // 1b) buoyancy — dye is warm and rises, GENTLY. This one body force
+      //     is what separates "fluid in gravity" from a zero-g swirl tank:
+      //     plumes lift and curl over like smoke under glass. Kept clearly
+      //     weaker than the vortex wrap speed — buoyancy that rivals the
+      //     spin strips the arms off the vortices before they can wrap,
+      //     and the scene decays into vertical smear.
+      for (let i = 0; i < S; i++) {
+        const d = dye[0][i] + dye[1][i] + dye[2][i]
+        if (d > 0.02) v[i] -= 0.55 * Math.min(d, 1.2) * dt
+      }
+
       // 2) advect velocity through itself (semi-Lagrangian) ---------------
       for (let y = 1; y < M - 1; y++) {
         for (let x = 1; x < N - 1; x++) {
@@ -330,10 +347,50 @@ export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
       u.set(u2)
       v.set(v2)
 
-      // rotation dissipation (time-based)
+      // rotation dissipation (time-based) + energy ceiling: vortices may
+      // spin hard enough to read, never hard enough to destabilize the
+      // advection or smear dye across cells in one step
+      let maxVel = 0
       for (let i = 0; i < S; i++) {
-        u[i] *= vDecay
-        v[i] *= vDecay
+        let uv = u[i] * vDecay
+        let vv = v[i] * vDecay
+        if (uv > 22) uv = 22
+        else if (uv < -22) uv = -22
+        if (vv > 22) vv = 22
+        else if (vv < -22) vv = -22
+        u[i] = uv
+        v[i] = vv
+        const a = uv < 0 ? -uv : uv
+        const b = vv < 0 ? -vv : vv
+        if (a > maxVel) maxVel = a
+        if (b > maxVel) maxVel = b
+      }
+      lastMaxVel = maxVel
+
+      // 2b) vorticity confinement (Fedkiw) — measure the curl everywhere,
+      //     then push each cell along the gradient of |curl| so the
+      //     small vortices the grid numerically diffuses away are fed
+      //     back. This is the standard trick that keeps real-time fluids
+      //     looking lively; without it every vortex dies into mush.
+      for (let y = 1; y < M - 1; y++) {
+        for (let x = 1; x < N - 1; x++) {
+          const i = at(x, y)
+          curl[i] =
+            (v[at(x + 1, y)] - v[at(x - 1, y)]) * 0.5 -
+            (u[at(x, y + 1)] - u[at(x, y - 1)]) * 0.5
+        }
+      }
+      const epsC = 8 * K
+      for (let y = 2; y < M - 2; y++) {
+        for (let x = 2; x < N - 2; x++) {
+          const i = at(x, y)
+          const gx = (Math.abs(curl[at(x + 1, y)]) - Math.abs(curl[at(x - 1, y)])) * 0.5
+          const gy = (Math.abs(curl[at(x, y + 1)]) - Math.abs(curl[at(x, y - 1)])) * 0.5
+          const len = Math.sqrt(gx * gx + gy * gy) + 1e-5
+          const w = curl[i]!
+          u[i] += (epsC * w * (gy / len)) * dt
+          v[i] -= (epsC * w * (gx / len)) * dt
+        }
       }
 
       // 3) pressure projection — incompressibility is what makes it swirl
@@ -345,7 +402,7 @@ export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
         }
       }
       pr.fill(0)
-      for (let it = 0; it < 14; it++) {
+      for (let it = 0; it < 20; it++) {
         for (let y = 1; y < M - 1; y++) {
           for (let x = 1; x < N - 1; x++) {
             const i = at(x, y)
@@ -361,35 +418,89 @@ export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
         }
       }
 
-      // 4) advect dye ------------------------------------------------------
-      for (let y = 1; y < M - 1; y++) {
-        for (let x = 1; x < N - 1; x++) {
-          const i = at(x, y)
-          const bx = x - u[i] * dt
-          const by = y - v[i] * dt
-          for (let c = 0; c < 3; c++) dye2[c][i] = sample(dye[c], bx, by) * dyeDecay
+      // 4) advect dye — MacCormack (2nd order) with the full Fedkiw
+      //    clamp. Plain semi-Lagrangian smears each burst a little wider
+      //    every step; over 15+ seconds every arm diffuses into uniform
+      //    fog. Forward/back/correct puts the smear back — but the bare
+      //    corrector rings (checkerboard) at high CFL, so the result is
+      //    clamped to the min/max of the four source corners, and the CFL
+      //    guard above keeps parcels under ~1 cell/step. (Velocity stays
+      //    1st-order: the projection re-smooths it anyway.)
+      for (let c = 0; c < 3; c++) {
+        const d = dye[c]!
+        const f = dye2[c]!
+        const b = dyeB[c]!
+        for (let y = 1; y < M - 1; y++) {
+          for (let x = 1; x < N - 1; x++) {
+            const i = at(x, y)
+            const bx = x - u[i]! * dt
+            const by = y - v[i]! * dt
+            const xi = clampI(Math.floor(bx), 0, N - 1)
+            const yi = clampI(Math.floor(by), 0, M - 1)
+            const xj = clampI(xi + 1, 0, N - 1)
+            const yj = clampI(yi + 1, 0, M - 1)
+            const fx = bx - xi
+            const fy = by - yi
+            const v00 = d[at(xi, yi)]!
+            const v10 = d[at(xj, yi)]!
+            const v01 = d[at(xi, yj)]!
+            const v11 = d[at(xj, yj)]!
+            const a0 = v00 + (v10 - v00) * fx
+            const a1 = v01 + (v11 - v01) * fx
+            f[i] = a0 + (a1 - a0) * fy
+            let lo = v00
+            let hi = v00
+            if (v10 < lo) lo = v10
+            else if (v10 > hi) hi = v10
+            if (v01 < lo) lo = v01
+            else if (v01 > hi) hi = v01
+            if (v11 < lo) lo = v11
+            else if (v11 > hi) hi = v11
+            dyeMn[i] = lo
+            dyeMx[i] = hi
+          }
         }
+        for (let y = 1; y < M - 1; y++) {
+          for (let x = 1; x < N - 1; x++) {
+            const i = at(x, y)
+            b[i] = sample(f, x + u[i]! * dt, y + v[i]! * dt)
+          }
+        }
+        for (let y = 1; y < M - 1; y++) {
+          for (let x = 1; x < N - 1; x++) {
+            const i = at(x, y)
+            let corr = f[i]! + 0.5 * (d[i]! - b[i]!)
+            const lo = dyeMn[i]!
+            const hi = dyeMx[i]!
+            if (corr < lo) corr = lo
+            else if (corr > hi) corr = hi
+            f[i] = corr * dyeDecay
+          }
+        }
+        d.set(f)
       }
-      for (let c = 0; c < 3; c++) dye[c].set(dye2[c])
     }
 
-    // pre-roll ~5.3 s of simulation: a live scene must not open as blank
-    // water — the first visible frame should already be a developed swirl
-    for (let i = 0; i < 320; i++) advance(0.0167)
+    // pre-roll: simulate ahead so the first visible frame is developed
+    // water, not blank — but on a WALL-CLOCK BUDGET. A phone solves one
+    // advance in ~10-20 ms; rolling 8 sim-seconds synchronously would
+    // freeze the whole app for seconds on open. Whatever the budget does
+    // not cover is finished lazily — one catch-up advance per painted
+    // frame (the wake-up motion is indistinguishable from live speed),
+    // so the scene keeps developing after it is already on screen.
+    const PREROLL_TARGET = 280 // advances × 0.028 ≈ 7.8 sim-seconds
+    const prerollStart = performance.now()
+    let prerolled = 0
+    while (prerolled < PREROLL_TARGET && performance.now() - prerollStart < 1000) {
+      advance(0.028)
+      prerolled++
+    }
+    let lazyLeft = PREROLL_TARGET - prerolled
 
-    const frame = (t: number) => {
-      if (!primed) {
-        ctx.fillStyle = '#060a12'
-        ctx.fillRect(0, 0, w, h)
-        primed = true
-      }
-      const dt = Math.min(0.05, Math.max(0.004, lastT < 0 ? 0.016 : (t - lastT) * speed))
-      lastT = t
-      advance(dt)
-
-      // 5) render: tonemapped dye over a deep base, upscaled with smoothing
-      //    (grid edge cells never move — copy inward neighbours so the rim
-      //    doesn't read as a border)
+    // 5) render: tonemapped dye over a deep base, upscaled with smoothing
+    //    (grid edge cells never move — copy inward neighbours so the rim
+    //    doesn't read as a border)
+    const render = () => {
       for (let x = 0; x < N; x++) {
         for (const y of [0, M - 1]) {
           const src = at(x, y === 0 ? 1 : M - 2)
@@ -404,10 +515,10 @@ export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
       }
       const data = img.data
       for (let i = 0; i < S; i++) {
-        // 1.6× tonemap lift: the dye reads mid-bright instead of murk
-        const r = (1.6 * dye[0][i]) / (1 + 1.6 * dye[0][i])
-        const g = (1.6 * dye[1][i]) / (1 + 1.6 * dye[1][i])
-        const b = (1.6 * dye[2][i]) / (1 + 1.6 * dye[2][i])
+        // 1.7× tonemap lift: the dye reads mid-bright instead of murk
+        const r = (1.7 * dye[0][i]) / (1 + 1.7 * dye[0][i])
+        const g = (1.7 * dye[1][i]) / (1 + 1.7 * dye[1][i])
+        const b = (1.7 * dye[2][i]) / (1 + 1.7 * dye[2][i])
         const k = i * 4
         data[k] = 6 + 235 * r
         data[k + 1] = 10 + 235 * g
@@ -417,6 +528,39 @@ export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
       octx.putImageData(img, 0, 0)
       ctx.imageSmoothingEnabled = true
       ctx.drawImage(off, 0, 0, w, h)
+    }
+
+    const frame = (t: number) => {
+      const raw = lastT < 0 ? 0.03 : t - lastT
+      if (!primed) {
+        // the FIRST call always advances + renders, whatever t it gets —
+        // the reduced-motion runner steps t in ~10ms slices that the
+        // 34 Hz gate below would skip entirely, leaving a black canvas
+        primed = true
+        lastT = t
+        if (lazyLeft > 0) {
+          lazyLeft--
+          advance(0.028)
+        } else {
+          advance(Math.min(0.05, Math.max(0.004, raw * speed)))
+        }
+        render()
+        return
+      }
+      // sim at ≤ ~34 Hz: on a 60 Hz display every other rAF just keeps the
+      // previous frame — the solver is the expensive part and motion this
+      // slow looks identical, but the phone does half the work
+      if (raw < 0.0295) return
+      lastT = t
+      if (lazyLeft > 0) {
+        // wake-up tail: same cost as a normal frame, sim moves at live
+        // speed, the water just finishes filling in
+        lazyLeft--
+        advance(0.028)
+      } else {
+        advance(Math.min(0.05, Math.max(0.004, raw * speed)))
+      }
+      render()
     }
     return frame
   }) as WarmupSceneFactory

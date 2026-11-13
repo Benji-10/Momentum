@@ -740,6 +740,25 @@
   }
 }
 
+/* Readability exception, glass only: floating panels that carry dense
+   text — popovers (e.g. a routine's "How to do it well" notes), dropdown
+   menus, selects, the command palette — stay fully OPAQUE. Frosted
+   translucency is for big surfaces (cards, dialogs, sheets) where it
+   reads as depth; behind a menu, the animated background shimmering
+   through the words is pure noise. Tooltips need no exception — they
+   fill with --primary, which never goes translucent. These rules are
+   deliberately unlayered so they beat the bg-popover utility. */
+[data-surface='glass'] :is(
+  [data-slot='popover-content'],
+  [data-slot='dropdown-menu-content'],
+  [data-slot='select-content'],
+  [data-slot='command']
+) {
+  background-color: var(--popover-solid);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 /* ============================================================
    BACKGROUND LAYER
 
@@ -843,9 +862,14 @@ textarea,
   cursor: text;
 }
 
-/* date pickers */
-input[type='date'] {
+/* date pickers — iOS Safari gives these native controls a hard intrinsic
+   min-width; keep them inside their track and let the dialog clip, never
+   the page scroll */
+input[type='date'],
+input[type='time'] {
   cursor: pointer;
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* slim scrollbars for long lists */

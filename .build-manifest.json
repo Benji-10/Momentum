@@ -14,7 +14,13 @@ postcss.config.mjs
 prisma/schema.pg.prisma
 prisma/schema.prisma
 public/apple-touch-icon.png
-public/backgrounds/mineral.jpg
+public/backgrounds/mineral.webp
+public/backgrounds/previews/bioluminescence-still.webp
+public/backgrounds/previews/bioluminescence.webp
+public/backgrounds/previews/fluid-mechanics-still.webp
+public/backgrounds/previews/fluid-mechanics.webp
+public/backgrounds/previews/particle-field-still.webp
+public/backgrounds/previews/particle-field.webp
 public/favicon.ico
 public/favicon.svg
 public/icon-192.png

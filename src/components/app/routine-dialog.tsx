@@ -175,13 +175,23 @@ export function RoutineDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md">
+      {/* p-4 on phones (p-6 is desktop), overflow-x-hidden as a last-resort
+          clip: iOS date/number controls carry a wide intrinsic min-width and
+          some iOS states (desktop-mode request, zoomed display) squeeze the
+          viewport below what Chromium at 375px ever shows — nothing may
+          push the dialog past the screen edge. */}
+      {/* md:max-w-xl: at md+ the Minutes/Starts/Ends row goes 3-col, and
+          three native iOS date controls (~158px intrinsic each — Safari
+          refuses to shrink them below that) only fit when the dialog is
+          wide enough: 576px - padding - gaps ≈ 168px per track. Below md
+          the fields stack, so no viewport can push the dialog sideways. */}
+      <DialogContent className="max-h-[90dvh] overflow-x-hidden overflow-y-auto p-4 sm:max-w-md sm:p-6 md:max-w-xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Repeat className="h-4 w-4 text-primary" />
+            <Repeat className="h-4 w-4 shrink-0 text-primary" />
             {isEdit ? 'Edit routine' : 'New routine'}
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="break-words">
             A recurring practice slot for <span className="font-medium text-foreground">{goal.emoji} {goal.title}</span>.
           </DialogDescription>
         </DialogHeader>
@@ -206,7 +216,7 @@ export function RoutineDialog({
                 type="button"
                 onClick={() => setCadence('interval')}
                 className={cn(
-                  'rounded-xl border-2 p-2.5 text-left transition-colors',
+                  'min-w-0 rounded-xl border-2 p-2.5 text-left transition-colors',
                   cadence === 'interval' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground/40',
                 )}
               >
@@ -218,7 +228,7 @@ export function RoutineDialog({
                 type="button"
                 onClick={() => setCadence('weekly')}
                 className={cn(
-                  'rounded-xl border-2 p-2.5 text-left transition-colors',
+                  'min-w-0 rounded-xl border-2 p-2.5 text-left transition-colors',
                   cadence === 'weekly' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground/40',
                 )}
               >
@@ -230,7 +240,7 @@ export function RoutineDialog({
                 type="button"
                 onClick={() => setCadence('flexible')}
                 className={cn(
-                  'rounded-xl border-2 p-2.5 text-left transition-colors',
+                  'min-w-0 rounded-xl border-2 p-2.5 text-left transition-colors',
                   cadence === 'flexible' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground/40',
                 )}
               >
@@ -413,11 +423,12 @@ export function RoutineDialog({
             </p>
           </div>
 
-          {/* minutes / start / end — stacked on phones: three columns leave
-              the native date pickers too narrow on small screens and push the
-              dialog out sideways (iOS date controls have a minimum width) */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="space-y-2">
+          {/* minutes / start / end — stacked below md: three columns need
+              ~168px per track for iOS Safari's date controls (they carry a
+              hard intrinsic min-width), which only exists inside the widened
+              md:max-w-xl dialog — never inside sm:max-w-md */}
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+            <div className="min-w-0 space-y-2">
               <Label htmlFor="routine-duration">Minutes</Label>
               <Input
                 id="routine-duration"
@@ -429,11 +440,11 @@ export function RoutineDialog({
                 placeholder="30"
               />
             </div>
-            <div className="space-y-2">
+            <div className="min-w-0 space-y-2">
               <Label htmlFor="routine-start">Starts</Label>
               <Input id="routine-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="min-w-0" />
             </div>
-            <div className="space-y-2">
+            <div className="min-w-0 space-y-2">
               <Label htmlFor="routine-end">Ends</Label>
               <Input id="routine-end" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="min-w-0" />
             </div>

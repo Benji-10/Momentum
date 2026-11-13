@@ -53,13 +53,14 @@ function useStaticArt(config: BackgroundConfig, fg: string): string | null {
   const scale = bgNum(config, 'scale', 100)
   const density = bgNum(config, 'density', 50)
   const glow = bgNum(config, 'glow', 55)
+  const variant = bgNum(config, 'variant', 1)
   const id = config.id
   return useMemo(() => {
     switch (id) {
       case 'topography':
         return generateTopography({ fg: fg || 'oklch(0.2 0.01 80)', intensity, scale })
       case 'fractals':
-        return generateFractals({ fg: fg || 'oklch(0.2 0.01 80)', intensity, scale })
+        return generateFractals({ fg: fg || 'oklch(0.2 0.01 80)', intensity, scale, variant })
       case 'bg-mycelium':
         return generateMycelium({ density, glow, scale })
       case 'carbon':
@@ -69,7 +70,7 @@ function useStaticArt(config: BackgroundConfig, fg: string): string | null {
       default:
         return null
     }
-  }, [id, fg, intensity, scale, density, glow])
+  }, [id, fg, intensity, scale, density, glow, variant])
 }
 
 export function BackgroundLayer({

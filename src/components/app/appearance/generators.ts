@@ -6,7 +6,7 @@
 //
 // "Image-style" backgrounds are rendered procedurally to a static image so
 // the app ships no binary assets — with one exception: Mineral is a real
-// photograph (public/backgrounds/mineral.jpg, shipped with the app).
+// photograph (public/backgrounds/mineral.webp, shipped with the app).
 //
 // Everything is seeded and deterministic: the same settings always produce
 // the same art, so re-renders never flicker.
@@ -218,33 +218,82 @@ export function generateTopography(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// Fractals — a Julia set, escape-time rendered with banded contours.
+// Fractals — Julia sets, escape-time rendered with banded contours.
 // The banding (integer escape counts) reads like etched topographic rings
 // around the set — unmistakably fractal, and quiet enough to sit behind UI.
+//
+// Twenty-four curated RULES (a Julia constant c × an iteration power —
+// z²+c characters and dendrites plus two z⁴+c flowers, each with its own
+// framing). Every constant was verified to render well with this banded
+// renderer via the candidate tester; cubic z³+c was tried and dropped
+// (it renders as faint dust at every tested constant). Selecting the
+// background rolls a random variant; the Variant slider browses all 24.
+// Variant 1 is the classic the app has always shipped.
 // ---------------------------------------------------------------------------
 
-export function generateFractals(opts: { fg: string; intensity: number; scale: number }): string {
-  const { fg, intensity, scale } = opts
-  const rnd = mulberry32(4242)
-  const rgb = colorToRgb(fg) ?? [150, 160, 175]
-  const baseA = Math.min(0.32, 0.07 + (0.24 * intensity) / 100)
+export interface FractalRule {
+  c: [number, number]
+  power: 2 | 3 | 4
+  /** half-width of the viewport at scale 100 — higher powers have smaller sets */
+  baseHalf: number
+  maxIter: number
+}
+const FRACTAL_RULES: FractalRule[] = [
+  // 1–8: the curated quadratic classics (1 = the long-shipped default)
+  { c: [-0.835, -0.2321], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [-0.7269, 0.1889], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [-0.4, 0.6], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [-0.8, 0.156], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [0.285, 0.01], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [-0.70176, -0.3842], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [0.3, -0.01], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [-0.54, 0.54], power: 2, baseHalf: 1.7, maxIter: 64 },
+  // 9–10 + 15–16: more quadratic characters (each verified to render well
+  // with banded escape contours — candidate-tested, see
+  // scripts/bg-previews/entry-candidates.ts)
+  { c: [0.37, 0.37], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [-0.4, -0.59], power: 2, baseHalf: 1.7, maxIter: 64 },
+  // 11–14 + 19–21: dendrites on the |c| = 0.7885 ring — near-boundary
+  // constants give branching lightning Julias. The interesting sector is
+  // θ ≈ 1.7–4.1 rad; angles outside it render as faint dust.
+  { c: [-0.1563, 0.7729], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [-0.7013, 0.3656], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [-0.7782, -0.1272], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [-0.4231, -0.6666], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [-0.62, 0.41], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [-0.123, 0.745], power: 2, baseHalf: 1.7, maxIter: 64 }, // Douady rabbit
+  // 17–18: quartic (z⁴+c) — four-fold flowers, candidate-tested
+  { c: [0.55, 0.55], power: 4, baseHalf: 1.4, maxIter: 40 },
+  { c: [-0.7, -0.45], power: 4, baseHalf: 1.4, maxIter: 40 },
+  { c: [-0.2919, 0.7325], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [-0.4316, 0.6599], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [-0.7741, 0.1501], power: 2, baseHalf: 1.7, maxIter: 64 },
+  // 22–24: seahorse spiral, tight curls, dust
+  { c: [-0.79, 0.15], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [-0.7, 0.28], power: 2, baseHalf: 1.7, maxIter: 64 },
+  { c: [-0.485, -0.375], power: 2, baseHalf: 1.7, maxIter: 64 },
+]
 
-  // curated c values — each gives a connected, elegant set
-  const CS: [number, number][] = [
-    [-0.7269, 0.1889],
-    [-0.4, 0.6],
-    [-0.8, 0.156],
-    [0.285, 0.01],
-    [-0.835, -0.2321],
-    [-0.70176, -0.3842],
-    [0.3, -0.01],
-    [-0.54, 0.54],
-  ]
-  const c = CS[Math.floor(rnd() * CS.length)]!
+/** Render one raw fractal rule (the candidate tester in
+ *  scripts/bg-previews uses this directly with arbitrary constants). */
+export function generateFractalRule(
+  rule: FractalRule,
+  opts: { fg: string; intensity: number; scale: number },
+  seed = 0,
+): string {
+  const { fg, intensity, scale } = opts
+  // framing jitter, deterministic per seed: the same rule always frames
+  // the same way, different rules land differently
+  const fr = mulberry32(seed * 7919 + 3)
+  const cx = (fr() - 0.5) * 0.3
+  const cy = (fr() - 0.5) * 0.24
+  const zoom = 0.88 + fr() * 0.3
+  const rgb = colorToRgb(fg) ?? [150, 160, 175]
+  const [cr, ci] = rule.c
+  const power = rule.power
 
   // scale = zoom: 40% shows the whole neighbourhood, 220% crops into detail.
-  // 1.7 at 100% puts the set across most of the frame with breathing room.
-  const halfW = 1.7 * (110 / Math.max(40, Math.min(220, scale)))
+  const halfW = rule.baseHalf * zoom * (110 / Math.max(40, Math.min(220, scale)))
   const cw = 640
   const ch = 400
   const halfH = (halfW * ch) / cw
@@ -254,23 +303,36 @@ export function generateFractals(opts: { fg: string; intensity: number; scale: n
   const ctx = canvas.getContext('2d')!
   const img = ctx.createImageData(cw, ch)
   const data = img.data
-  const maxIter = 64
+  const maxIter = rule.maxIter
   const step = (2 * halfW) / cw
   // quantized into ~10 fat bands: thin sub-pixel rings would vanish when the
   // browser downsamples the art to a phone screen
   const baseA2 = Math.min(0.95, 0.45 + (0.5 * intensity) / 100)
   for (let py = 0; py < ch; py++) {
-    const y = -halfH + py * ((2 * halfH) / ch)
+    const y = cy - halfH + py * ((2 * halfH) / ch)
     for (let px = 0; px < cw; px++) {
-      const x = -halfW + px * step
+      const x = cx - halfW + px * step
       let zx = x
       let zy = y
       let n = 0
       let zx2 = zx * zx
       let zy2 = zy * zy
       while (n < maxIter && zx2 + zy2 < 16) {
-        zy = 2 * zx * zy + c[1]
-        zx = zx2 - zy2 + c[0]
+        if (power === 2) {
+          zy = 2 * zx * zy + ci
+          zx = zx2 - zy2 + cr
+        } else if (power === 3) {
+          // z³ by the binomial: x(x²−3y²) + i·y(3x²−y²)
+          const t = zx * (zx2 - 3 * zy2) + cr
+          zy = zy * (3 * zx2 - zy2) + ci
+          zx = t
+        } else {
+          // z⁴ = square twice
+          const a = zx2 - zy2
+          const b = 2 * zx * zy
+          zx = a * a - b * b + cr
+          zy = 2 * a * b + ci
+        }
         zx2 = zx * zx
         zy2 = zy * zy
         n++
@@ -281,7 +343,7 @@ export function generateFractals(opts: { fg: string; intensity: number; scale: n
         continue
       }
       // banded: quantized escape counts give concentric contour rings
-      const band = Math.floor(n / 7) // 0..9
+      const band = Math.min(9, Math.floor((n / maxIter) * 10))
       const bandA = baseA2 * (0.5 + 0.5 * (band / 9))
       data[k] = rgb[0]
       data[k + 1] = rgb[1]
@@ -291,6 +353,11 @@ export function generateFractals(opts: { fg: string; intensity: number; scale: n
   }
   ctx.putImageData(img, 0, 0)
   return canvas.toDataURL('image/png')
+}
+
+export function generateFractals(opts: { fg: string; intensity: number; scale: number; variant?: number }): string {
+  const vIdx = Math.max(0, Math.min(FRACTAL_RULES.length - 1, Math.round((opts.variant ?? 1) - 1)))
+  return generateFractalRule(FRACTAL_RULES[vIdx]!, opts, vIdx)
 }
 
 // ---------------------------------------------------------------------------
@@ -513,11 +580,11 @@ export function generateMycelium(opts: { density: number; glow: number; scale: n
 }
 
 // ---------------------------------------------------------------------------
-// Mineral — a real photograph (public/backgrounds/mineral.jpg): dark stone
+// Mineral — a real photograph (public/backgrounds/mineral.webp): dark stone
 // with quiet veining, zoomable like any other background. See
 // BackgroundLayer for the renderer.
 // ---------------------------------------------------------------------------
-export const MINERAL_IMAGE_URL = '/backgrounds/mineral.jpg'
+export const MINERAL_IMAGE_URL = '/backgrounds/mineral.webp'
 
 // ---------------------------------------------------------------------------
 // Carbon — carbon-fibre weave, tuned to a whisper: near-black strands on a
