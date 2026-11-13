@@ -228,7 +228,9 @@ function App({ email, name, settings }: { email: string; name: string | null; se
           <ImportButton onClick={() => setImportOpen(true)} />
           <ExportButton />
           <SyncButton goalsQuery={goalsQuery} />
-          <DropdownMenu>
+          {/* modal={false}: no scroll lock — a modal dropdown removes the
+              page scrollbar and visibly shifts the centred layout sideways */}
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
@@ -271,7 +273,7 @@ function App({ email, name, settings }: { email: string; name: string | null; se
             <Button onClick={openCreate} className="rounded-r-none" aria-label="Create a new goal">
               <Plus className="h-4 w-4" aria-hidden /> <span className="hidden sm:inline">New goal</span>
             </Button>
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button
                   aria-label="More creation options"

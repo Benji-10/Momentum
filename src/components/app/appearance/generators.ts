@@ -96,6 +96,26 @@ function mixRgb(
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
 }
 
+/** Line-art colours must stay readable on the paper they are drawn on: if
+ *  a theme colour sits too close to the theme background (a bright primary
+ *  on white, say), push it away — darker on light paper, lighter on dark —
+ *  so the themed hue survives with its contrast intact. */
+function ensureContrast(
+  c: [number, number, number],
+  bg: [number, number, number] | null | undefined,
+): [number, number, number] {
+  if (!bg) return c
+  const lc = luminance(c)
+  const lb = luminance(bg)
+  if (Math.abs(lc - lb) < 0.24) {
+    return lb > 0.5 ? mixRgb(c, [15, 23, 42], 0.5) : mixRgb(c, [226, 232, 255], 0.42)
+  }
+  return c
+}
+
+const rgbCss = (c: [number, number, number]) =>
+  `rgb(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])})`
+
 // ---------------------------------------------------------------------------
 // Topography — a real heightfield: a DOMINANT peak at the canvas centre
 // (phones cover-crop the middle of the landscape art, so the main mountain
@@ -109,6 +129,12 @@ function mixRgb(
 
 export function generateTopography(opts: {
   fg: string
+  /** the theme's primary colour — regular contour rings (falls back to fg) */
+  primary?: string
+  /** the theme's accent colour — index contours (falls back to primary) */
+  accent2?: string
+  /** the theme's background colour — contrast guard for the strokes */
+  themeBg?: [number, number, number] | null
   intensity: number // 0..100
   scale: number // 40..220 (%)
   /** fresh terrain per page load; fixed seed = stable thumbnail */
@@ -116,6 +142,15 @@ export function generateTopography(opts: {
 }): string {
   const { fg, intensity, scale } = opts
   const rnd = mulberry32(opts.seed ?? 1337)
+  // the ring colours inherit the palette: regular rings ride the theme's
+  // primary hue, index contours (every 5th, the bolder map lines) the
+  // accent — both pushed off the paper if the theme puts them too close
+  // to the background to read
+  const fallback = colorToRgb(fg) ?? [154, 160, 173]
+  const mainRgb = ensureContrast(colorToRgb(opts.primary ?? '') ?? fallback, opts.themeBg)
+  const indexRgb = ensureContrast(colorToRgb(opts.accent2 ?? '') ?? mainRgb, opts.themeBg)
+  const strokeMain = rgbCss(mainRgb)
+  const strokeIndex = rgbCss(indexRgb)
 
   // ---- 1) the heightfield -------------------------------------------------
   interface Peak {
@@ -267,7 +302,7 @@ export function generateTopography(opts: {
     // ~1.1/1.7px there and stays elegant on desktop.
     const index = l % 5 === 0
     paths.push(
-      `<path d="${d.join('')}" fill="none" stroke="${fg}" stroke-width="${index ? 7 : 4.5}" opacity="${(baseA * (index ? 1.4 : 1)).toFixed(3)}" stroke-linecap="round" stroke-linejoin="round"/>`,
+      `<path d="${d.join('')}" fill="none" stroke="${index ? strokeIndex : strokeMain}" stroke-width="${index ? 7 : 4.5}" opacity="${(baseA * (index ? 1.4 : 1)).toFixed(3)}" stroke-linecap="round" stroke-linejoin="round"/>`,
     )
   }
   return svgUrl(
@@ -343,7 +378,17 @@ const FRACTAL_RULES: FractalRule[] = [
  *  off-screen on mobile. */
 export function generateFractalRule(
   rule: FractalRule,
-  opts: { fg: string; intensity: number; scale: number },
+  opts: {
+    fg: string
+    /** the theme's primary — outer escape bands (falls back to fg) */
+    primary?: string
+    /** the theme's accent — inner bands hugging the set (falls back to primary) */
+    accent2?: string
+    /** the theme's background colour — contrast guard for the band colours */
+    themeBg?: [number, number, number] | null
+    intensity: number
+    scale: number
+  },
   seed = 0,
 ): string {
   const { fg, intensity, scale } = opts
@@ -355,6 +400,19 @@ export function generateFractalRule(
   const cy = (fr() - 0.5) * 0.24
   const zoom = 0.88 + fr() * 0.3
   const rgb = colorToRgb(fg) ?? [150, 160, 175]
+  // the escape bands inherit the palette: a duotone ramp from the theme's
+  // primary (far, faint outer rings) to its accent (the bright rings
+  // hugging the set), each pushed off the paper when the theme puts them
+  // too close to the background to read. No themed colours passed (thumbs,
+  // the candidate sheet) → the classic monochrome fg bands.
+  const primaryC = ensureContrast(colorToRgb(opts.primary ?? '') ?? rgb, opts.themeBg)
+  const accentC = ensureContrast(colorToRgb(opts.accent2 ?? '') ?? primaryC, opts.themeBg)
+  // precompute the fourteen quantized band colours (band 0 far → 13 near
+  // the set) — finer than the old ten because the art UPSCALES on phones
+  // (640px canvas → ~2× screen), so thin rings survive
+  const BANDS = 14
+  const bandC: [number, number, number][] = []
+  for (let b = 0; b < BANDS; b++) bandC.push(mixRgb(primaryC, accentC, b / (BANDS - 1)))
   const [cr, ci] = rule.c
   const power = rule.power
 
@@ -418,12 +476,14 @@ export function generateFractalRule(
           inside++
           continue
         }
-        // banded: quantized escape counts give concentric contour rings
-        const band = Math.min(9, Math.floor((n / maxIter) * 10))
-        const bandA = baseA2 * (0.5 + 0.5 * (band / 9))
-        data[k] = rgb[0]
-        data[k + 1] = rgb[1]
-        data[k + 2] = rgb[2]
+        // banded: quantized escape counts give concentric contour rings,
+        // each band walking the theme's primary→accent duotone ramp
+        const band = Math.min(BANDS - 1, Math.floor((n / maxIter) * BANDS))
+        const bandA = baseA2 * (0.5 + 0.5 * (band / (BANDS - 1)))
+        const bc = bandC[band]!
+        data[k] = bc[0]
+        data[k + 1] = bc[1]
+        data[k + 2] = bc[2]
         data[k + 3] = Math.round(bandA * 255)
       }
     }
@@ -448,6 +508,9 @@ export function generateFractalRule(
 
 export function generateFractals(opts: {
   fg: string
+  primary?: string
+  accent2?: string
+  themeBg?: [number, number, number] | null
   intensity: number
   scale: number
   /** 0 (the default) = auto: a seeded random rule — a fresh Julia every
@@ -469,23 +532,17 @@ export function generateFractals(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// Mycelium — a living network: wavy tapering hyphae that branch and FUSE
-// (anastomosis loops, the signature of real mycelium), thick rhizomorph
-// cords as the skeleton, bioluminescent growth tips, and spore clusters
-// where hyphae end or meet — not a random walk web.
+// Mycelium — a glowing node network: bright synapse-like nodes strung
+// together by fine luminous filaments in blue-violet and cyan, on a deep
+// substrate (the reference look). Nodes come from a jittered grid (even
+// coverage, organic spacing); each node links to a handful of near
+// neighbours with gently bowed curves — a few thick trunk lines carry the
+// structure, the rest are hairlines. Every filament is drawn twice (wide
+// soft halo + crisp core) with additive blending on dark substrates, so
+// crossings accumulate light exactly like the reference; junctions
+// (degree ≥ 3) get the brightest halos. A light theme keeps its paper and
+// the whole network flips to deep ink.
 // ---------------------------------------------------------------------------
-
-interface Walker {
-  x: number
-  y: number
-  angle: number
-  life: number
-  life0: number
-  width: number
-  alpha: number
-  hue: [number, number, number]
-  tip: boolean // a "growth tip" walker — glows faint cyan near the end
-}
 
 export function generateMycelium(opts: {
   density: number
@@ -495,13 +552,13 @@ export function generateMycelium(opts: {
   seed?: number
   /** the theme's background colour — the substrate adopts it (dark themes
    *  get a violet-tinted version of their own bg, light themes keep their
-   *  light bg and the hyphae switch to deep-violet ink) */
+   *  light bg and the network switches to deep-violet ink) */
   themeBg?: [number, number, number] | null
 }): string {
   const { density, glow, scale } = opts
   const rnd = mulberry32(opts.seed ?? 90210)
   // rendered at 800x500 (not 1600): on phones the art lands at ~47% of this
-  // instead of ~23%, so hyphae stay visible without comically fat strokes
+  // instead of ~23%, so filaments stay visible without comically fat strokes
   const LW = 800
   const LH = 500
   const canvas = document.createElement('canvas')
@@ -518,18 +575,15 @@ export function generateMycelium(opts: {
   const DEEP: [number, number, number] = [11, 8, 22]
   const tb = opts.themeBg ?? null
   const light = tb != null && luminance(tb) > 0.5
-  const rgbaStr = (c: [number, number, number]) =>
-    `rgb(${c[0].toFixed(0)},${c[1].toFixed(0)},${c[2].toFixed(0)})`
   const sub =
     tb == null
       ? { c0: '#191230', c1: '#120c22', c2: '#0b0816' }
       : light
-        ? // light theme: keep the paper, just edge it a shade warmer
-          { c0: rgbaStr(tb), c1: rgbaStr(tb), c2: rgbaStr(mixRgb(tb, [246, 242, 234], 0.45)) }
+        ? { c0: rgbCss(tb), c1: rgbCss(tb), c2: rgbCss(mixRgb(tb, [246, 242, 234], 0.45)) }
         : {
-            c0: rgbaStr(mixRgb(tb, DEEP, 0.45)),
-            c1: rgbaStr(mixRgb(tb, DEEP, 0.68)),
-            c2: rgbaStr(mixRgb(tb, DEEP, 0.88)),
+            c0: rgbCss(mixRgb(tb, DEEP, 0.45)),
+            c1: rgbCss(mixRgb(tb, DEEP, 0.68)),
+            c2: rgbCss(mixRgb(tb, DEEP, 0.88)),
           }
   const bg = ctx.createRadialGradient(LW * 0.5, LH * 0.42, 40, LW * 0.5, LH * 0.5, LW * 0.75)
   bg.addColorStop(0, sub.c0)
@@ -542,8 +596,7 @@ export function generateMycelium(opts: {
     const wy = rnd() * LH
     const wr = 140 + rnd() * 170
     const wg = ctx.createRadialGradient(wx, wy, 0, wx, wy, wr)
-    // violet humus washes — on a light substrate they would grey it out;
-    // scale them way down there
+    // violet humus washes — on a light substrate they would grey it out
     const washA = light ? 0.02 : 0.05
     wg.addColorStop(0, `rgba(124,110,200,${washA})`)
     wg.addColorStop(1, 'rgba(124,110,200,0)')
@@ -551,175 +604,306 @@ export function generateMycelium(opts: {
     ctx.fillRect(0, 0, LW, LH)
   }
 
-  // occupancy map for anastomosis: last point seen per 12px cell
-  const CS = 12
-  const cols = Math.ceil(LW / CS)
-  const occ: (Walker | null)[] = new Array(Math.ceil(LW / CS) * Math.ceil(LH / CS)).fill(null)
-  const occAt = (x: number, y: number) => occ[Math.floor(y / CS) * cols + Math.floor(x / CS)]
-  const occSet = (x: number, y: number, wk: Walker) => {
-    occ[Math.floor(y / CS) * cols + Math.floor(x / CS)] = wk
+  // --- node lattice: a jittered grid — even coverage, organic spacing ------
+  // phones cover-crop the landscape art to its middle third, so the lattice
+  // must stay dense enough to read as a full web even from a 30% strip ----
+  const spacing = Math.max(24, (62 - (density / 100) * 26) * sc)
+  const gcols = Math.max(6, Math.round(LW / spacing))
+  const grows = Math.max(5, Math.round(LH / spacing))
+  const NN = gcols * grows
+  const nx = new Float32Array(NN)
+  const ny = new Float32Array(NN)
+  for (let j = 0; j < grows; j++) {
+    for (let i = 0; i < gcols; i++) {
+      const k = j * gcols + i
+      nx[k] = ((i + 0.5) / gcols) * LW + (rnd() - 0.5) * spacing * 0.9
+      ny[k] = ((j + 0.5) / grows) * LH + (rnd() - 0.5) * spacing * 0.9
+    }
   }
 
-  const VIOLET: [number, number, number] = light ? [82, 58, 190] : [167, 139, 250] // ink on paper vs glow on dark
+  // --- shared filament record + drawer -------------------------------------
+  // every stroke in the network is a bowed quadratic sampled at thirds
+  // (a gently sagging 4-point path) drawn twice: a soft wide halo (light
+  // IN the filament) and a tapered core (thin-dim → thick-bright → thin-dim).
+  // On dark substrates everything composites additively so crossings pool
+  // their light like the reference.
+  const glowK = glow / 100
+  const VIOLET: [number, number, number] = light ? [82, 58, 190] : [167, 139, 250]
   const CYAN: [number, number, number] = light ? [8, 145, 178] : [125, 211, 252]
-  const ALPHA_MUL = light ? 0.9 : 1
-  const stepLen = 1.7 * sc
-  let fusions = 0
-  const fuseNodes: { x: number; y: number }[] = []
-  const sporeClusters: { x: number; y: number; n: number }[] = []
+  const edgeCol = () => mixRgb(VIOLET, CYAN, rnd() * 0.6)
+  interface Filament {
+    ax: number
+    ay: number
+    bx: number
+    by: number
+    bow: number // perpendicular sag of the arc, as a chord fraction
+    w: number
+    a0: number
+    haloK: number // halo strength multiplier (strands glow, mesh whispers)
+    col: [number, number, number]
+  }
+  const rgba = (c: [number, number, number], a: number) =>
+    `rgba(${c[0]},${c[1]},${c[2]},${Math.max(0, Math.min(1, a)).toFixed(3)})`
+  ctx.globalCompositeOperation = light ? 'source-over' : 'lighter'
+  ctx.lineCap = 'round'
+  const drawFilament = (e: Filament) => {
+    const mx = (e.ax + e.bx) / 2
+    const my = (e.ay + e.by) / 2
+    const dx = e.bx - e.ax
+    const dy = e.by - e.ay
+    const cxp = mx - dy * e.bow
+    const cyp = my + dx * e.bow
+    // TRUE smooth arcs: quadraticCurveTo renders a real curve, not a
+    // polyline — segment chains read as "straight beams with kinks", which
+    // is exactly the look we are replacing
+    const haloA = (light ? 0.08 : 0.13) * (0.45 + glowK) * e.haloK
+    ctx.strokeStyle = rgba(e.col, haloA)
+    ctx.lineWidth = e.w * (2.4 + glowK * 2.2) * (0.7 + 0.3 * e.haloK)
+    ctx.beginPath()
+    ctx.moveTo(e.ax, e.ay)
+    ctx.quadraticCurveTo(cxp, cyp, e.bx, e.by)
+    ctx.stroke()
+    // core: one smooth arc at full width — the taper lives ACROSS hops
+    // (each hop of a strand carries its own thinner width)
+    ctx.strokeStyle = rgba(e.col, e.a0)
+    ctx.lineWidth = Math.max(0.7, e.w)
+    ctx.beginPath()
+    ctx.moveTo(e.ax, e.ay)
+    ctx.quadraticCurveTo(cxp, cyp, e.bx, e.by)
+    ctx.stroke()
+  }
 
-  const walk = (wk: Walker, budget: { left: number }) => {
-    let bow = (rnd() - 0.5) * 0.16
-    for (let s = 0; s < wk.life; s++) {
-      // organic wander: local jitter on top of a slow bow
-      wk.angle += (rnd() - 0.5) * 0.5 + Math.sin(s * 0.045 + bow * 40) * 0.035
-      if (s === Math.floor(wk.life * 0.3)) bow = (rnd() - 0.5) * 0.16
-      const nx = wk.x + Math.cos(wk.angle) * stepLen
-      const ny = wk.y + Math.sin(wk.angle) * stepLen
-      if (nx < -12 || nx > LW + 12 || ny < -12 || ny > LH + 12) break
-
-      const t = s / wk.life
-      const w = wk.width * (1 - 0.35 * t) // hyphae taper as they extend
-      const tipGlow = wk.tip && t > 0.88 // growth tips light up near the end
-      const col = tipGlow ? CYAN : wk.hue
-      const a = (tipGlow ? wk.alpha + 0.1 : wk.alpha) * ALPHA_MUL
-      ctx.strokeStyle = `rgba(${col[0]},${col[1]},${col[2]},${a.toFixed(3)})`
-      ctx.lineWidth = Math.max(0.5, w)
-      ctx.lineCap = 'round'
-      ctx.beginPath()
-      ctx.moveTo(wk.x, wk.y)
-      ctx.lineTo(nx, ny)
-      ctx.stroke()
-
-      // anastomosis: if another hypha passes close by, fuse into it and stop
-      if (fusions < 30 && s > 24) {
-        const cellW = occAt(nx, ny)
-        if (cellW && cellW !== wk) {
-          const d = Math.hypot(cellW.x - nx, cellW.y - ny)
-          if (d > 9 && d < 32 && rnd() < 0.5) {
-            ctx.strokeStyle = `rgba(${wk.hue[0]},${wk.hue[1]},${wk.hue[2]},0.14)`
-            ctx.lineWidth = 1.6
-            ctx.beginPath()
-            ctx.moveTo(nx, ny)
-            ctx.quadraticCurveTo((nx + cellW.x) / 2 + (rnd() - 0.5) * 30, (ny + cellW.y) / 2 + (rnd() - 0.5) * 30, cellW.x, cellW.y)
-            ctx.stroke()
-            fusions++
-            fuseNodes.push({ x: (nx + cellW.x) / 2, y: (ny + cellW.y) / 2 })
-            sporeClusters.push({ x: cellW.x, y: cellW.y, n: 3 + Math.floor(rnd() * 3) })
-            return
-          }
+  // --- the substrate mesh: short faint links between lattice neighbours ---
+  // tight radius, axis-aligned links dropped at extra rate (diagonals carry
+  // the web), and a low-frequency block mask so the mesh clusters with
+  // breathing voids instead of covering the canvas evenly ---------------
+  const mesh: Filament[] = []
+  const deg = new Uint8Array(NN)
+  const linkR = spacing * 1.5
+  const linkR2 = linkR * linkR
+  const blockCols = Math.ceil(gcols / 2)
+  const blockDrop = new Float32Array(blockCols * Math.ceil(grows / 2))
+  for (let i = 0; i < blockDrop.length; i++) blockDrop[i] = 0.22 + rnd() * 0.42
+  for (let j = 0; j < grows; j++) {
+    for (let i = 0; i < gcols; i++) {
+      const a = j * gcols + i
+      const drop = blockDrop[(j >> 1) * blockCols + (i >> 1)]!
+      for (let dj = 0; dj <= 1; dj++) {
+        for (let di = -1; di <= 1; di++) {
+          if (dj === 0 && di <= 0) continue
+          const i2 = i + di
+          const j2 = j + dj
+          if (i2 < 0 || i2 >= gcols || j2 >= grows) continue
+          const b = j2 * gcols + i2
+          const dx = nx[a]! - nx[b]!
+          const dy = ny[a]! - ny[b]!
+          if (dx * dx + dy * dy > linkR2) continue
+          const axis = di === 0 || dj === 0
+          if (rnd() < drop + (axis ? 0.32 : 0)) continue
+          deg[a] = deg[a] < 255 ? deg[a] + 1 : deg[a]
+          deg[b] = deg[b] < 255 ? deg[b] + 1 : deg[b]
+          mesh.push({
+            ax: nx[a]!,
+            ay: ny[a]!,
+            bx: nx[b]!,
+            by: ny[b]!,
+            bow: (rnd() - 0.5) * 0.9,
+            w: 0.65 + rnd() * 0.5,
+            a0: 0.16 + rnd() * 0.14,
+            haloK: 0.7,
+            col: edgeCol(),
+          })
         }
       }
-      occSet(nx, ny, wk)
-      wk.x = nx
-      wk.y = ny
+    }
+  }
+  for (const e of mesh) drawFilament(e)
 
-      // branch
-      if (rnd() < 0.0035 + (density / 100) * 0.0011 && budget.left > 0) {
-        budget.left--
-        walk(
-          {
-            x: nx,
-            y: ny,
-            angle: wk.angle + (rnd() < 0.5 ? -1 : 1) * (0.5 + rnd() * 0.7),
-            life: Math.floor(wk.life * 0.6),
-            life0: Math.floor(wk.life * 0.6),
-            width: wk.width * 0.75,
-            alpha: wk.alpha * 0.9,
-            hue: wk.hue,
-            tip: rnd() < 0.3,
-          },
-          budget,
+  // --- the hyphae: long wandering strands — the mycelium proper -----------
+  // Each strand is a chain of long arcs (1-2 spacings per hop) that keeps a
+  // heading with a lazy wander, TAPERS along its length, and occasionally
+  // forks a child strand. HUBS bias the growth: several strands germinate
+  // at a hub and others aim their first hops toward one, so the web CLUSTERS
+  // into luminous knots (the reference's layered look) instead of scattering
+  // evenly. Bright "junction" pinpoints land on the strand vertices. -------
+  const strandFils: Filament[] = []
+  const vertices: { x: number; y: number; w: number; hub: boolean }[] = []
+  const branchBudget = { left: Math.round(14 + (density / 100) * 10) }
+  const hubCount = 7 + Math.floor(rnd() * 4)
+  const hubs: { x: number; y: number }[] = []
+  for (let i = 0; i < hubCount; i++) {
+    hubs.push({ x: LW * 0.16 + rnd() * LW * 0.68, y: LH * 0.16 + rnd() * LH * 0.68 })
+  }
+  const nearHub = (x: number, y: number, r: number) =>
+    hubs.some((hb) => (hb.x - x) ** 2 + (hb.y - y) ** 2 < r * r)
+  const M = 24 // off-canvas margin
+  const growStrand = (x0: number, y0: number, heading: number, hops: number, w0: number, a0: number) => {
+    let px = x0
+    let py = y0
+    let h = heading
+    for (let s = 0; s < hops; s++) {
+      // lazy wander: small heading turns keep the arcs long and sweeping —
+      // sharp turns would read as a zigzag of short links again
+      h += (rnd() - 0.5) * 0.6
+      const len = spacing * (1.2 + rnd() * 1.3)
+      const qx = px + Math.cos(h) * len
+      const qy = py + Math.sin(h) * len
+      if (qx < -M || qx > LW + M || qy < -M || qy > LH + M) break
+      const taper = 1 - 0.5 * (s / Math.max(1, hops - 1))
+      const w = Math.max(0.5, w0 * taper)
+      strandFils.push({
+        ax: px,
+        ay: py,
+        bx: qx,
+        by: qy,
+        // long lazy sag, sign alternating-ish per hop
+        bow: (rnd() < 0.5 ? -1 : 1) * (0.22 + rnd() * 0.26),
+        w,
+        a0: a0 * (0.72 + 0.28 * taper),
+        haloK: 1,
+        col: rnd() < 0.12 ? CYAN : edgeCol(),
+      })
+      vertices.push({ x: qx, y: qy, w, hub: nearHub(qx, qy, 90) })
+      // fork: a child strand leaves at a wider angle — the branching that
+      // makes it mycelium rather than a bundle of arcs
+      if (s >= 1 && branchBudget.left > 0 && rnd() < 0.3) {
+        branchBudget.left--
+        growStrand(
+          qx,
+          qy,
+          h + (rnd() < 0.5 ? -1 : 1) * (0.65 + rnd() * 0.6),
+          2 + Math.floor(rnd() * 3),
+          w0 * 0.72,
+          a0 * 0.88,
         )
       }
-    }
-    // natural end of a hypha: spore cluster at the tip
-    if (rnd() < 0.55) sporeClusters.push({ x: wk.x, y: wk.y, n: 3 + Math.floor(rnd() * 4) })
-  }
-
-  // thick rhizomorph cords — the skeleton of the network
-  const budget = { left: 150 }
-  const cordCount = 4 + Math.floor(rnd() * 3)
-  for (let i = 0; i < cordCount; i++) {
-    const edge = Math.floor(rnd() * 4)
-    const x = edge === 0 ? -6 : edge === 1 ? LW + 6 : rnd() * LW
-    const y = edge === 2 ? -6 : edge === 3 ? LH + 6 : rnd() * LH
-    walk(
-      {
-        x,
-        y,
-        angle: Math.atan2(LH / 2 - y, LW / 2 - x) + (rnd() - 0.5) * 0.8,
-        life: Math.floor((420 + rnd() * 260) * sc),
-        life0: 500,
-        width: 6 + rnd() * 2.6,
-        alpha: 0.2 + rnd() * 0.06,
-        hue: VIOLET,
-        tip: false,
-      },
-      budget,
-    )
-  }
-  // fine hyphae — the bulk of the network
-  const hyphaCount = Math.round(20 + (density / 100) * 34)
-  for (let i = 0; i < hyphaCount; i++) {
-    walk(
-      {
-        x: rnd() * LW,
-        y: rnd() * LH,
-        angle: rnd() * Math.PI * 2,
-        life: Math.floor((200 + rnd() * 260) * sc),
-        life0: 300,
-        width: 2 + rnd() * 2.2,
-        alpha: 0.17 + rnd() * 0.13,
-        hue: VIOLET,
-        tip: rnd() < 0.22,
-      },
-      budget,
-    )
-  }
-
-  // spore clusters: tight groups of glow dots (not uniform confetti) —
-  // a crisp core with a tight halo, sitting on tips and junctions.
-  // On a light substrate the "glow" becomes a soft pastel bloom around a
-  // deep-violet core — ink-drop botany instead of bioluminescence.
-  const SPORE_HALO_A = light ? 0.32 : 0.55
-  const SPORE_CORE = light ? 'rgba(82,58,190,0.92)' : 'rgba(226,214,255,0.9)'
-  for (const c of sporeClusters) {
-    for (let i = 0; i < c.n; i++) {
-      const r = 2 + rnd() * 2.6
-      const dx = (rnd() - 0.5) * 14
-      const dy = (rnd() - 0.5) * 14
-      const halo = r * (2.2 + (glow / 100) * 3.5)
-      const g = ctx.createRadialGradient(c.x + dx, c.y + dy, 0, c.x + dx, c.y + dy, halo)
-      g.addColorStop(0, `rgba(${CYAN[0]},${CYAN[1]},${CYAN[2]},${(SPORE_HALO_A + (glow / 100) * 0.35).toFixed(3)})`)
-      g.addColorStop(0.45, `rgba(${VIOLET[0]},${VIOLET[1]},${VIOLET[2]},${(SPORE_HALO_A * 0.5).toFixed(3)})`)
-      g.addColorStop(1, `rgba(${VIOLET[0]},${VIOLET[1]},${VIOLET[2]},0)`)
-      ctx.fillStyle = g
-      ctx.beginPath()
-      ctx.arc(c.x + dx, c.y + dy, halo, 0, Math.PI * 2)
-      ctx.fill()
-      // crisp core so the cluster reads as a dot, not a smudge
-      ctx.fillStyle = SPORE_CORE
-      ctx.beginPath()
-      ctx.arc(c.x + dx, c.y + dy, r * 0.6, 0, Math.PI * 2)
-      ctx.fill()
+      px = qx
+      py = qy
     }
   }
-  // fusion junctions get one brighter bead each
-  for (const f of fuseNodes) {
-    const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, 14 + (glow / 100) * 18)
-    g.addColorStop(0, `rgba(${VIOLET[0]},${VIOLET[1]},${VIOLET[2]},${light ? 0.4 : 0.6})`)
-    g.addColorStop(1, `rgba(${VIOLET[0]},${VIOLET[1]},${VIOLET[2]},0)`)
+  const strandCount = Math.round(26 + (density / 100) * 30)
+  for (let s = 0; s < strandCount; s++) {
+    const trunk = rnd() < 0.3
+    const w0 = trunk ? 2.4 + rnd() * 1.1 : 1.0 + rnd() * 0.9
+    const a0 = trunk ? 0.52 + rnd() * 0.16 : 0.34 + rnd() * 0.18
+    const roll = rnd()
+    if (roll < 0.45) {
+      // germinate AT a hub, heading outward — the knot grows from its center
+      const hb = hubs[Math.floor(rnd() * hubs.length)]!
+      growStrand(hb.x, hb.y, rnd() * Math.PI * 2, 4 + Math.floor(rnd() * 5), w0, a0)
+    } else if (roll < 0.72) {
+      // start elsewhere but aim the first hops at the nearest hub — the
+      // strand sweeps toward the cluster and threads it
+      const sx = rnd() * LW
+      const sy = rnd() * LH
+      let best = hubs[0]!
+      let bd = Infinity
+      for (const hb of hubs) {
+        const d = (hb.x - sx) ** 2 + (hb.y - sy) ** 2
+        if (d < bd) {
+          bd = d
+          best = hb
+        }
+      }
+      growStrand(sx, sy, Math.atan2(best.y - sy, best.x - sx) + (rnd() - 0.5) * 0.5, 5 + Math.floor(rnd() * 4), w0, a0)
+    } else {
+      growStrand(rnd() * LW, rnd() * LH, rnd() * Math.PI * 2, 4 + Math.floor(rnd() * 5), w0, a0)
+    }
+  }
+  // hub bloom: a soft luminous wash under each knot — light pooled where
+  // the strands braid, the layered glow of the reference
+  for (const hb of hubs) {
+    const R = 60 + rnd() * 70
+    const g = ctx.createRadialGradient(hb.x, hb.y, 0, hb.x, hb.y, R)
+    const hc = rnd() < 0.4 ? CYAN : VIOLET
+    g.addColorStop(0, rgba(hc, light ? 0.05 : 0.08 + glowK * 0.07))
+    g.addColorStop(1, rgba(hc, 0))
     ctx.fillStyle = g
     ctx.beginPath()
-    ctx.arc(f.x, f.y, 14 + (glow / 100) * 18, 0, Math.PI * 2)
+    ctx.arc(hb.x, hb.y, R, 0, Math.PI * 2)
     ctx.fill()
   }
+  for (const e of strandFils) drawFilament(e)
+
+  // feathers: short fine arcs leaving the strand vertices — the fuzzy
+  // micro-branch texture that hugs the real network, denser around hubs
+  const featherCount = Math.round(vertices.length * 0.8)
+  for (let i = 0; i < featherCount; i++) {
+    const v = vertices[Math.floor(rnd() * vertices.length)]!
+    if (!v.hub && rnd() < 0.45) continue // hub vertices feather more
+    const len = 12 + rnd() * 22
+    const ang = rnd() * Math.PI * 2
+    drawFilament({
+      ax: v.x,
+      ay: v.y,
+      bx: v.x + Math.cos(ang) * len,
+      by: v.y + Math.sin(ang) * len,
+      bow: (rnd() - 0.5) * 0.9,
+      w: 0.5 + rnd() * 0.45,
+      a0: 0.14 + rnd() * 0.14,
+      haloK: 0.4,
+      col: edgeCol(),
+    })
+  }
+
+  // micro-filaments: short faint wisps between everything — the fuzzy
+  // substrate of the reference, filling what would otherwise be dead dark
+  // patches. Never bright enough to compete with the strands.
+  const wispCount = Math.round(NN * 0.5)
+  for (let i = 0; i < wispCount; i++) {
+    let wx = rnd() * LW
+    let wy = rnd() * LH
+    let wa = rnd() * Math.PI * 2
+    const col = edgeCol()
+    const segs = 2 + Math.floor(rnd() * 2)
+    const wa0 = (light ? 0.06 : 0.08) + rnd() * (light ? 0.06 : 0.09)
+    ctx.strokeStyle = rgba(col, wa0)
+    ctx.lineWidth = 0.45 + rnd() * 0.5
+    ctx.beginPath()
+    ctx.moveTo(wx, wy)
+    for (let s = 0; s < segs; s++) {
+      wa += (rnd() - 0.5) * 1.3
+      wx += Math.cos(wa) * (10 + rnd() * 16)
+      wy += Math.sin(wa) * (10 + rnd() * 16)
+      ctx.lineTo(wx, wy)
+    }
+    ctx.stroke()
+  }
+
+  // --- junctions: bright pinpoints on the strand vertices (thicker strand
+  //     → brighter dot), each with a TIGHT glow — many small sparkles, not
+  //     bokeh balls ----------------------------------------------------------
+  const CORE = light ? 'rgba(46,29,124,0.95)' : 'rgba(214,202,250,0.93)'
+  for (const v of vertices) {
+    // bright tier on ~40% of vertices (trunk ends and hub vertices
+    // favoured), dim tier on another ~30% — the rest stay unlit so the
+    // sparkle stays sparse
+    const roll = rnd()
+    const bright = roll < (v.hub || v.w > 1.6 ? 0.6 : 0.34)
+    if (!bright && roll > 0.66) continue
+    const r = (bright ? 0.85 + rnd() * 0.6 : 0.55 + rnd() * 0.35) * (v.w > 1.6 ? 1.2 : 1)
+    const halo = r * (bright ? 2.6 + glowK * 3.2 : 1.6 + glowK * 1.8)
+    const g = ctx.createRadialGradient(v.x, v.y, 0, v.x, v.y, halo)
+    const hc = rnd() < 0.35 ? CYAN : VIOLET
+    const ha = (light ? 0.12 : 0.2 + glowK * 0.2) * (bright ? 1.25 : 0.6)
+    g.addColorStop(0, rgba(hc, ha))
+    g.addColorStop(0.5, rgba(hc, ha * 0.35))
+    g.addColorStop(1, rgba(hc, 0))
+    ctx.fillStyle = g
+    ctx.beginPath()
+    ctx.arc(v.x, v.y, halo, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = CORE
+    ctx.beginPath()
+    ctx.arc(v.x, v.y, r, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.globalCompositeOperation = 'source-over'
 
   // vignette — heavy on the glowy dark substrate, a whisper on paper
   const vg = ctx.createRadialGradient(LW / 2, LH / 2, LH * 0.32, LW / 2, LH / 2, LW * 0.72)
   vg.addColorStop(0, 'rgba(0,0,0,0)')
-  vg.addColorStop(1, `rgba(0,0,0,${light ? 0.16 : 0.5})`)
+  vg.addColorStop(1, `rgba(0,0,0,${light ? 0.14 : 0.46})`)
   ctx.fillStyle = vg
   ctx.fillRect(0, 0, LW, LH)
   return canvas.toDataURL('image/webp', 0.9)

@@ -822,6 +822,15 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* Reserve the scrollbar gutter permanently. Radix overlays (dialogs,
+     dropdowns) lock body scroll while open — without this, a classic
+     (non-overlay) scrollbar disappears for the lock's duration and the
+     whole centred app shifts sideways by half a scrollbar width. With a
+     stable gutter the page box never changes width. Overlay-scrollbar
+     browsers (iOS/macOS default) ignore it and were never affected. */
+  html {
+    scrollbar-gutter: stable;
+  }
   /* smooth theme transitions */
   body,
   .theme-anim body {

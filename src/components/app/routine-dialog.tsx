@@ -180,12 +180,13 @@ export function RoutineDialog({
           some iOS states (desktop-mode request, zoomed display) squeeze the
           viewport below what Chromium at 375px ever shows — nothing may
           push the dialog past the screen edge. */}
-      {/* md:max-w-xl: at md+ the Minutes/Starts/Ends row goes 3-col, and
-          three native iOS date controls (~158px intrinsic each — Safari
-          refuses to shrink them below that) only fit when the dialog is
-          wide enough: 576px - padding - gaps ≈ 168px per track. Below md
-          the fields stack, so no viewport can push the dialog sideways. */}
-      <DialogContent className="max-h-[90dvh] overflow-x-hidden overflow-y-auto p-4 sm:max-w-md sm:p-6 md:max-w-xl">
+      {/* md:max-w-xl lg:max-w-2xl: the Minutes/Starts/Ends block is
+          2-col at md (Starts/Ends share a row) and 3-col only at lg, where
+          the widened dialog guarantees ~200px per track — always wider than
+          the ~180px intrinsic min-width iOS Safari insists on for its native
+          date controls. Below md everything stacks, so no phone viewport can
+          push the dialog sideways. */}
+      <DialogContent className="max-h-[90dvh] overflow-x-hidden overflow-y-auto p-4 sm:max-w-md sm:p-6 md:max-w-xl lg:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Repeat className="h-4 w-4 shrink-0 text-primary" />
@@ -423,12 +424,14 @@ export function RoutineDialog({
             </p>
           </div>
 
-          {/* minutes / start / end — stacked below md: three columns need
-              ~168px per track for iOS Safari's date controls (they carry a
-              hard intrinsic min-width), which only exists inside the widened
-              md:max-w-xl dialog — never inside sm:max-w-md */}
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div className="min-w-0 space-y-2">
+          {/* minutes / start / end — stacked below md; at md Minutes spans
+              the full row and Starts/Ends share the second row (two ~250px
+              tracks); at lg+ all three sit in one row of ~200px tracks.
+              Every track stays wider than iOS Safari's hard intrinsic
+              min-width for native date inputs, so the fields can never
+              poke past the dialog edge. */}
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+            <div className="min-w-0 space-y-2 md:col-span-2 lg:col-span-1">
               <Label htmlFor="routine-duration">Minutes</Label>
               <Input
                 id="routine-duration"
@@ -442,11 +445,26 @@ export function RoutineDialog({
             </div>
             <div className="min-w-0 space-y-2">
               <Label htmlFor="routine-start">Starts</Label>
-              <Input id="routine-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="min-w-0" />
+              {/* px-2.5: the native date control carries its own wide
+                  intrinsic content; slimmer side padding buys the value
+                  text room to breathe inside the narrowest phone dialog */}
+              <Input
+                id="routine-start"
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="min-w-0 px-2.5"
+              />
             </div>
             <div className="min-w-0 space-y-2">
               <Label htmlFor="routine-end">Ends</Label>
-              <Input id="routine-end" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="min-w-0" />
+              <Input
+                id="routine-end"
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="min-w-0 px-2.5"
+              />
             </div>
           </div>
 

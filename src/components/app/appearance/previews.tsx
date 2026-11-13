@@ -237,6 +237,9 @@ function StaticThumb({ id, make }: { id: string; make: () => string }) {
 }
 
 const THUMB_NEUTRAL_FG = '#9aa0ad'
+// neutral stand-ins for the themed palette on the (theme-less) thumb tiles
+const THUMB_PRIMARY = '#8b95a6'
+const THUMB_ACCENT = '#7cc5e8'
 
 /** Thumbnail for one library background (defaults settings, static frame). */
 export function BackgroundThumb({ def }: { def: BackgroundDef }) {
@@ -262,12 +265,34 @@ export function BackgroundThumb({ def }: { def: BackgroundDef }) {
       visual = (
         <StaticThumb
           id="topography"
-          make={() => generateTopography({ fg: THUMB_NEUTRAL_FG, intensity: 60, scale: 100 })}
+          make={() =>
+            generateTopography({
+              fg: THUMB_NEUTRAL_FG,
+              primary: THUMB_PRIMARY,
+              accent2: THUMB_ACCENT,
+              intensity: 60,
+              scale: 100,
+            })
+          }
         />
       )
       break
     case 'fractals':
-      visual = <StaticThumb id="fractals" make={() => generateFractals({ fg: THUMB_NEUTRAL_FG, intensity: 55, scale: 100, variant: 5 })} />
+      visual = (
+        <StaticThumb
+          id="fractals"
+          make={() =>
+            generateFractals({
+              fg: THUMB_NEUTRAL_FG,
+              primary: THUMB_PRIMARY,
+              accent2: THUMB_ACCENT,
+              intensity: 55,
+              scale: 100,
+              variant: 5,
+            })
+          }
+        />
+      )
       break
     case 'mycelium':
       visual = <StaticThumb id="mycelium" make={() => generateMycelium({ density: 50, glow: 55, scale: 100 })} />

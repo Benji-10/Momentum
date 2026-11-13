@@ -448,7 +448,7 @@ function PathColumn({
               {pv.path.unit ? ` ${pv.path.unit}` : ''} · {pv.progressPct}%
             </div>
           </div>
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button
                 size="icon"

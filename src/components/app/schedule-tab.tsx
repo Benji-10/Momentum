@@ -506,7 +506,7 @@ export function ScheduleTab({
               <CalendarDays className="h-4 w-4" /> Today
             </Button>
           )}
-          <DropdownMenu>
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button size="sm">
                 <Plus className="h-4 w-4" /> New routine

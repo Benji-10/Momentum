@@ -11,9 +11,12 @@
 // art is generated once per settings change (memoized over primitives).
 //
 // Two inputs flow from the live theme into the art:
-//   --foreground  stroke/ink colour for line art (topography, fractals)
+//   --foreground  fallback ink for line art (topography, fractals)
 //   --background  the canvas/substrate base for animated scenes + mycelium,
 //                 so a background you pick MATCHES the palette you picked
+//   --primary / --chart-2  the palette's own hues for contour rings and
+//                 fractal bands — the art inherits the colours, not just
+//                 the paper
 // A per-load SEED feeds the static generators — every refresh grows a new
 // terrain / network / Julia rule (stable within the visit, so sliders
 // never flicker the art).
@@ -82,7 +85,14 @@ function useThemeVar(name: string): string {
  * memo over primitive inputs, regenerated only when the relevant settings,
  * the theme's colours, or the per-load seed actually change. Never per frame.
  */
-function useStaticArt(config: BackgroundConfig, fg: string, themeBg: [number, number, number] | null, seed: number): string | null {
+function useStaticArt(
+  config: BackgroundConfig,
+  fg: string,
+  primary: string,
+  accent2: string,
+  themeBg: [number, number, number] | null,
+  seed: number,
+): string | null {
   const intensity = bgNum(config, 'intensity', 55)
   const scale = bgNum(config, 'scale', 100)
   const density = bgNum(config, 'density', 50)
@@ -93,9 +103,26 @@ function useStaticArt(config: BackgroundConfig, fg: string, themeBg: [number, nu
   return useMemo(() => {
     switch (id) {
       case 'topography':
-        return generateTopography({ fg: fg || 'oklch(0.2 0.01 80)', intensity, scale, seed })
+        return generateTopography({
+          fg: fg || 'oklch(0.2 0.01 80)',
+          primary: primary || undefined,
+          accent2: accent2 || undefined,
+          themeBg,
+          intensity,
+          scale,
+          seed,
+        })
       case 'fractals':
-        return generateFractals({ fg: fg || 'oklch(0.2 0.01 80)', intensity, scale, variant, seed })
+        return generateFractals({
+          fg: fg || 'oklch(0.2 0.01 80)',
+          primary: primary || undefined,
+          accent2: accent2 || undefined,
+          themeBg,
+          intensity,
+          scale,
+          variant,
+          seed,
+        })
       case 'bg-mycelium':
         return generateMycelium({ density, glow, scale, seed, themeBg })
       case 'carbon':
@@ -105,7 +132,7 @@ function useStaticArt(config: BackgroundConfig, fg: string, themeBg: [number, nu
       default:
         return null
     }
-  }, [id, fg, intensity, scale, density, glow, variant, themeBg, seed])
+  }, [id, fg, primary, accent2, intensity, scale, density, glow, variant, themeBg, seed])
 }
 
 export function BackgroundLayer({
@@ -118,12 +145,23 @@ export function BackgroundLayer({
 }) {
   const fg = useThemeVar('--foreground')
   const bgVar = useThemeVar('--background')
+  // the theme's own accent colours feed the line art (topography rings,
+  // fractal bands) so the art inherits the palette, not just the paper
+  const primaryVar = useThemeVar('--primary')
+  const accent2Var = useThemeVar('--chart-2')
   const themeBg = useMemo(() => (bgVar ? colorToRgb(bgVar) : null), [bgVar])
   // one seed per page load: every refresh grows a new terrain / network /
   // Julia rule; within the visit it is stable, so slider tweaks never
   // flicker the art (the seed is a memo input, not a roll per render)
   const [loadSeed] = useState(() => Math.floor(Math.random() * 2 ** 31))
-  const staticUrl = useStaticArt(config ?? { id: 'none', settings: {} }, fg, themeBg, loadSeed)
+  const staticUrl = useStaticArt(
+    config ?? { id: 'none', settings: {} },
+    fg,
+    primaryVar,
+    accent2Var,
+    themeBg,
+    loadSeed,
+  )
   if (!config) return null
 
   const opacity = bgNum(config, 'opacity', 80) / 100
