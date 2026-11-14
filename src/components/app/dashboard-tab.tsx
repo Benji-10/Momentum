@@ -26,7 +26,7 @@ import { occurrencesInRange, routineStats, sameDay, startOfWeek, toDayKey, weekF
 import { goalColor } from '@/lib/goal-colors'
 import { useToggleRoutineDone } from '@/hooks/use-goals'
 import { checkoffDisplayUnit, logAmountLabel } from '@/lib/recording'
-import { currentStepForRoutine, routineStepLine, stepTriggerInfo } from '@/lib/step-triggers'
+import { currentStepForRoutine, linkedStepForRoutine, linkedStepLine, routineStepLine, stepTriggerInfo } from '@/lib/step-triggers'
 import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -77,22 +77,41 @@ function XpBadge({ goals }: { goals: GoalData[] }) {
  *  Flexible (any-day-this-week) routines follow below — they aren't pinned
  *  to today, so they get their own quota rows instead. */
 
-/** The plan step this session works on — same rule as the schedule grid. */
+/** The plan step this session works on — the current one it advances, or
+ *  the step it's linked to before that becomes current (same rule as the
+ *  schedule grid). */
 function StepLine({ goal, routine, done }: { goal: GoalData; routine: RoutineData; done?: boolean }) {
   const ctx = currentStepForRoutine(goal, routine)
-  if (!ctx) return null
-  return (
-    <div
-      className={cn(
-        'mt-1 flex items-start gap-1 rounded bg-warning/10 px-1.5 py-0.5 text-[10px] leading-snug text-warning',
-        done && 'opacity-60',
-      )}
-      title="This session works on the current plan step — it completes automatically"
-    >
-      <Zap className="mt-px h-2.5 w-2.5 shrink-0" />
-      <span className="min-w-0 truncate">{routineStepLine(ctx)}</span>
-    </div>
-  )
+  const linked = ctx ? null : linkedStepForRoutine(goal, routine)
+  if (ctx) {
+    return (
+      <div
+        className={cn(
+          'mt-1 flex items-start gap-1 rounded bg-warning/10 px-1.5 py-0.5 text-[10px] leading-snug text-warning',
+          done && 'opacity-60',
+        )}
+        title="This session works on the current plan step — it completes automatically"
+      >
+        <Zap className="mt-px h-2.5 w-2.5 shrink-0" />
+        <span className="min-w-0 truncate">{routineStepLine(ctx)}</span>
+      </div>
+    )
+  }
+  if (linked) {
+    return (
+      <div
+        className={cn(
+          'mt-1 flex items-start gap-1 rounded bg-muted/70 px-1.5 py-0.5 text-[10px] leading-snug text-muted-foreground',
+          done && 'opacity-60',
+        )}
+        title="Linked plan step — this routine's check-offs complete it once it's the current step"
+      >
+        <Zap className="mt-px h-2.5 w-2.5 shrink-0" />
+        <span className="min-w-0 truncate">{linkedStepLine(linked)} · counts when it&rsquo;s next up</span>
+      </div>
+    )
+  }
+  return null
 }
 
 function TodayChecklist({ goals, onOpenGoal }: { goals: GoalData[]; onOpenGoal: (g: GoalData, tab?: string) => void }) {

@@ -174,6 +174,7 @@ src/lib/import-format.ts
 src/lib/merge-import.ts
 src/lib/milestones.ts
 src/lib/offline.tsx
+src/lib/pb-credit.ts
 src/lib/pb-math.ts
 src/lib/pg-ddl.ts
 src/lib/quest-layout.ts

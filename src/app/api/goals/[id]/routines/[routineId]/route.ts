@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { requireUser } from '@/lib/auth'
 import { ownedGoal, ownsGoal } from '@/lib/api-helpers'
 import { goalInclude, serializeGoal } from '@/lib/goal-serialize'
+import { linkRoutineToStep } from '@/lib/step-engine'
 
 const updateRoutineSchema = z.object({
   title: z.string().min(1).max(120).optional(),
@@ -20,6 +21,12 @@ const updateRoutineSchema = z.object({
   archived: z.boolean().optional(),
   /** extra credit: nice to do, never a penalty when skipped */
   optional: z.boolean().optional(),
+  /** the plan step this routine works toward. undefined = leave step links
+   *  as they are · null = unlink (steps counting this routine go back to a
+   *  manual tick) · id = link (its trigger becomes "routine", stepCount
+   *  check-offs complete it; any other step pointing here resets to manual) */
+  stepId: z.string().min(1).max(64).nullable().optional(),
+  stepCount: z.number().int().min(1).max(999).nullable().optional(),
 })
 
 type Params = { params: Promise<{ id: string; routineId: string }> }
@@ -90,6 +97,13 @@ export async function PATCH(req: Request, { params }: Params) {
         ...(d.optional !== undefined ? { optional: d.optional } : {}),
       },
     })
+
+    // step link (routine side): undefined keeps it, null unlinks, id links —
+    // the linked step's trigger becomes "routine: N check-offs of this one"
+    if (d.stepId !== undefined) {
+      await linkRoutineToStep(id, routineId, d.stepId, d.stepCount)
+    }
+
     const goal = await ownedGoal(id, auth.user)
     return NextResponse.json({ goal: goal ? serializeGoal(goal) : null })
   } catch (e) {

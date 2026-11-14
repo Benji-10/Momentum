@@ -26,6 +26,8 @@ const triggerFields = z.object({
 const createStepSchema = z.object({
   title: z.string().min(1).max(200),
   notes: z.string().max(2000).nullable().optional(),
+  /** optional target date — ISO instant; displayed as the step's deadline */
+  dueDate: z.string().datetime().nullable().optional(),
   /** insert after this step order (append by default) */
   afterOrder: z.number().int().optional(),
 }).and(triggerFields)
@@ -75,6 +77,7 @@ export async function POST(req: Request, { params }: Params) {
         title: d.title,
         notes: d.notes ?? null,
         order,
+        dueDate: d.dueDate ? new Date(d.dueDate) : null,
         trigger: d.trigger ?? 'manual',
         routineId: d.trigger === 'routine' ? routineId : null,
         triggerCount: d.triggerCount ?? 1,

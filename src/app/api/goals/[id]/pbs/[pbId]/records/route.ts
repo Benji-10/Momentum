@@ -6,6 +6,7 @@ import { requireUser } from '@/lib/auth'
 import { ownedGoal } from '@/lib/api-helpers'
 import { serializeGoal } from '@/lib/goal-serialize'
 import { evaluateStepTriggers } from '@/lib/step-engine'
+import { applyPbNodeCredit, type PbNodeEffect } from '@/lib/pb-credit'
 
 const addRecordSchema = z.object({
   value: z.number().positive('Value must be greater than 0').max(1_000_000),
@@ -18,7 +19,9 @@ type Params = { params: Promise<{ id: string; pbId: string }> }
 
 /**
  * POST /api/goals/[id]/pbs/[pbId]/records — log an attempt. Whether it's a
- * new PB is derived client-side (pb-math); the server just keeps history.
+ * new PB is derived client-side (pb-math); the server just keeps history —
+ * and, when the metric feeds a roadmap checkpoint, credits it (sum mode) or
+ * re-mirrors the rolling average (average mode).
  */
 export async function POST(req: Request, { params }: Params) {
   const { id, pbId } = await params
@@ -42,12 +45,17 @@ export async function POST(req: Request, { params }: Params) {
     } catch {
       history = [] // corrupt column → start fresh rather than lose the feature
     }
-    history.push({ id: randomUUID(), date: d.date ?? new Date().toISOString(), value: d.value, note: d.note ?? null })
+    const recordId = randomUUID()
+    history.push({ id: recordId, date: d.date ?? new Date().toISOString(), value: d.value, note: d.note ?? null })
+    const historyJson = JSON.stringify(history)
 
     await db.personalBest.update({
       where: { id: pb.id },
-      data: { history: JSON.stringify(history) },
+      data: { history: historyJson },
     })
+
+    // the linked checkpoint (if any) gets its share of the attempt
+    const nodeCredit = await applyPbNodeCredit(id, { ...pb, history: historyJson }, { kind: 'add', recordId })
 
     // a new attempt can push a metric-triggered step over its bar
     const advances = await evaluateStepTriggers(id)
@@ -57,6 +65,7 @@ export async function POST(req: Request, { params }: Params) {
       {
         goal: goal ? serializeGoal(goal) : null,
         stepsAdvanced: advances.map((a) => ({ id: a.stepId, title: a.title })),
+        nodeCredit,
       },
       { status: 201 },
     )

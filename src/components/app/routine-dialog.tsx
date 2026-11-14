@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { CalendarDays, Dumbbell, NotebookPen, Repeat, Sparkles, Target } from 'lucide-react'
+import { CalendarDays, Dumbbell, ListChecks, NotebookPen, Repeat, Sparkles, Target } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData, RoutineData } from '@/lib/types'
 import { buildSkillMap } from '@/lib/skill-tree'
@@ -77,6 +77,16 @@ export function RoutineDialog({
 
   const [endDate, setEndDate] = useState(toDateString(routine?.endDate))
 
+  // ---- the plan step this routine works toward (routine side of the link;
+  // the step editor offers the same choice from the other side) ----
+  const orderedSteps = useMemo(() => [...goal.steps].sort((a, b) => a.order - b.order), [goal.steps])
+  const linkedStep = useMemo(
+    () => (routine ? orderedSteps.find((s) => s.trigger === 'routine' && s.routineId === routine.id) ?? null : null),
+    [orderedSteps, routine],
+  )
+  const [stepId, setStepId] = useState<string>(linkedStep?.id ?? 'none')
+  const [stepCount, setStepCount] = useState<string>(String(linkedStep?.triggerCount ?? 1))
+
   // the goal's checkpoints, grouped by path — what this session advances
   const nodeGroups = useMemo(() => {
     const map = buildSkillMap(goal)
@@ -118,6 +128,11 @@ export function RoutineDialog({
   const draftUnitLabel = creditUnitLabel(goal, routineDraft, draftNodeUnit)
   const logsSomething = draftAmount != null && draftAmount > 0
 
+  const countNum = Math.min(999, Math.max(1, Math.round(Number(stepCount) || 1)))
+  const pickedStep = stepId !== 'none' ? orderedSteps.find((s) => s.id === stepId) ?? null : null
+  const isPickedCurrent =
+    !!pickedStep && orderedSteps.find((s) => s.status !== 'done')?.id === pickedStep.id
+
   const valid =
     title.trim().length > 0 &&
     (cadence === 'interval'
@@ -144,6 +159,9 @@ export function RoutineDialog({
       startDate: startDate ? isoForDayKey(startDate, '12:00') : null,
       endDate: endDate ? isoForDayKey(endDate, '23:59:59') : null,
       optional: extra,
+      // the step link — null (not undefined) so saving deliberately unlinks
+      stepId: stepId === 'none' ? null : stepId,
+      stepCount: stepId === 'none' ? null : countNum,
     }
     if (isEdit && routine) {
       updateRoutine.mutate(
@@ -162,7 +180,9 @@ export function RoutineDialog({
           toast.success('Routine scheduled', {
             description: selectedNode
               ? `${describeCadence(payload)} · advances ${selectedNode.label}`
-              : describeCadence(payload),
+              : pickedStep
+                ? `${describeCadence(payload)} · works toward “${pickedStep.title}”`
+                : describeCadence(payload),
           })
           onOpenChange(false)
         },
@@ -375,6 +395,55 @@ export function RoutineDialog({
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+          )}
+
+          {/* what it works toward in the plan — the step side of the link */}
+          {orderedSteps.length > 0 && (
+            <div className="space-y-2">
+              <Label htmlFor="routine-step" className="flex items-center gap-1.5">
+                <ListChecks className="h-3.5 w-3.5 text-primary" />
+                Which plan step does it work toward? <span className="text-muted-foreground">(optional)</span>
+              </Label>
+              <Select value={stepId} onValueChange={setStepId}>
+                <SelectTrigger id="routine-step" className="w-full" aria-label="Which plan step does it work toward">
+                  <SelectValue placeholder="Pick a step…" />
+                </SelectTrigger>
+                <SelectContent className="max-h-56">
+                  <SelectItem value="none">No step in particular</SelectItem>
+                  {orderedSteps.map((s, i) => (
+                    <SelectItem key={s.id} value={s.id} disabled={s.status === 'done' && s.id !== linkedStep?.id}>
+                      Step {i + 1} · {s.title}
+                      {s.status === 'done' ? ' ✓' : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {pickedStep && (
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-2.5 py-2">
+                  <span className="text-[11px] leading-tight text-muted-foreground">Completes it after</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={999}
+                    value={stepCount}
+                    onChange={(e) => setStepCount(e.target.value)}
+                    inputMode="numeric"
+                    aria-label="Check-offs needed to complete the step"
+                    className="h-8 w-16 px-2"
+                  />
+                  <span className="text-[11px] leading-tight text-muted-foreground">
+                    check-off{countNum === 1 ? '' : 's'} of this routine
+                  </span>
+                  <p className="w-full text-[11px] leading-snug text-muted-foreground">
+                    {isPickedCurrent ? (
+                      <>Ticking this routine off ticks the step automatically — {countNum === 1 ? 'one check-off completes it.' : `${countNum} check-offs complete it.`}</>
+                    ) : (
+                      <>Check-offs count while “{pickedStep.title}” is the current step — it starts counting once the steps before it are done.</>
+                    )}
+                  </p>
+                </div>
+              )}
             </div>
           )}
 

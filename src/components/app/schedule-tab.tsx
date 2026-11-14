@@ -39,7 +39,7 @@ import {
 import { getAppTimezone } from '@/lib/app-time'
 import { goalColor } from '@/lib/goal-colors'
 import { formatNumber } from '@/lib/goal-math'
-import { currentStepForRoutine, routineStepLine } from '@/lib/step-triggers'
+import { currentStepForRoutine, linkedStepForRoutine, linkedStepLine, routineStepLine } from '@/lib/step-triggers'
 import { useDeleteRoutine, useToggleRoutineDone } from '@/hooks/use-goals'
 import { EditLogDialog, type EditLogTarget } from '@/components/app/edit-log-dialog'
 import { checkoffDisplayUnit, logAmountLabel } from '@/lib/recording'
@@ -76,26 +76,43 @@ function routineNode(goal: GoalData | undefined, routine: RoutineData) {
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 /**
- * The plan step a routine occurrence is "for" right now — shown only when
- * the routine actually advances it (routine trigger linked to this routine,
- * or a metric-trigger step every session works toward). Manual steps stay
- * in the plan tab, where ticking them means something.
+ * The plan step a routine occurrence is "for" — the current step it
+ * advances (routine trigger linked to this routine, or a metric-trigger
+ * step every session works toward), or, when it's linked to a step that
+ * isn't current yet, that booked step so the link stays visible.
  */
 function StepLine({ goal, routine, done }: { goal: GoalData; routine: RoutineData; done?: boolean }) {
   const ctx = currentStepForRoutine(goal, routine)
-  if (!ctx) return null
-  return (
-    <div
-      className={cn(
-        'mt-1 flex items-start gap-1 rounded bg-warning/10 px-1.5 py-0.5 text-[10px] leading-snug text-warning',
-        done && 'opacity-60',
-      )}
-      title={`This session works on the current plan step — it completes automatically${ctx.info.kind === 'metric' ? ' when the metric bar is crossed' : ' after enough check-offs'}`}
-    >
-      <Zap className="mt-px h-2.5 w-2.5 shrink-0" />
-      <span className="min-w-0 truncate">{routineStepLine(ctx)}</span>
-    </div>
-  )
+  const linked = ctx ? null : linkedStepForRoutine(goal, routine)
+  if (ctx) {
+    return (
+      <div
+        className={cn(
+          'mt-1 flex items-start gap-1 rounded bg-warning/10 px-1.5 py-0.5 text-[10px] leading-snug text-warning',
+          done && 'opacity-60',
+        )}
+        title={`This session works on the current plan step — it completes automatically${ctx.info.kind === 'metric' ? ' when the metric bar is crossed' : ' after enough check-offs'}`}
+      >
+        <Zap className="mt-px h-2.5 w-2.5 shrink-0" />
+        <span className="min-w-0 truncate">{routineStepLine(ctx)}</span>
+      </div>
+    )
+  }
+  if (linked) {
+    return (
+      <div
+        className={cn(
+          'mt-1 flex items-start gap-1 rounded bg-muted/70 px-1.5 py-0.5 text-[10px] leading-snug text-muted-foreground',
+          done && 'opacity-60',
+        )}
+        title="Linked plan step — this routine's check-offs complete it once it's the current step"
+      >
+        <Zap className="mt-px h-2.5 w-2.5 shrink-0" />
+        <span className="min-w-0 truncate">{linkedStepLine(linked)} · counts when it&rsquo;s next up</span>
+      </div>
+    )
+  }
+  return null
 }
 
 function OccurrenceRow({

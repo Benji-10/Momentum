@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { requireUser } from '@/lib/auth'
 import { ownedGoal, ownsGoal } from '@/lib/api-helpers'
 import { goalInclude, serializeGoal } from '@/lib/goal-serialize'
+import { linkRoutineToStep } from '@/lib/step-engine'
 
 const createRoutineSchema = z.object({
   title: z.string().min(1).max(120),
@@ -19,6 +20,10 @@ const createRoutineSchema = z.object({
   endDate: z.string().datetime().nullable().optional(),
   /** extra credit: nice to do, never a penalty when skipped */
   optional: z.boolean().optional(),
+  /** the plan step this routine works toward — its trigger becomes "routine":
+   *  stepCount check-offs of this routine complete it */
+  stepId: z.string().min(1).max(64).nullable().optional(),
+  stepCount: z.number().int().min(1).max(999).nullable().optional(),
 })
 
 type Params = { params: Promise<{ id: string }> }
@@ -55,7 +60,7 @@ export async function POST(req: Request, { params }: Params) {
       nodeId = node.id
     }
 
-    await db.routineItem.create({
+    const created = await db.routineItem.create({
       data: {
         goalId: id,
         title: d.title.trim(),
@@ -75,6 +80,13 @@ export async function POST(req: Request, { params }: Params) {
         optional: d.optional === true,
       },
     })
+
+    // the step this routine works toward (if any): its trigger becomes
+    // "routine — N check-offs of this routine complete it"
+    if (d.stepId) {
+      await linkRoutineToStep(id, created.id, d.stepId, d.stepCount)
+    }
+
     const updated = await ownedGoal(id, auth.user)
     return NextResponse.json({ goal: updated ? serializeGoal(updated) : null }, { status: 201 })
   } catch (e) {

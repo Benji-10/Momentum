@@ -41,7 +41,7 @@ import { goalColor } from '@/lib/goal-colors'
 import { logRowUnit, logAmountLabel, checkoffDisplayUnit } from '@/lib/recording'
 import { buildSkillMap } from '@/lib/skill-tree'
 import { describeCadence, occurrencesInRange, relativeDayLabel, routineStats, sameDay, startOfWeek, addDays, toDayKey } from '@/lib/routine-math'
-import { dayKeyOf, isoForDayKey, todayDayKey } from '@/lib/app-time'
+import { dayKeyOf, getAppTimezone, isoForDayKey, todayDayKey } from '@/lib/app-time'
 import { parseGoalScopeImport } from '@/lib/import-format'
 import { EditLogDialog, type EditLogTarget } from '@/components/app/edit-log-dialog'
 import {
@@ -158,6 +158,8 @@ function ClampedDescription({ text }: { text: string }) {
 export interface StepEditPatch {
   title: string
   notes: string | null
+  /** target date — ISO instant, or null to clear it */
+  dueDate?: string | null
   trigger?: 'manual' | 'routine' | 'metric'
   routineId?: string | null
   triggerCount?: number
@@ -165,6 +167,24 @@ export interface StepEditPatch {
   metricWindow?: number | null
   metricOp?: 'under' | 'over' | null
   metricValue?: number | null
+}
+
+/** a − b in whole days, both "YYYY-MM-DD" day keys */
+function dayDiff(a: string, b: string): number {
+  return Math.round((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000)
+}
+
+/** Due-date chip text: "Due today" / "Due tomorrow" / "Due 24 Nov" / "3d overdue" */
+function dueMeta(step: GoalStepData): { label: string; overdue: boolean } | null {
+  if (!step.dueDate || step.status === 'done') return null
+  const dueKey = dayKeyOf(new Date(step.dueDate), getAppTimezone())
+  const today = todayDayKey()
+  const diff = dayDiff(dueKey, today)
+  if (diff < 0) return { label: `${-diff}d overdue`, overdue: true }
+  if (diff === 0) return { label: 'Due today', overdue: true }
+  if (diff === 1) return { label: 'Due tomorrow', overdue: false }
+  if (diff <= 7) return { label: `Due in ${diff}d`, overdue: false }
+  return { label: `Due ${formatDateShort(new Date(step.dueDate))}`, overdue: false }
 }
 
 function StepRow({
@@ -198,8 +218,11 @@ function StepRow({
   const [window, setWindow] = useState<string>(String(step.metricWindow ?? 3))
   const [op, setOp] = useState<'under' | 'over'>(step.metricOp ?? 'under')
   const [value, setValue] = useState<string>(step.metricValue != null ? String(step.metricValue) : '')
+  // target date — "" = none (the input's own empty state)
+  const [due, setDue] = useState<string>(step.dueDate ? dayKeyOf(new Date(step.dueDate), getAppTimezone()) : '')
 
   const info = stepTriggerInfo(goal, step)
+  const dueChip = dueMeta(step)
 
   const icon =
     step.status === 'done' ? (
@@ -220,6 +243,7 @@ function StepRow({
     setWindow(String(step.metricWindow ?? 3))
     setOp(step.metricOp ?? 'under')
     setValue(step.metricValue != null ? String(step.metricValue) : '')
+    setDue(step.dueDate ? dayKeyOf(new Date(step.dueDate), getAppTimezone()) : '')
     setEditing(!editing)
   }
 
@@ -269,6 +293,20 @@ function StepRow({
           {isNext && step.status !== 'done' && !editing && (
             <div className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-primary">Next up</div>
           )}
+          {dueChip && !editing && (
+            <div
+              className={cn(
+                'mt-0.5 inline-flex w-fit items-center gap-1 rounded px-1 text-[11px] font-semibold leading-snug',
+                dueChip.overdue
+                  ? 'bg-destructive/10 text-destructive'
+                  : 'bg-muted text-muted-foreground',
+              )}
+              title={step.dueDate ? `Target date — ${formatDateLong(new Date(step.dueDate))}` : undefined}
+            >
+              <CalendarDays className="h-3 w-3 shrink-0" />
+              {dueChip.label}
+            </div>
+          )}
         </div>
         {/* always visible on touch — hover-reveal only on desktop */}
         <div className="flex shrink-0 items-center gap-0.5 opacity-100 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100 sm:focus-within:opacity-100">
@@ -314,6 +352,30 @@ function StepRow({
             className="text-xs"
             aria-label="Step notes"
           />
+
+          {/* target date — the step's own deadline, separate from how it completes */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Label htmlFor={`step-due-${step.id}`} className="flex shrink-0 items-center gap-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              <CalendarDays className="h-3 w-3" /> Target date
+            </Label>
+            <Input
+              id={`step-due-${step.id}`}
+              type="date"
+              value={due}
+              onChange={(e) => setDue(e.target.value)}
+              aria-label="Target date (optional)"
+              className="h-8 min-w-0 px-2.5 text-xs"
+            />
+            {due && (
+              <button
+                type="button"
+                onClick={() => setDue('')}
+                className="text-[11px] font-medium text-muted-foreground hover:text-foreground"
+              >
+                Clear
+              </button>
+            )}
+          </div>
 
           {/* ---- automation: how does this step complete? ---- */}
           <div className="rounded-lg border bg-muted/30 p-2.5">
@@ -467,6 +529,9 @@ function StepRow({
                 onEdit({
                   title: title.trim(),
                   notes: notes.trim() || null,
+                  // "" clears the date; a picked day is stored as ~noon in the
+                  // app timezone so it renders on that day on every device
+                  dueDate: due ? isoForDayKey(due, '12:00') : null,
                   ...(kind === 'routine'
                     ? {
                         trigger: 'routine',

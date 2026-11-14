@@ -5,7 +5,8 @@ import { requireUser } from '@/lib/auth'
 import { ownedGoal } from '@/lib/api-helpers'
 import { serializeGoal } from '@/lib/goal-serialize'
 import { syncMilestoneReached } from '@/lib/milestones'
-import { nodeDependencies, buildNodeIndex, nodeStatus } from '@/lib/skill-tree'
+import { nodeStatus } from '@/lib/skill-tree'
+import { nodeUnlockedById } from '@/lib/pb-credit'
 import { propagateDerived } from '@/lib/derive'
 import { autoLogAmount, autoLogNote, checkoffUnit } from '@/lib/recording'
 import { evaluateStepTriggers, undoStepAdvance } from '@/lib/step-engine'
@@ -24,23 +25,6 @@ const doneSchema = z.object({
 })
 
 type Params = { params: Promise<{ id: string; routineId: string }> }
-
-/**
- * Is the node unlocked right now? (all of its dependencies mastered).
- * Mirrors the client-side logic so crediting can never bypass gating.
- */
-async function nodeUnlocked(nodeId: string): Promise<boolean> {
-  const node = await db.skillNode.findUnique({ where: { id: nodeId }, include: { path: { include: { nodes: true } } } })
-  if (!node) return false
-  const paths = [node.path]
-  const index = buildNodeIndex(
-    paths.map((p) => ({ ...p, nodes: p.nodes.sort((a, b) => a.order - b.order) })),
-  )
-  const sorted = [...node.path.nodes].sort((a, b) => a.order - b.order)
-  const prev = sorted[sorted.findIndex((n) => n.id === nodeId) - 1] ?? null
-  const { deps } = nodeDependencies(node, prev, index)
-  return deps.every((d) => d.mastered)
-}
 
 /**
  * POST /api/goals/[id]/routines/[routineId]/done — toggle a day's completion.
@@ -155,7 +139,7 @@ export async function POST(req: Request, { params }: Params) {
       let creditedValue: number | null = null
       if (node && nodeStatus(node) !== 'mastered') {
         const perSession = amount != null && amount > 0 ? amount : 1
-        if (await nodeUnlocked(node.id)) {
+        if (await nodeUnlockedById(node.id)) {
           const next = Math.min(node.targetValue, node.currentValue + perSession)
           creditedValue = next - node.currentValue
           const masteredNow = next >= node.targetValue && node.targetValue > 0

@@ -10,6 +10,8 @@ const updateStepSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   notes: z.string().max(2000).nullable().optional(),
   status: z.enum(['pending', 'in_progress', 'done']).optional(),
+  /** target date: undefined = keep · null = clear · ISO = set */
+  dueDate: z.string().datetime().nullable().optional(),
   /** move step up/down by one position */
   move: z.enum(['up', 'down']).optional(),
   // ---- automation (how this step completes) ----
@@ -78,6 +80,7 @@ export async function PATCH(req: Request, { params }: Params) {
     const data: Record<string, unknown> = {
       ...(d.title !== undefined ? { title: d.title } : {}),
       ...(d.notes !== undefined ? { notes: d.notes } : {}),
+      ...(d.dueDate !== undefined ? { dueDate: d.dueDate ? new Date(d.dueDate) : null } : {}),
       ...(d.status !== undefined
         ? {
             status: d.status,

@@ -29,6 +29,9 @@ export interface GoalStepData {
   order: number
   status: StepStatus
   completedAt: string | null
+  /** optional target date the user wants this step done by (ISO instant;
+   *  null = no date) — drives the on-track display, not completion */
+  dueDate: string | null
   // ---- automation (how this step completes) ----
   trigger: StepTriggerType
   /** routine trigger: the routine whose check-offs count (null = any) */
@@ -159,6 +162,28 @@ export interface PbRecordData {
   note: string | null
 }
 
+/** What one logged attempt did to the roadmap checkpoint a metric feeds —
+ *  returned by the PB record routes so the UI can toast the tree movement. */
+export interface PbNodeCreditData {
+  nodeTitle: string
+  nodeUnit: string | null
+  mode: 'sum' | 'average'
+  /** sum: the delta applied · average: value change (new − old) */
+  delta: number
+  /** the checkpoint's value after the change */
+  value: number
+  target: number
+  /** average mode: the rolling average now shown on the checkpoint */
+  average: number | null
+  /** average mode: attempts behind the average / the window it needs */
+  attempts: number
+  window: number
+  /** the checkpoint is mastered after this change */
+  mastered: boolean
+  /** why nothing was applied (null = the change went through) */
+  skipped: 'linked-node-missing' | 'locked' | 'mastered' | 'short-window' | null
+}
+
 /** A personal-best metric on a goal — "WPM" (higher = better) or "BLD
  *  solve" (lower = better). The current PB is derived from `records`. */
 export interface PersonalBestData {
@@ -167,6 +192,12 @@ export interface PersonalBestData {
   name: string
   unit: string | null
   direction: 'up' | 'down'
+  /** roadmap link: the skill checkpoint this metric feeds (null = none) */
+  nodeId: string | null
+  /** "sum" = every attempt adds its value · "average" = the checkpoint
+   *  mirrors the rolling average of the last nodeWindow attempts */
+  nodeMode: 'sum' | 'average' | null
+  nodeWindow: number | null
   records: PbRecordData[]
   createdAt: string
   updatedAt: string
@@ -213,6 +244,11 @@ export interface RoutineInput {
   startDate?: string | null
   endDate?: string | null
   optional?: boolean
+  /** the plan step this routine works toward — the server configures that
+   *  step's routine trigger (undefined = leave step links untouched) */
+  stepId?: string | null
+  /** how many check-offs of this routine complete the linked step */
+  stepCount?: number | null
 }
 
 export interface CreateGoalInput {

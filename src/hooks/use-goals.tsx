@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CloudOff } from 'lucide-react'
 import { toast } from 'sonner'
-import type { CreateGoalInput, GoalData, MergeSummary, RoutineDoneData, StepStatus } from '@/lib/types'
+import type { CreateGoalInput, GoalData, MergeSummary, PbNodeCreditData, RoutineDoneData, StepStatus } from '@/lib/types'
 import type { NormalizedImport } from '@/lib/import-format'
 import { dayKeyOf, todayDayKey } from '@/lib/app-time'
 import { parseDayKey } from '@/lib/routine-math'
@@ -130,6 +130,8 @@ export function useUpdateStep(goalId: string | null) {
         status?: StepStatus
         move?: 'up' | 'down'
         notes?: string | null
+        /** target date: undefined = keep · null = clear · ISO = set */
+        dueDate?: string | null
         trigger?: 'manual' | 'routine' | 'metric'
         routineId?: string | null
         triggerCount?: number
@@ -259,6 +261,10 @@ export interface RoutineInputPayload {
   durationMin?: number | null
   startDate?: string | null
   endDate?: string | null
+  /** the plan step this routine works toward (null = unlink, undefined = keep) */
+  stepId?: string | null
+  /** how many check-offs of this routine complete the linked step */
+  stepCount?: number | null
 }
 
 export function useAddRoutine(goalId: string | null) {
@@ -560,8 +566,12 @@ export function useAddPb(goalId: string | null) {
       direction?: 'up' | 'down'
       firstValue?: number | null
       firstDate?: string | null
+      /** roadmap link: the checkpoint this metric feeds */
+      nodeId?: string | null
+      nodeMode?: 'sum' | 'average' | null
+      nodeWindow?: number | null
     }) =>
-      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/pbs`, {
+      jsonFetch<{ goal: GoalData | null; nodeCredit?: PbNodeCreditData | null }>(`/api/goals/${goalId}/pbs`, {
         method: 'POST',
         body: JSON.stringify(input),
       }),
@@ -577,9 +587,16 @@ export function useUpdatePb(goalId: string | null) {
       patch,
     }: {
       pbId: string
-      patch: { name?: string; unit?: string | null; direction?: 'up' | 'down' }
+      patch: {
+        name?: string
+        unit?: string | null
+        direction?: 'up' | 'down'
+        nodeId?: string | null
+        nodeMode?: 'sum' | 'average' | null
+        nodeWindow?: number | null
+      }
     }) =>
-      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/pbs/${pbId}`, {
+      jsonFetch<{ goal: GoalData | null; nodeCredit?: PbNodeCreditData | null }>(`/api/goals/${goalId}/pbs/${pbId}`, {
         method: 'PATCH',
         body: JSON.stringify(patch),
       }),
@@ -602,7 +619,11 @@ export function useAddPbRecord(goalId: string | null) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ pbId, value, date, note }: { pbId: string; value: number; date?: string; note?: string | null }) =>
-      jsonFetch<{ goal: GoalData | null; stepsAdvanced?: { id: string; title: string }[] }>(`/api/goals/${goalId}/pbs/${pbId}/records`, {
+      jsonFetch<{
+        goal: GoalData | null
+        stepsAdvanced?: { id: string; title: string }[]
+        nodeCredit?: PbNodeCreditData | null
+      }>(`/api/goals/${goalId}/pbs/${pbId}/records`, {
         method: 'POST',
         body: JSON.stringify({ value, date, note: note || null }),
       }),

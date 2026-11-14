@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Lock, Plus, Trash2, Wand2, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Link2, Lock, Plus, Repeat, Trash2, Trophy, Wand2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData } from '@/lib/types'
 import type { SkillNodeView } from '@/lib/skill-tree'
@@ -93,6 +93,14 @@ export function NodeEditDialog({
   const [selected, setSelected] = useState<string[]>(() => (n.requiresIds.length ? n.requiresIds : []))
 
   const [confirmDelete, setConfirmDelete] = useState(false)
+
+  // what feeds this checkpoint: linked routines + linked PB metrics — the
+  // wiring summary, so the roadmap's inputs are visible in one place
+  const feeders = useMemo(() => {
+    const routines = goal.routines.filter((r) => r.nodeId === n.id && !r.archived)
+    const metrics = goal.pbs.filter((p) => p.nodeId === n.id)
+    return { routines, metrics }
+  }, [goal, n.id])
 
   const targetNum = parseFloat(target)
   const xpNum = parseInt(xp, 10)
@@ -306,6 +314,38 @@ export function NodeEditDialog({
               </div>
             )}
           </div>
+
+          {/* fed by — the routines and metrics that advance this checkpoint */}
+          {(feeders.routines.length > 0 || feeders.metrics.length > 0) && (
+            <div className="space-y-1.5 rounded-lg border p-2.5">
+              <Label className="flex items-center gap-1.5 text-xs font-medium">
+                <Link2 className="h-3.5 w-3.5 text-primary" /> Fed by
+              </Label>
+              {feeders.routines.map((r) => (
+                <div key={r.id} className="flex items-start gap-1.5 text-[11px] leading-snug text-muted-foreground">
+                  <Repeat className="mt-px h-3 w-3 shrink-0 text-primary/70" />
+                  <span className="min-w-0 flex-1">
+                    <span className="font-medium text-foreground">{r.title}</span> — routine ·{' '}
+                    {r.credit != null ? `+${formatNumber(r.credit)} per check-off` : 'each check-off counts'}
+                  </span>
+                </div>
+              ))}
+              {feeders.metrics.map((p) => (
+                <div key={p.id} className="flex items-start gap-1.5 text-[11px] leading-snug text-muted-foreground">
+                  <Trophy className="mt-px h-3 w-3 shrink-0 text-amber-500" />
+                  <span className="min-w-0 flex-1">
+                    <span className="font-medium text-foreground">{p.name}</span> — metric ·{' '}
+                    {p.nodeMode === 'average'
+                      ? `tracks the average of the last ${p.nodeWindow ?? 3} attempts`
+                      : 'every attempt adds its value'}
+                  </span>
+                </div>
+              ))}
+              <p className="text-[10px] leading-snug text-muted-foreground/70">
+                Manage these links from the routine editor or the metric&apos;s pencil on the Review tab.
+              </p>
+            </div>
+          )}
 
           {/* sub-checkpoints */}
           <div className="space-y-2">

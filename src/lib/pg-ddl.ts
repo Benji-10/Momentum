@@ -49,6 +49,7 @@ CREATE TABLE "GoalStep" (
     "order" INTEGER NOT NULL DEFAULT 0,
     "status" TEXT NOT NULL DEFAULT 'pending',
     "completedAt" TIMESTAMP(3),
+    "dueDate" TIMESTAMP(3),
     "trigger" TEXT NOT NULL DEFAULT 'manual',
     "routineId" TEXT,
     "triggerCount" INTEGER NOT NULL DEFAULT 1,
@@ -182,6 +183,9 @@ CREATE TABLE "PersonalBest" (
     "unit" TEXT,
     "direction" TEXT NOT NULL DEFAULT 'up',
     "history" TEXT NOT NULL DEFAULT '[]',
+    "nodeId" TEXT,
+    "nodeMode" TEXT,
+    "nodeWindow" INTEGER,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -409,6 +413,39 @@ END $$;`,
     table: 'RoutineDone',
     column: 'advancedStepId',
     sql: `ALTER TABLE "RoutineDone" ADD COLUMN IF NOT EXISTS "advancedStepId" TEXT;`,
+  },
+  {
+    // v1.8: progression links — step target dates ("dates on steps"), and
+    // personal-best metrics that feed a skill checkpoint. sum: every attempt
+    // adds its value; average: the checkpoint mirrors the rolling average of
+    // the last nodeWindow attempts ("up" metrics only). The FK is
+    // Postgres-only (SQLite can't add constraints to an existing table);
+    // deleting a checkpoint nulls the link via the app's delete route.
+    table: 'GoalStep',
+    column: 'dueDate',
+    sql: `ALTER TABLE "GoalStep" ADD COLUMN IF NOT EXISTS "dueDate" TIMESTAMP(3);`,
+    sqliteType: 'DATETIME',
+  },
+  {
+    table: 'PersonalBest',
+    column: 'nodeId',
+    sql: `ALTER TABLE "PersonalBest" ADD COLUMN IF NOT EXISTS "nodeId" TEXT;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'PersonalBest_nodeId_fkey') THEN
+    ALTER TABLE "PersonalBest" ADD CONSTRAINT "PersonalBest_nodeId_fkey" FOREIGN KEY ("nodeId") REFERENCES "SkillNode"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;`,
+  },
+  {
+    table: 'PersonalBest',
+    column: 'nodeMode',
+    sql: `ALTER TABLE "PersonalBest" ADD COLUMN IF NOT EXISTS "nodeMode" TEXT;`,
+  },
+  {
+    table: 'PersonalBest',
+    column: 'nodeWindow',
+    sql: `ALTER TABLE "PersonalBest" ADD COLUMN IF NOT EXISTS "nodeWindow" INTEGER;`,
+    sqliteType: 'INTEGER',
   },
 ]
 

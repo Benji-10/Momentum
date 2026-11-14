@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Activity, CalendarClock, Clock, Flame, Gauge, Pencil, Plus, Timer, Trash2, Trophy } from 'lucide-react'
+import { Activity, CalendarClock, Clock, Flame, Gauge, Pencil, Plus, Target, Timer, Trash2, Trophy } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData, PersonalBestData, PbRecordData } from '@/lib/types'
 import { computeGoalStats, formatDateShort, formatHours, formatNumber, weeklyHistory } from '@/lib/goal-math'
@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { StatusBadge } from '@/components/app/goal-visuals'
 import { PbChart, TimeAreaChart, WeeklyBars } from '@/components/app/charts'
-import { AddPbMetricDialog, EditPbDialog, EditPbRecordDialog, RecordPbDialog } from '@/components/app/pb-dialogs'
+import { AddPbMetricDialog, EditPbDialog, EditPbRecordDialog, RecordPbDialog, pbFedNode } from '@/components/app/pb-dialogs'
 import { cn } from '@/lib/utils'
 
 /** One PB metric: current best, the PB-over-time chart, record + manage. */
@@ -47,14 +47,24 @@ function PbMetricBlock({
   const [editRecord, setEditRecord] = useState<PbRecordData | null>(null)
 
   const improving = delta == null ? null : pb.direction === 'up' ? delta > 0 : delta < 0
+  const fed = pbFedNode(goal, pb)
 
   return (
     <div className="rounded-xl border bg-muted/20 p-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="flex items-baseline gap-2">
+        <div className="flex flex-wrap items-baseline gap-2">
           <span className="text-sm font-semibold">
             🏆 {pb.name}
           </span>
+          {fed && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
+              title={`This metric feeds the “${fed.path.title}” roadmap — manage the link with the pencil`}
+            >
+              <Target className="h-2.5 w-2.5 shrink-0" />
+              feeds {fed.node.icon} {fed.node.title}
+            </span>
+          )}
           {best && (
             <span className="text-2xl font-bold tabular-nums" style={{ color: c.hex }}>
               {formatPbValue(pb)}
@@ -132,7 +142,7 @@ function PbMetricBlock({
         </>
       )}
 
-      <EditPbDialog key={pb.id} goalId={goal.id} pb={pb} open={editOpen} onOpenChange={setEditOpen} />
+      <EditPbDialog key={pb.id} goal={goal} pb={pb} open={editOpen} onOpenChange={setEditOpen} />
 
       {/* attempt editor — keyed so form state resets per attempt */}
       <EditPbRecordDialog
@@ -506,6 +516,7 @@ export function ReviewTab({ goals, onOpen }: { goals: GoalData[]; onOpen: (g: Go
       {recordPb && (
         <RecordPbDialog
           goalId={recordPb.goalId}
+          goal={shown.find((g) => g.id === recordPb.goalId)}
           pb={recordPb}
           open
           onOpenChange={(open) => !open && setRecordPb(null)}

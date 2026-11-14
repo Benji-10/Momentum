@@ -224,3 +224,36 @@ export function routineStepLine(ctx: RoutineStepContext): string {
         : null
   return `Step ${ctx.index}/${ctx.total} · ${title}${status ? ` · ${status}` : ''}`
 }
+
+// ---------------------------------------------------------------------------
+// The explicit routine → step link (set from either editor)
+// ---------------------------------------------------------------------------
+
+export interface RoutineLinkedStepContext {
+  step: GoalStepData
+  /** 1-based position among the goal's steps */
+  index: number
+  total: number
+}
+
+/**
+ * The step this routine is explicitly linked to (its routine trigger points
+ * at this routine) and that isn't done yet — shown on routine rows so the
+ * link is visible even before the step becomes current. `currentStepForRoutine`
+ * covers the current step; this covers the "booked for later" case.
+ */
+export function linkedStepForRoutine(goal: GoalData, routine: RoutineData): RoutineLinkedStepContext | null {
+  const steps = [...goal.steps].sort((a, b) => a.order - b.order)
+  const linked = steps.find((s) => s.trigger === 'routine' && s.routineId === routine.id && s.status !== 'done')
+  if (!linked) return null
+  return {
+    step: linked,
+    index: steps.findIndex((s) => s.id === linked.id) + 1,
+    total: steps.length,
+  }
+}
+
+/** Compact one-liner for a not-yet-current link: "Step 3/5 · First solo". */
+export function linkedStepLine(ctx: RoutineLinkedStepContext): string {
+  return `Step ${ctx.index}/${ctx.total} · ${ctx.step.title}`
+}

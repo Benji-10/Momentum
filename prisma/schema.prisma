@@ -66,6 +66,10 @@ model GoalStep {
   order       Int       @default(0)
   status      String    @default("pending") // pending | in_progress | done
   completedAt DateTime?
+  // optional target date the user wants this step done by (their own
+  // deadline for the step — the routine trigger decides completion, this
+  // decides the "am I on track?" display)
+  dueDate     DateTime?
   // ---- automation: how this step completes --------------------------------
   // "manual"  = ticked by hand (the classic checklist behaviour)
   // "routine" = completes after `triggerCount` check-offs of `routine`
@@ -233,6 +237,8 @@ model SkillNode {
   updatedAt    DateTime   @updatedAt
   milestones   SkillMilestone[]
   focusRoutines RoutineItem[] @relation("RoutineFocus")
+  /// personal-best metrics that feed this checkpoint automatically
+  fedPbs        PersonalBest[] @relation("PbFeedsNode")
 
   @@index([pathId, order])
   @@index([goalId])
@@ -265,7 +271,18 @@ model PersonalBest {
   name      String // e.g. "WPM", "BLD", "5K time"
   unit      String? // e.g. "wpm", "s", "kg"
   direction String   @default("up") // "up" = higher is better | "down" = lower is better
-  history   String   @default("[]") // JSON: [{ id, date, value, note }]
+  history   String   @default("[]") // JSON: [{ id, date, value, note, creditedValue? }]
+  // ---- roadmap link: feed a skill checkpoint from logged attempts ----
+  // nodeId + nodeMode turn this metric into a tree feeder:
+  //   "sum"     — every attempt adds its value to the checkpoint
+  //               (words per session, pages per session, algs learned)
+  //   "average" — the checkpoint MIRRORS the rolling average of the last
+  //               nodeWindow attempts (typing speed climbing toward a bar);
+  //               only for "up" metrics, since checkpoints master at >= target
+  nodeId     String? 
+  node       SkillNode? @relation("PbFeedsNode", fields: [nodeId], references: [id], onDelete: SetNull)
+  nodeMode   String? // "sum" | "average" (null = not linked)
+  nodeWindow Int? // average mode: rolling window (default 3)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -210,6 +210,12 @@ export async function DELETE(_req: Request, { params }: Params) {
     if (!(await ownsGoal(id, auth.user))) return NextResponse.json({ error: 'Goal not found' }, { status: 404 })
     const node = await db.skillNode.findFirst({ where: { id: nodeId, goalId: id } })
     if (!node) return NextResponse.json({ error: 'Node not found' }, { status: 404 })
+    // metrics feeding this checkpoint stop feeding it (the FK also SET NULLs,
+    // but the mode/window columns would dangle — clear them explicitly)
+    await db.personalBest.updateMany({
+      where: { goalId: id, nodeId },
+      data: { nodeId: null, nodeMode: null, nodeWindow: null },
+    })
     await db.skillNode.delete({ where: { id: nodeId } })
     // compact orders within the path
     const siblings = await db.skillNode.findMany({ where: { pathId: node.pathId }, orderBy: { order: 'asc' } })

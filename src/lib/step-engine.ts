@@ -176,3 +176,70 @@ export async function undoStepAdvance(stepId: string): Promise<StepAdvance | nul
   })
   return { stepId: step.id, title: step.title, via: (step.trigger ?? 'routine') as 'routine' | 'metric' }
 }
+
+// ---------------------------------------------------------------------------
+// Routine → step linking (the routine side of step automation)
+// ---------------------------------------------------------------------------
+
+export interface StepLinkOutcome {
+  /** the step now counting this routine's check-offs (null = none) */
+  linked: { id: string; title: string } | null
+  /** steps whose routine trigger pointed here and were reset to a manual
+  *  tick — a routine works toward one step at a time from its own editor */
+  unlinked: { id: string; title: string }[]
+}
+
+/**
+ * Configure which plan step a routine works toward, from the routine's own
+ * editor (the step editor offers the same link from the other side).
+ *
+ *   stepId null  — unlink: every step counting this routine's check-offs goes
+ *                  back to a manual tick (same semantics as deleting the
+ *                  routine — the user's setup never changes behind their back)
+ *   stepId set   — that step's trigger becomes "routine": `count` check-offs
+ *                  (kept when omitted) complete it, its metric config clears
+ *                  (switching kinds, like the step PATCH route), and any
+ *                  OTHER step still pointing at this routine resets to manual
+ *
+ * Ends with an evaluation: existing check-offs may complete the step right
+ * away, exactly like configuring the trigger from the step editor.
+ */
+export async function linkRoutineToStep(
+  goalId: string,
+  routineId: string,
+  stepId: string | null,
+  count?: number | null,
+): Promise<StepLinkOutcome> {
+  const unlinked: { id: string; title: string }[] = []
+  const pointing = await db.goalStep.findMany({ where: { goalId, routineId, trigger: 'routine' } })
+  for (const s of pointing) {
+    if (s.id === stepId) continue // the one being (re)linked stays
+    await db.goalStep.update({ where: { id: s.id }, data: { trigger: 'manual', routineId: null } })
+    unlinked.push({ id: s.id, title: s.title })
+  }
+
+  let linked: { id: string; title: string } | null = null
+  if (stepId) {
+    const step = await db.goalStep.findFirst({ where: { id: stepId, goalId } })
+    if (step) {
+      await db.goalStep.update({
+        where: { id: step.id },
+        data: {
+          trigger: 'routine',
+          routineId,
+          triggerCount: Math.min(999, Math.max(1, Math.round(count ?? step.triggerCount ?? 1))),
+          // switching kinds clears the metric fields (mirrors the step route)
+          metricName: null,
+          metricWindow: null,
+          metricOp: null,
+          metricValue: null,
+        },
+      })
+      linked = { id: step.id, title: step.title }
+    }
+  }
+
+  // existing check-offs may already complete the (re)linked step
+  await evaluateStepTriggers(goalId)
+  return { linked, unlinked }
+}

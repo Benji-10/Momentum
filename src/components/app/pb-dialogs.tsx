@@ -1,11 +1,12 @@
 'use client'
 
-import { useState } from 'react'
-import { ArrowDown, ArrowUp, Check, Loader2, Minus, Pencil, Plus, Trash2, Trophy } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import { ArrowDown, ArrowUp, Check, Loader2, Minus, Pencil, Plus, Target, Trash2, Trophy } from 'lucide-react'
 import { toast } from 'sonner'
-import type { GoalData, PersonalBestData, PbRecordData } from '@/lib/types'
+import type { GoalData, PbNodeCreditData, PersonalBestData, PbRecordData } from '@/lib/types'
 import { formatNumber } from '@/lib/goal-math'
 import { beatsPb, currentPb, sortedRecords } from '@/lib/pb-math'
+import { buildSkillMap } from '@/lib/skill-tree'
 import { dayKeyAgo, dayKeyOf, getAppTimezone, isoForDayKey, todayDayKey } from '@/lib/app-time'
 import { useAddPb, useAddPbRecord, useDeletePbRecord, useUpdatePb, useUpdatePbRecord } from '@/hooks/use-goals'
 import { Button } from '@/components/ui/button'
@@ -22,11 +23,192 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 
 /** Today in the app timezone. */
 function todayStr(): string {
   return todayDayKey()
+}
+
+/** The skill checkpoint a PB feeds, if its link still resolves. */
+export function pbFedNode(goal: GoalData, pb: PersonalBestData) {
+  if (!pb.nodeId) return null
+  for (const p of goal.skillPaths) {
+    const node = p.nodes.find((n) => n.id === pb.nodeId)
+    if (node) return { node, path: p }
+  }
+  return null
+}
+
+/** What a logged attempt did to the linked checkpoint — as toasts. */
+export function toastNodeCredit(nc: PbNodeCreditData | null | undefined) {
+  if (!nc) return
+  if (nc.skipped === 'locked') {
+    toast(`${nc.nodeTitle} is still locked`, {
+      description: 'This metric feeds the checkpoint once it unlocks.',
+    })
+    return
+  }
+  if (nc.skipped === 'short-window') {
+    toast(`${nc.nodeTitle} · avg ${formatNumber(nc.average ?? 0)}${nc.nodeUnit ? ` ${nc.nodeUnit}` : ''}`, {
+      description: `The checkpoint starts tracking once the average has all ${nc.window} attempts — ${nc.attempts} so far.`,
+    })
+    return
+  }
+  if (nc.skipped) return // mastered or missing — nothing new to say
+  if (nc.mode === 'sum' && nc.delta > 0) {
+    toast.success(`${nc.nodeTitle} +${formatNumber(nc.delta)}${nc.nodeUnit ? ` ${nc.nodeUnit}` : ''}`, {
+      description: 'The attempt fed your roadmap checkpoint.',
+    })
+  } else if (nc.mode === 'average' && nc.average != null) {
+    toast.success(`${nc.nodeTitle} · avg ${formatNumber(nc.average)}${nc.nodeUnit ? ` ${nc.nodeUnit}` : ''}`, {
+      description: `The checkpoint tracks your rolling average — ${formatNumber(nc.value)}/${formatNumber(nc.target)}.`,
+    })
+  }
+  if (nc.mastered) {
+    toast.success(`Checkpoint mastered — ${nc.nodeTitle} ⭐`, {
+      description: 'The roadmap moves on. Time for the next one?',
+    })
+  }
+}
+
+/** The goal's checkpoints grouped by path, for the feed-a-checkpoint picker. */
+function nodeGroupsOf(goal: GoalData) {
+  const map = buildSkillMap(goal)
+  return map.paths.map((p) => ({
+    title: p.path.title,
+    icon: p.path.icon,
+    nodes: p.nodes.map((v) => ({
+      id: v.node.id,
+      label: v.node.title,
+      locked: v.locked && v.status !== 'mastered',
+      mastered: v.status === 'mastered',
+    })),
+  }))
+}
+
+/**
+ * The roadmap link editor shared by the add + edit metric dialogs: which
+ * checkpoint the metric feeds, and how — every attempt adds its value, or
+ * the checkpoint tracks the rolling average (higher-is-better metrics only,
+ * since checkpoints master at >= target).
+ */
+function NodeLinkSection({
+  goal,
+  direction,
+  nodeId,
+  onNodeId,
+  mode,
+  onMode,
+  win,
+  onWin,
+}: {
+  goal: GoalData
+  direction: 'up' | 'down'
+  nodeId: string
+  onNodeId: (v: string) => void
+  mode: 'sum' | 'average'
+  onMode: (m: 'sum' | 'average') => void
+  win: string
+  onWin: (w: string) => void
+}) {
+  const groups = useMemo(() => nodeGroupsOf(goal), [goal])
+  const hasNodes = groups.some((g) => g.nodes.length > 0)
+  if (!hasNodes) return null
+  const picked = nodeId !== 'none'
+  const winNum = Math.min(50, Math.max(1, Math.round(Number(win) || 3)))
+  return (
+    <div className="space-y-2 rounded-lg border border-dashed p-2.5">
+      <Label className="flex items-center gap-1.5 text-xs font-medium">
+        <Target className="h-3.5 w-3.5 text-primary" /> Feed a roadmap checkpoint{' '}
+        <span className="font-normal text-muted-foreground">(optional)</span>
+      </Label>
+      <Select value={nodeId} onValueChange={onNodeId}>
+        <SelectTrigger className="h-9 w-full text-xs" aria-label="Feed a roadmap checkpoint">
+          <SelectValue placeholder="Pick a checkpoint…" />
+        </SelectTrigger>
+        <SelectContent className="max-h-56">
+          <SelectItem value="none">Don&apos;t feed the roadmap</SelectItem>
+          {groups.map((g) => (
+            <SelectGroup key={g.title}>
+              <SelectLabel>
+                {g.icon} {g.title}
+              </SelectLabel>
+              {g.nodes.map((n) => (
+                <SelectItem key={n.id} value={n.id} disabled={n.locked}>
+                  {n.label}
+                  {n.mastered ? ' ✓' : n.locked ? ' (locked)' : ''}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          ))}
+        </SelectContent>
+      </Select>
+      {picked && (
+        <>
+          <div role="radiogroup" aria-label="How attempts feed the checkpoint" className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={mode === 'sum'}
+              onClick={() => onMode('sum')}
+              className={cn(
+                'rounded-lg border-2 p-2 text-left transition-colors',
+                mode === 'sum' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground/40',
+              )}
+            >
+              <span className="block text-xs font-semibold leading-tight">Every attempt adds</span>
+              <span className="mt-0.5 block text-[11px] leading-tight text-muted-foreground">
+                words · pages · algs — the value counts toward the target
+              </span>
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={mode === 'average'}
+              disabled={direction === 'down'}
+              onClick={() => onMode('average')}
+              className={cn(
+                'rounded-lg border-2 p-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                mode === 'average' ? 'border-primary bg-primary/5' : 'border-border hover:border-muted-foreground/40',
+              )}
+            >
+              <span className="block text-xs font-semibold leading-tight">Tracks the average</span>
+              <span className="mt-0.5 block text-[11px] leading-tight text-muted-foreground">
+                speed · score — the checkpoint shows your rolling average
+                {direction === 'down' ? ' (higher-is-better only)' : ''}
+              </span>
+            </button>
+          </div>
+          {mode === 'average' && (
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-muted-foreground">Average of the last</span>
+              <Input
+                type="number"
+                min={1}
+                max={50}
+                value={win}
+                onChange={(e) => onWin(e.target.value)}
+                inputMode="numeric"
+                className="h-8 w-16 px-2"
+                aria-label="Rolling-average window"
+              />
+              <span className="text-[11px] text-muted-foreground">attempt{winNum === 1 ? '' : 's'}</span>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
 }
 
 /**
@@ -46,6 +228,10 @@ export function AddPbMetricDialog({
   const [unit, setUnit] = useState('')
   const [direction, setDirection] = useState<'up' | 'down'>('up')
   const [firstValue, setFirstValue] = useState('')
+  // roadmap link: which checkpoint this metric feeds (if any)
+  const [nodeId, setNodeId] = useState('none')
+  const [nodeMode, setNodeMode] = useState<'sum' | 'average'>('sum')
+  const [nodeWindow, setNodeWindow] = useState('3')
   const addPb = useAddPb(goal.id)
 
   function save() {
@@ -55,22 +241,32 @@ export function AddPbMetricDialog({
       return
     }
     const v = parseFloat(firstValue)
+    const winNum = Math.min(50, Math.max(1, Math.round(Number(nodeWindow) || 3)))
     addPb.mutate(
       {
         name: n,
         unit: unit.trim() || null,
         direction,
         firstValue: !isNaN(v) && v > 0 ? v : null,
+        nodeId: nodeId !== 'none' ? nodeId : null,
+        nodeMode: nodeId !== 'none' ? nodeMode : null,
+        nodeWindow: nodeId !== 'none' && nodeMode === 'average' ? winNum : null,
       },
       {
-        onSuccess: () => {
+        onSuccess: (res) => {
           toast.success(`Tracking ${n} 🏆`, {
-            description: direction === 'up' ? 'Higher is better — every attempt shows on the summary.' : 'Lower is better — every attempt shows on the summary.',
+            description:
+              direction === 'up'
+                ? 'Higher is better — every attempt shows on the summary.'
+                : 'Lower is better — every attempt shows on the summary.',
           })
+          toastNodeCredit(res.nodeCredit)
           setName('')
           setUnit('')
           setFirstValue('')
           setDirection('up')
+          setNodeId('none')
+          setNodeMode('sum')
           onOpenChange(false)
         },
         onError: (e) => toast.error('Could not add the metric', { description: e.message }),
@@ -123,7 +319,11 @@ export function AddPbMetricDialog({
               <button
                 key={opt.key}
                 type="button"
-                onClick={() => setDirection(opt.key)}
+                onClick={() => {
+                  setDirection(opt.key)
+                  // the average mirror needs a "up" metric — flip back to sum
+                  if (opt.key === 'down') setNodeMode('sum')
+                }}
                 aria-pressed={direction === opt.key}
                 className={cn(
                   'flex flex-col items-start gap-0.5 rounded-xl border px-3 py-2.5 text-left transition-colors',
@@ -152,6 +352,18 @@ export function AddPbMetricDialog({
             onKeyDown={(e) => e.key === 'Enter' && save()}
             aria-label="Current best (optional)"
           />
+
+          {/* roadmap link — feed a checkpoint from every logged attempt */}
+          <NodeLinkSection
+            goal={goal}
+            direction={direction}
+            nodeId={nodeId}
+            onNodeId={setNodeId}
+            mode={nodeMode}
+            onMode={setNodeMode}
+            win={nodeWindow}
+            onWin={setNodeWindow}
+          />
         </div>
 
         <div className="flex justify-end">
@@ -164,15 +376,16 @@ export function AddPbMetricDialog({
   )
 }
 
-/** Edit an existing PB metric — rename it, change the unit, or flip which
- *  direction is better. The logged history is untouched. */
+/** Edit an existing PB metric — rename it, change the unit, flip which
+ *  direction is better, or change which roadmap checkpoint it feeds. The
+ *  logged history is untouched. */
 export function EditPbDialog({
-  goalId,
+  goal,
   pb,
   open,
   onOpenChange,
 }: {
-  goalId: string
+  goal: GoalData
   pb: PersonalBestData | null
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -180,7 +393,11 @@ export function EditPbDialog({
   const [name, setName] = useState(pb?.name ?? '')
   const [unit, setUnit] = useState(pb?.unit ?? '')
   const [direction, setDirection] = useState<'up' | 'down'>(pb?.direction ?? 'up')
-  const updatePb = useUpdatePb(goalId)
+  // roadmap link — seeded from the metric, saved with the patch
+  const [nodeId, setNodeId] = useState<string>(pb?.nodeId ?? 'none')
+  const [nodeMode, setNodeMode] = useState<'sum' | 'average'>((pb?.nodeMode as 'sum' | 'average') ?? 'sum')
+  const [nodeWindow, setNodeWindow] = useState(String(pb?.nodeWindow ?? 3))
+  const updatePb = useUpdatePb(goal.id)
 
   if (!pb) return null
 
@@ -191,11 +408,23 @@ export function EditPbDialog({
       toast.error('Give the metric a name')
       return
     }
+    const winNum = Math.min(50, Math.max(1, Math.round(Number(nodeWindow) || 3)))
     updatePb.mutate(
-      { pbId: pb.id, patch: { name: n, unit: unit.trim() || null, direction } },
       {
-        onSuccess: () => {
+        pbId: pb.id,
+        patch: {
+          name: n,
+          unit: unit.trim() || null,
+          direction,
+          nodeId: nodeId !== 'none' ? nodeId : null,
+          nodeMode: nodeId !== 'none' ? nodeMode : null,
+          nodeWindow: nodeId !== 'none' && nodeMode === 'average' ? winNum : null,
+        },
+      },
+      {
+        onSuccess: (res) => {
           toast.success('Metric updated')
+          toastNodeCredit(res.nodeCredit)
           onOpenChange(false)
         },
         onError: (e) => toast.error('Could not update the metric', { description: e.message }),
@@ -254,7 +483,11 @@ export function EditPbDialog({
               <button
                 key={opt.key}
                 type="button"
-                onClick={() => setDirection(opt.key)}
+                onClick={() => {
+                  setDirection(opt.key)
+                  // the average mirror needs a "up" metric — flip back to sum
+                  if (opt.key === 'down') setNodeMode('sum')
+                }}
                 aria-pressed={direction === opt.key}
                 className={cn(
                   'flex flex-col items-start gap-0.5 rounded-xl border px-3 py-2.5 text-left transition-colors',
@@ -271,6 +504,18 @@ export function EditPbDialog({
               </button>
             ))}
           </div>
+
+          {/* roadmap link — feed a checkpoint from every logged attempt */}
+          <NodeLinkSection
+            goal={goal}
+            direction={direction}
+            nodeId={nodeId}
+            onNodeId={setNodeId}
+            mode={nodeMode}
+            onMode={setNodeMode}
+            win={nodeWindow}
+            onWin={setNodeWindow}
+          />
         </div>
 
         <DialogFooter>
@@ -286,14 +531,19 @@ export function EditPbDialog({
   )
 }
 
-/** Log an attempt at a PB metric — tells you straight away if it's a new PB. */
+/** Log an attempt at a PB metric — tells you straight away if it's a new
+ *  PB, and feeds the linked roadmap checkpoint when one is configured. */
 export function RecordPbDialog({
   goalId,
+  goal,
   pb,
   open,
   onOpenChange,
 }: {
   goalId: string
+  /** the owning goal, when the caller has it — used to name the checkpoint
+   *  this metric feeds (the line is skipped without it) */
+  goal?: GoalData
   pb: PersonalBestData | null
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -307,6 +557,7 @@ export function RecordPbDialog({
   const best = currentPb(pb)
   const v = parseFloat(value)
   const isRecord = !isNaN(v) && v > 0 && beatsPb(pb, v)
+  const fed = goal ? pbFedNode(goal, pb) : null
 
   function save() {
     if (!pb) return
@@ -336,6 +587,8 @@ export function RecordPbDialog({
               description: 'It completed itself from your activity — the plan moved on.',
             })
           }
+          // the linked checkpoint got its share of the attempt
+          toastNodeCredit(res.nodeCredit)
           setValue('')
           setNote('')
           setDate(todayStr())
@@ -359,6 +612,18 @@ export function RecordPbDialog({
               : 'Log your first result to set the baseline.'}
           </DialogDescription>
         </DialogHeader>
+
+        {fed && (
+          <p className="flex items-start gap-1.5 rounded-lg bg-primary/8 px-2 py-1.5 text-[11px] font-medium text-primary">
+            <Target className="mt-px h-3 w-3 shrink-0" />
+            <span>
+              Feeds {fed.node.icon} {fed.node.title} —{' '}
+              {pb.nodeMode === 'average'
+                ? `the checkpoint tracks your average of the last ${pb.nodeWindow ?? 3} attempts`
+                : 'every attempt adds its value to the checkpoint'}
+            </span>
+          </p>
+        )}
 
         <div className="space-y-3">
           <div className="flex gap-2">
