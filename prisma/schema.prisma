@@ -45,6 +45,10 @@ model Goal {
   weeklyTarget Float? // optional weekly commitment (mainly for plan goals)
   deadline     DateTime?
   status       String         @default("active") // active | archived
+  // per-goal view preference: completed steps are hidden from the plan list
+  // (a "checklist" goal stays focused; off by default so goal plans keep
+  // showing how far you've come)
+  hideDoneSteps Boolean        @default(false)
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
   steps        GoalStep[]
@@ -109,6 +113,14 @@ model ProgressLog {
   // checkpoint's unit, or a duration routine's minutes). Null = the goal's
   // unit, so pre-existing rows keep displaying exactly as before.
   unit      String?
+  // Checkpoint this entry credits (manual "counts toward 📗 Pages" logs and
+  // skill-map quick-adds). Plain string, no FK — deleting the checkpoint
+  // keeps the history row (the delete route nulls this). Bookkeeping for
+  // edits/deletes lives in creditedValue, mirroring RoutineDone.
+  nodeId          String?
+  // How much this entry actually added to that checkpoint (amount, clamped
+  // by the target at write time) — amount edits adjust by the difference.
+  creditedValue   Float?
   createdAt DateTime @default(now())
 
   @@index([goalId, date])

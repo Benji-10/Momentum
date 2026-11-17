@@ -216,6 +216,13 @@ export async function DELETE(_req: Request, { params }: Params) {
       where: { goalId: id, nodeId },
       data: { nodeId: null, nodeMode: null, nodeWindow: null },
     })
+    // history entries that credited this checkpoint keep their row — the
+    // amount stays true history — but the credit link is detached, so later
+    // edits leave the (soon gone) checkpoint alone
+    await db.progressLog.updateMany({
+      where: { goalId: id, nodeId },
+      data: { nodeId: null, creditedValue: null },
+    })
     await db.skillNode.delete({ where: { id: nodeId } })
     // compact orders within the path
     const siblings = await db.skillNode.findMany({ where: { pathId: node.pathId }, orderBy: { order: 'asc' } })

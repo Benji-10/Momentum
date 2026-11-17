@@ -70,6 +70,7 @@ export async function POST(req: Request) {
           unit: g.unit,
           weeklyTarget: g.weeklyTarget,
           deadline: g.deadline ? new Date(g.deadline) : null,
+          hideDoneSteps: g.hideDoneSteps,
           steps: g.steps.length
             ? {
                 create: g.steps.map((s, i) => ({

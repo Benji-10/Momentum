@@ -4,9 +4,11 @@ import { useState } from 'react'
 import { CalendarDays, Check, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData } from '@/lib/types'
-import { formatNumber } from '@/lib/goal-math'
+import { formatNumber, isSessionCountingGoal } from '@/lib/goal-math'
 import { dayKeyAgo, isoForDayKey, todayDayKey } from '@/lib/app-time'
+import { logAmountLabel } from '@/lib/recording'
 import { useAddLog, useUpdateNode } from '@/hooks/use-goals'
+import { EditLogDialog, type EditLogTarget } from '@/components/app/edit-log-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -193,30 +195,73 @@ export function QuickLogPopover({
  * Quick progress add for one skill-tree checkpoint — "today's focus" rows on
  * the dashboard use this, so ongoing targets are actionable right there
  * (they advance by logged progress, not by a checkbox).
+ *
+ * On session-counting plan goals the add is a dated, editable log entry that
+ * credits the checkpoint; other goals keep the direct checkpoint add (their
+ * ledger sums one unit, so a checkpoint-unit entry has no home in it).
  */
 export function NodeQuickAddPopover({
-  goalId,
+  goal,
   nodeId,
   nodeTitle,
+  nodeIcon,
   unit,
   children,
   align = 'end',
 }: {
-  goalId: string
+  goal: GoalData
   nodeId: string
   nodeTitle: string
+  nodeIcon?: string
   unit?: string | null
   children: React.ReactNode
   align?: 'start' | 'center' | 'end'
 }) {
   const [open, setOpen] = useState(false)
   const [amount, setAmount] = useState('')
-  const updateNode = useUpdateNode(goalId)
+  /** the entry being fine-tuned right after logging it */
+  const [editTarget, setEditTarget] = useState<EditLogTarget | null>(null)
+  const updateNode = useUpdateNode(goal.id)
+  const addLog = useAddLog(goal.id)
+  const viaLog = isSessionCountingGoal(goal)
+  const pending = viaLog ? addLog.isPending : updateNode.isPending
 
   function submit(preset?: number) {
     const n = preset != null ? preset : parseFloat(amount)
     if (isNaN(n) || n <= 0) {
       toast.error('Enter an amount greater than 0')
+      return
+    }
+    if (viaLog) {
+      addLog.mutate(
+        { amount: n, nodeId, unit: unit ?? null },
+        {
+          onSuccess: (res) => {
+            toast.success(`Logged ${logAmountLabel(n, unit ?? 'units')}`, {
+              description: 'A dated entry in this goal’s history — edit the amount or day any time.',
+              action: res.log
+                ? {
+                    label: 'Edit',
+                    onClick: () =>
+                      setEditTarget({
+                        goalId: goal.id,
+                        logId: res.log.id,
+                        amount: res.log.amount,
+                        unit: unit ?? 'units',
+                        title: nodeTitle,
+                        note: res.log.note,
+                        day: todayDayKey(),
+                        creditLabel: nodeIcon ? `${nodeIcon} ${nodeTitle}` : nodeTitle,
+                      }),
+                  }
+                : undefined,
+            })
+            setAmount('')
+            setOpen(false)
+          },
+          onError: (e) => toast.error('Could not add progress', { description: e.message }),
+        },
+      )
       return
     }
     updateNode.mutate(
@@ -236,46 +281,57 @@ export function NodeQuickAddPopover({
   }
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild onClick={(e) => e.stopPropagation()}>
-        {children}
-      </PopoverTrigger>
-      <PopoverContent align={align} className="w-64 p-3" onClick={(e) => e.stopPropagation()}>
-        <div className="text-sm font-semibold">Add progress</div>
-        <div className="mt-0.5 truncate text-xs text-muted-foreground">{nodeTitle}</div>
-        <div className="mt-2.5 flex gap-2">
-          <Input
-            type="number"
-            min={0}
-            step="any"
-            inputMode="decimal"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submit()}
-            placeholder={unit ? `e.g. 10 ${unit}` : 'e.g. 10'}
-            autoFocus
-            aria-label="Amount"
-            className="w-28"
-          />
-          <Button size="sm" className="flex-1" onClick={() => submit()} disabled={updateNode.isPending || !amount}>
-            {updateNode.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-            Add
-          </Button>
-        </div>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {[5, 10, 25].map((q) => (
-            <button
-              key={q}
-              type="button"
-              onClick={() => submit(q)}
-              disabled={updateNode.isPending}
-              className="rounded-lg border bg-muted/40 px-2.5 py-1 text-xs font-semibold tabular-nums transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-primary disabled:opacity-50"
-            >
-              +{q} {unit || ''}
-            </button>
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
+    <>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild onClick={(e) => e.stopPropagation()}>
+          {children}
+        </PopoverTrigger>
+        <PopoverContent align={align} className="w-64 p-3" onClick={(e) => e.stopPropagation()}>
+          <div className="text-sm font-semibold">{viaLog ? 'Log progress' : 'Add progress'}</div>
+          <div className="mt-0.5 truncate text-xs text-muted-foreground">{nodeTitle}</div>
+          <div className="mt-2.5 flex gap-2">
+            <Input
+              type="number"
+              min={0}
+              step="any"
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && submit()}
+              placeholder={unit ? `e.g. 10 ${unit}` : 'e.g. 10'}
+              autoFocus
+              aria-label="Amount"
+              className="w-28"
+            />
+            <Button size="sm" className="flex-1" onClick={() => submit()} disabled={pending || !amount}>
+              {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              {viaLog ? 'Log' : 'Add'}
+            </Button>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {[5, 10, 25].map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => submit(q)}
+                disabled={pending}
+                className="rounded-lg border bg-muted/40 px-2.5 py-1 text-xs font-semibold tabular-nums transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-primary disabled:opacity-50"
+              >
+                +{q} {unit || ''}
+              </button>
+            ))}
+          </div>
+          {viaLog && (
+            <p className="mt-2 text-[10px] leading-snug text-muted-foreground">
+              Becomes a dated entry in {goal.title}&rsquo;s history — it advances this checkpoint and counts as one
+              session.
+            </p>
+          )}
+        </PopoverContent>
+      </Popover>
+
+      {/* fine-tune the entry right after logging it (wrong amount / day) */}
+      <EditLogDialog key={editTarget?.logId ?? 'none'} target={editTarget} onClose={() => setEditTarget(null)} />
+    </>
   )
 }

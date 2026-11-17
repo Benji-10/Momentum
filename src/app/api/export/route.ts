@@ -49,6 +49,7 @@ export async function GET() {
           unit: g.unit,
           weeklyTarget: g.weeklyTarget,
           deadline: g.deadline ? toDateString(g.deadline) : null,
+          hideDoneSteps: g.hideDoneSteps,
           steps: g.steps.map((s) => {
             const out: {
               title: string

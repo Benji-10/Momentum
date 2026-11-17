@@ -32,7 +32,7 @@ import { toast } from 'sonner'
 import { useTheme } from 'next-themes'
 import type { AppearanceSettings, BackgroundConfig, CustomTheme, SurfaceTreatment } from '@/lib/appearance/types'
 import { DEFAULT_APPEARANCE } from '@/lib/appearance/types'
-import { customThemeCss, isCustomThemeDark, isPaletteKey, migrateThemeKey, paletteMeta } from '@/lib/appearance/palettes'
+import { customThemeCss, isCustomThemeDark, isPaletteKey, migrateThemeKey, paletteMeta, statusBarColorFor } from '@/lib/appearance/palettes'
 import { defaultBackgroundConfig } from '@/lib/appearance/backgrounds'
 import { useSettings, useMe, useUpdateSettings } from '@/hooks/use-auth'
 import { loadSettingsCache, saveSettingsCache } from '@/lib/offline'
@@ -105,6 +105,20 @@ function applyCustomStyle(custom: CustomTheme | null): void {
   el.textContent = customThemeCss(custom)
 }
 
+/** Keep the PWA status bar (theme-color meta) on the active theme's real
+ *  background — created pre-paint by the layout boot script, refreshed here
+ *  whenever the appearance changes (local edits + cross-device sync). */
+function syncThemeColorMeta(theme: string, custom: CustomTheme | null): void {
+  const color = statusBarColorFor(theme, custom)
+  let m = document.querySelector('meta[name="theme-color"]') as HTMLMetaElement | null
+  if (!m) {
+    m = document.createElement('meta')
+    m.setAttribute('name', 'theme-color')
+    document.head.appendChild(m)
+  }
+  m.setAttribute('content', color)
+}
+
 /** Apply one appearance to the document root (no React state involved). */
 export function applyAppearanceToDom(appearance: AppearanceSettings, setTheme: (k: string) => void): void {
   const root = document.documentElement
@@ -115,6 +129,7 @@ export function applyAppearanceToDom(appearance: AppearanceSettings, setTheme: (
       ? isCustomThemeDark(appearance.custom)
       : (paletteMeta(appearance.theme)?.dark ?? false)
   root.dataset.mode = dark ? 'dark' : 'light'
+  syncThemeColorMeta(appearance.theme, appearance.custom)
   if (appearance.surface !== 'solid') root.dataset.surface = appearance.surface
   else delete root.dataset.surface
 }

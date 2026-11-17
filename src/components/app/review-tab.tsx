@@ -383,7 +383,8 @@ function GoalReviewCard({
             <div className="rounded-xl border border-dashed p-6 text-center">
               <Trophy className="mx-auto h-5 w-5 text-muted-foreground/60" />
               <p className="mt-2 text-sm text-muted-foreground">
-                No metrics yet — track a personal best (WPM, 5K time, heaviest lift…).
+                No metrics yet — track a personal best (WPM, 5K time, heaviest lift…) and optionally feed a roadmap
+                checkpoint straight from it.
               </p>
               <Button
                 variant="outline"

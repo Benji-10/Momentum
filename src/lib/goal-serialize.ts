@@ -65,6 +65,7 @@ export function serializeGoal(goal: GoalWithRelations): GoalData {
     weeklyTarget: goal.weeklyTarget,
     deadline: goal.deadline?.toISOString() ?? null,
     status: goal.status as GoalData['status'],
+    hideDoneSteps: goal.hideDoneSteps,
     createdAt: goal.createdAt.toISOString(),
     updatedAt: goal.updatedAt.toISOString(),
     steps: goal.steps.map((s) => ({
@@ -93,6 +94,7 @@ export function serializeGoal(goal: GoalWithRelations): GoalData {
       amount: l.amount,
       note: l.note,
       unit: l.unit ?? null,
+      nodeId: l.nodeId ?? null,
       createdAt: l.createdAt.toISOString(),
     })),
     notes: goal.notes.map((n) => ({

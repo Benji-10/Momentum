@@ -16,6 +16,7 @@ const updateGoalSchema = z.object({
   weeklyTarget: z.number().positive().nullable().optional(),
   deadline: z.string().datetime().nullable().optional(),
   status: z.enum(['active', 'archived']).optional(),
+  hideDoneSteps: z.boolean().optional(),
 })
 
 type Params = { params: Promise<{ id: string }> }
@@ -59,6 +60,7 @@ export async function PATCH(req: Request, { params }: Params) {
         ...(d.weeklyTarget !== undefined ? { weeklyTarget: d.weeklyTarget } : {}),
         ...(d.deadline !== undefined ? { deadline: d.deadline ? new Date(d.deadline) : null } : {}),
         ...(d.status !== undefined ? { status: d.status } : {}),
+        ...(d.hideDoneSteps !== undefined ? { hideDoneSteps: d.hideDoneSteps } : {}),
       },
       include: goalInclude,
     })

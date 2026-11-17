@@ -61,6 +61,9 @@ export interface ProgressLogData {
   /** The unit this amount was recorded in ("words", "min", …) — null = the
    * goal's own unit (manual entries and pre-v1.5 check-offs). */
   unit: string | null
+  /** The skill checkpoint this entry credits (manual "counts toward" logs
+   * and skill-map quick-adds) — null = the goal's own ledger only. */
+  nodeId: string | null
   createdAt: string
 }
 
@@ -216,6 +219,9 @@ export interface GoalData {
   weeklyTarget: number | null
   deadline: string | null
   status: GoalArchivedStatus
+  /** per-goal view preference: hide completed steps in the plan list
+   *  (checklist goals stay focused; off by default) */
+  hideDoneSteps: boolean
   createdAt: string
   updatedAt: string
   steps: GoalStepData[]

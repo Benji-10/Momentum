@@ -283,7 +283,7 @@ function RoutineManageRow({
               color:
                 stats.adherencePct >= 70 ? 'var(--success)' : stats.adherencePct >= 40 ? 'var(--warning)' : 'var(--muted-foreground)',
             }}
-            title={routine.optional ? 'Extra credit — nothing to adhere to' : 'Recent adherence — forgiven sessions don\'t count against you'}
+            title={routine.optional ? 'Extra credit — nothing to adhere to' : 'Recent adherence (last 4 weeks) — forgiven sessions count too, so the number stays honest; they never pile up as catch-up work'}
           >
             {routine.optional ? '—' : `${stats.adherencePct}%`}
           </span>
@@ -576,7 +576,7 @@ export function ScheduleTab({
             {weekForgiven > 0 && (
               <span className="mt-0.5 block text-xs text-muted-foreground">
                 🌿 {weekForgiven} session{weekForgiven === 1 ? '' : 's'} from further back have been quietly forgiven —
-                they don&apos;t count against you.
+                they never pile up as catch-up work (your adherence score still counts them, so it stays honest).
               </span>
             )}
           </div>

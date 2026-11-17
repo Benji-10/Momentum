@@ -341,8 +341,19 @@ export function NodeEditDialog({
                   </span>
                 </div>
               ))}
+              {feeders.routines.length > 0 && (
+                <p className="text-[10px] leading-snug text-muted-foreground/70">
+                  Routine links live in the routine editor — Schedule tab → tap the routine.
+                </p>
+              )}
+              {feeders.metrics.length > 0 && (
+                <p className="text-[10px] leading-snug text-muted-foreground/70">
+                  Metric links live with the metric — Review tab → Bests view → its pencil.
+                </p>
+              )}
               <p className="text-[10px] leading-snug text-muted-foreground/70">
-                Manage these links from the routine editor or the metric&apos;s pencil on the Review tab.
+                Manual adds on the checkpoint (skill map + buttons, Log tab “counts toward”) become dated log entries —
+                edit or remove them from the Log tab.
               </p>
             </div>
           )}

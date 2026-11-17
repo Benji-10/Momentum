@@ -81,6 +81,7 @@ interface UpdateGoalPatch {
   weeklyTarget?: number | null
   deadline?: string | null
   status?: 'active' | 'archived'
+  hideDoneSteps?: boolean
 }
 
 export function useUpdateGoal() {
@@ -165,10 +166,28 @@ export function useDeleteStep(goalId: string | null) {
 export function useAddLog(goalId: string | null) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ amount, note, date }: { amount: number; note?: string | null; date?: string }) =>
-      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/logs`, {
+    mutationFn: ({
+      amount,
+      note,
+      date,
+      unit,
+      nodeId,
+    }: {
+      amount: number
+      note?: string | null
+      date?: string
+      /** the unit the amount is in — defaults to the goal's own on the server */
+      unit?: string | null
+      /** credit this skill checkpoint with the amount (session-counting plan
+       *  goals only; the server validates lock/mastery/derivation) */
+      nodeId?: string | null
+    }) =>
+      jsonFetch<{
+        log: { id: string; amount: number; unit: string | null; note: string | null }
+        goal: GoalData | null
+      }>(`/api/goals/${goalId}/logs`, {
         method: 'POST',
-        body: JSON.stringify({ amount, note: note || null, date }),
+        body: JSON.stringify({ amount, note: note || null, date, unit: unit ?? null, nodeId: nodeId ?? null }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
   })

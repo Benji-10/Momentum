@@ -332,6 +332,8 @@ function canonGoal(g: unknown): unknown {
   if (targetValue != null) out.targetValue = targetValue
   const weeklyTarget = toNum(pick(g, ['weeklyTarget', 'perWeek']))
   if (weeklyTarget != null) out.weeklyTarget = weeklyTarget
+  // per-goal view preference — kept as-is when present
+  if (typeof g.hideDoneSteps === 'boolean') out.hideDoneSteps = g.hideDoneSteps
   if (Array.isArray(g.steps)) out.steps = g.steps.filter((s) => s != null).map(canonStep)
   const paths = pick(g, ['paths', 'skillPaths', 'skill_paths', 'maps'])
   if (Array.isArray(paths)) {
@@ -493,6 +495,7 @@ const goalSchema = z.object({
   unit: z.string().max(30).nullish(),
   weeklyTarget: z.number().positive().nullish(),
   deadline: z.string().nullish(), // YYYY-MM-DD or ISO
+  hideDoneSteps: z.boolean().nullish(), // per-goal view preference (hide completed steps)
   steps: z.array(stepSchema).max(100).nullish(),
   paths: z.array(skillPathSchema).max(12).nullish(), // the skill map
   routines: z.array(routineSchema).max(30).nullish(),
@@ -601,6 +604,8 @@ export interface NormalizedGoal {
   unit: string | null
   weeklyTarget: number | null
   deadline: string | null // ISO
+  /** per-goal view preference: hide completed steps in the plan list */
+  hideDoneSteps: boolean
   steps: NormalizedStep[]
   paths: NormalizedSkillPath[]
   routines: NormalizedRoutine[]
@@ -766,6 +771,7 @@ export function normalizeGoal(g: ImportGoalRaw): NormalizedGoal {
     unit: g.unit?.trim() || null,
     weeklyTarget: g.weeklyTarget ?? null,
     deadline: isoFromFlexibleDate(g.deadline ?? null),
+    hideDoneSteps: g.hideDoneSteps === true,
     steps,
     paths,
     routines,

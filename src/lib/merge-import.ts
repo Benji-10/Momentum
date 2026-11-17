@@ -159,6 +159,7 @@ export async function mergeImportGoals(userId: string, goals: ImportGoalRaw[]): 
           unit: n.unit,
           weeklyTarget: n.weeklyTarget,
           deadline: n.deadline ? new Date(n.deadline) : null,
+          hideDoneSteps: n.hideDoneSteps,
         },
       })
       await mergeEntitiesIntoGoal(created.id, g, summary)
@@ -192,6 +193,7 @@ async function mergeGoalLevel(goal: GoalRow, g: ImportGoalRaw): Promise<void> {
   if (g.unit !== undefined) patch.unit = g.unit?.trim() || null
   if (g.weeklyTarget !== undefined) patch.weeklyTarget = g.weeklyTarget ?? null
   if (g.deadline !== undefined) patch.deadline = isoFromFlexibleDate(g.deadline)
+  if (g.hideDoneSteps !== undefined && g.hideDoneSteps !== null) patch.hideDoneSteps = g.hideDoneSteps === true
   if (Object.keys(patch).length > 0) {
     await db.goal.update({ where: { id: goal.id }, data: patch as Prisma.GoalUpdateInput })
   }

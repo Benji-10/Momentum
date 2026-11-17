@@ -34,6 +34,7 @@ CREATE TABLE "Goal" (
     "weeklyTarget" DOUBLE PRECISION,
     "deadline" TIMESTAMP(3),
     "status" TEXT NOT NULL DEFAULT 'active',
+    "hideDoneSteps" BOOLEAN NOT NULL DEFAULT false,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -72,6 +73,8 @@ CREATE TABLE "ProgressLog" (
     "amount" DOUBLE PRECISION NOT NULL DEFAULT 0,
     "note" TEXT,
     "unit" TEXT,
+    "nodeId" TEXT,
+    "creditedValue" DOUBLE PRECISION,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "ProgressLog_pkey" PRIMARY KEY ("id")
@@ -446,6 +449,31 @@ END $$;`,
     column: 'nodeWindow',
     sql: `ALTER TABLE "PersonalBest" ADD COLUMN IF NOT EXISTS "nodeWindow" INTEGER;`,
     sqliteType: 'INTEGER',
+  },
+  {
+    // v1.7: checkpoint-crediting log entries — a manual log can advance a
+    // skill checkpoint (nodeId) with exact bookkeeping (creditedValue), so
+    // skill-map quick-adds and "counts toward" picks in the Log tab become
+    // real, editable, dated history entries instead of raw number pokes
+    // that could never be taken back. Mirrors RoutineDone's ledger: amount
+    // edits adjust the checkpoint by the difference, deletes give it back.
+    table: 'ProgressLog',
+    column: 'nodeId',
+    sql: `ALTER TABLE "ProgressLog" ADD COLUMN IF NOT EXISTS "nodeId" TEXT;`,
+  },
+  {
+    table: 'ProgressLog',
+    column: 'creditedValue',
+    sql: `ALTER TABLE "ProgressLog" ADD COLUMN IF NOT EXISTS "creditedValue" DOUBLE PRECISION;`,
+    sqliteType: 'REAL',
+  },
+  {
+    // v1.8: per-goal view preference — hide completed steps in the plan list
+    // (checklist goals stay focused on what's left; off by default)
+    table: 'Goal',
+    column: 'hideDoneSteps',
+    sql: `ALTER TABLE "Goal" ADD COLUMN IF NOT EXISTS "hideDoneSteps" BOOLEAN NOT NULL DEFAULT false;`,
+    sqliteType: 'BOOLEAN NOT NULL DEFAULT 0',
   },
 ]
 

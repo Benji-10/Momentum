@@ -48,10 +48,12 @@ async function applyNodeDelta(
  *  (e.g. the routine said 2 hours but you only worked 50 minutes, or the
  *  session actually happened on Tuesday).
  *
- *  When the entry is the auto-log of a linked-routine check-off, its amount
- *  is progress in the checkpoint's unit ("words"): editing 10 → 25 advances
- *  the checkpoint by exactly the difference, and undoing the check-off
- *  takes the edited amount back out. */
+ *  Two kinds of entries carry checkpoint bookkeeping, and both adjust by
+ *  exactly the difference when the amount changes:
+ *  - the auto-log of a linked-routine check-off (RoutineDone.creditedValue),
+ *  - a direct checkpoint credit ("counts toward 📗 Pages" / skill-map quick
+ *    adds — ProgressLog.creditedValue). Undoing (delete) takes the credited
+ *    amount back out either way. */
 export async function PATCH(req: Request, { params }: Params) {
   const { id, logId } = await params
   const auth = await requireUser()
@@ -68,8 +70,9 @@ export async function PATCH(req: Request, { params }: Params) {
     const log = await db.progressLog.findFirst({ where: { id: logId, goalId: id } })
     if (!log) return NextResponse.json({ error: 'Log not found' }, { status: 404 })
 
-    // a changed amount on a linked check-off's log moves the checkpoint by
-    // the difference (creditedValue is the amount this session contributed)
+    // a changed amount moves the linked checkpoint by the difference
+    // (creditedValue is the amount this entry contributed) — both for
+    // check-off auto-logs and direct "counts toward" credits
     const newAmount = parsed.data.amount
     if (newAmount != null && Math.abs(newAmount - log.amount) > 1e-9) {
       const done = await db.routineDone.findFirst({
@@ -83,6 +86,16 @@ export async function PATCH(req: Request, { params }: Params) {
           await db.routineDone.update({
             where: { id: done.id },
             data: { creditedValue: done.creditedValue + applied },
+          })
+        }
+      } else if (log.nodeId && log.creditedValue != null) {
+        // direct checkpoint credit — same exact-difference bookkeeping
+        const delta = newAmount - log.creditedValue
+        if (Math.abs(delta) > 1e-9) {
+          const applied = await applyNodeDelta(id, log.nodeId, delta)
+          await db.progressLog.update({
+            where: { id: logId },
+            data: { creditedValue: log.creditedValue + applied },
           })
         }
       }
@@ -101,9 +114,10 @@ export async function PATCH(req: Request, { params }: Params) {
   }
 }
 
-/** DELETE /api/goals/[id]/logs/[logId] — remove an entry. When it was a
- *  linked check-off's auto-log, the progress it credited to the checkpoint
- *  is taken back out (the session itself stays checked off). */
+/** DELETE /api/goals/[id]/logs/[logId] — remove an entry. When it carried
+ *  checkpoint credit (a linked check-off's auto-log, or a direct "counts
+ *  toward" entry), the progress it credited is taken back out (the session
+ *  itself stays checked off in the routine case). */
 export async function DELETE(_req: Request, { params }: Params) {
   const { id, logId } = await params
   const auth = await requireUser()
@@ -123,6 +137,9 @@ export async function DELETE(_req: Request, { params }: Params) {
       }
       // the session stays done — it just no longer contributes progress
       await db.routineDone.update({ where: { id: done.id }, data: { logId: null, creditedValue: null } })
+    } else if (log.nodeId && log.creditedValue != null && log.creditedValue > 0) {
+      // direct checkpoint credit — give the progress back
+      await applyNodeDelta(id, log.nodeId, -log.creditedValue)
     }
 
     await db.progressLog.delete({ where: { id: logId } })

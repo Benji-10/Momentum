@@ -380,12 +380,14 @@ function FocusItem({ goal, onOpen }: { goal: GoalData; onOpen: (g: GoalData, tab
       ? `${formatNumber(nn.node.currentValue)}/${formatNumber(nn.node.targetValue)}${nn.unit ? ` ${nn.unit}` : ''} — advances as you log progress`
       : 'All tiers mastered 🏆'
     tab = 'skills'
-    if (nn) {
+    if (nn && !nn.node.deriveFromId) {
+      // derived meters can't take direct credit — they convert from their source
       quickLog = (
         <NodeQuickAddPopover
-          goalId={goal.id}
+          goal={goal}
           nodeId={nn.node.id}
           nodeTitle={nn.node.title}
+          nodeIcon={nn.node.icon}
           unit={nn.unit}
         >
           <span className="inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary">

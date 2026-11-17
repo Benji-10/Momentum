@@ -70,8 +70,9 @@ function isSessionIshGoal(goal: GoalLike): boolean {
 }
 
 /** A plan goal whose own ledger has no real unit — checkpoints and routine
- * durations may still record real quantities (words, minutes). */
-function isPlanSessionGoal(goal: GoalLike): boolean {
+ * durations may still record real quantities (words, minutes). Shared with
+ * the /logs route: only these goals accept checkpoint-crediting entries. */
+export function isPlanSessionGoal(goal: GoalLike): boolean {
   return goal.type === 'plan' && isSessionIshGoal(goal) && !isTimeUnitGoal(goal)
 }
 

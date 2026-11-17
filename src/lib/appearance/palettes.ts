@@ -82,6 +82,56 @@ export function migrateThemeKey(key: string | null | undefined): string {
 export const DARK_PALETTES = PALETTES.filter((p) => p.dark).map((p) => p.key)
 
 // ---------------------------------------------------------------------------
+// Status-bar colour (PWA theme-color)
+// ---------------------------------------------------------------------------
+
+/**
+ * The page-background hex of every preset, so the browser status bar (PWA
+ * theme-color meta) can match the app's own background instead of the OS
+ * colour scheme. Derived once from the --background values in globals.css
+ * (oklch → sRGB); mirrors PRESET_BG_INLINE in the layout.tsx boot script —
+ * keep the two in sync when a palette changes.
+ */
+export const PRESET_BACKGROUNDS: Record<string, string> = {
+  light: '#faf9f7',
+  dark: '#0c0e12',
+  forest: '#08110b',
+  berry: '#fef4f8',
+  sunset: '#150e0a',
+  petrolhead: '#090e0a',
+  ultraviolet: '#100817',
+  pomegranate: '#1a0708',
+  cryosphere: '#071116',
+  marigold: '#0f1006',
+  nightshade: '#140713',
+  oxidation: '#100c09',
+  afterburn: '#0e0a08',
+  mycelium: '#0e091a',
+  // legacy keys (pre-migration devices) map onto the same surfaces
+  paper: '#faf9f7',
+  meadow: '#faf9f7',
+  blossom: '#fef4f8',
+  charcoal: '#0c0e12',
+}
+
+/** Fallbacks for the split second before any preference is known. */
+export const LIGHT_STATUS_BAR = '#faf9f6'
+export const DARK_STATUS_BAR = '#0c0e12'
+
+/**
+ * The colour the status bar / splash should be for one appearance: the
+ * custom palette's background, the preset's background, or a neutral
+ * fallback when nothing is known yet.
+ */
+export function statusBarColorFor(theme: string, custom: CustomTheme | null): string {
+  if (theme === 'custom') {
+    if (custom && /^#[0-9a-fA-F]{6}$/.test(custom.background)) return custom.background
+    return DARK_STATUS_BAR // the default custom palette is dark
+  }
+  return PRESET_BACKGROUNDS[theme] ?? LIGHT_STATUS_BAR
+}
+
+// ---------------------------------------------------------------------------
 // Custom theme → CSS variables
 // ---------------------------------------------------------------------------
 

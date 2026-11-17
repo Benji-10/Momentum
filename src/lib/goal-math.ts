@@ -120,7 +120,10 @@ export function isSessionCountingGoal(goal: GoalData): boolean {
 /** Every "session" the goal knows about: one per routine check-off done,
  *  plus manually logged entries (their amount — usually 1 each). Auto-logs
  *  created by a check-off are excluded: their amount is checkpoint progress
- *  ("25 words"), already represented by the done mark. */
+ *  ("25 words"), already represented by the done mark. Entries that credit a
+ *  checkpoint directly (nodeId set — skill-map quick-adds, "counts toward"
+ *  logs) count as one session each: the sitting happened, the pages are the
+ *  checkpoint's business. */
 function sessionEvents(goal: GoalData): { date: number; n: number }[] {
   const autoLogIds = new Set<string>()
   for (const r of goal.routines) {
@@ -133,7 +136,7 @@ function sessionEvents(goal: GoalData): { date: number; n: number }[] {
   )
   for (const l of goal.logs) {
     if (autoLogIds.has(l.id)) continue
-    events.push({ date: logDay(l), n: l.amount })
+    events.push({ date: logDay(l), n: l.nodeId ? 1 : l.amount })
   }
   return events
 }

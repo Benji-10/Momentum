@@ -1,19 +1,23 @@
 'use client'
 
 import { useState } from 'react'
-import { ArrowLeft, ArrowRight, Check, Crown, Lock, Pencil, Plus, Sparkles, Trash2, Wand2, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, Crown, History, Lock, Pencil, Plus, Sparkles, Trash2, Wand2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData, SkillPathData } from '@/lib/types'
 import { buildSkillMap, type SkillNodeView, type SkillPathView } from '@/lib/skill-tree'
 import { goalColor } from '@/lib/goal-colors'
-import { formatNumber } from '@/lib/goal-math'
+import { formatNumber, isSessionCountingGoal } from '@/lib/goal-math'
+import { todayDayKey } from '@/lib/app-time'
+import { logAmountLabel } from '@/lib/recording'
 import {
+  useAddLog,
   useAddNode,
   useAddPath,
   useDeletePath,
   useUpdateNode,
   useUpdatePath,
 } from '@/hooks/use-goals'
+import { EditLogDialog, type EditLogTarget } from '@/components/app/edit-log-dialog'
 import { NodeEditDialog } from '@/components/app/node-edit-dialog'
 import { PathEditDialog } from '@/components/app/path-edit-dialog'
 import { Button } from '@/components/ui/button'
@@ -85,16 +89,30 @@ function NodePopover({
   children: React.ReactNode
 }) {
   const updateNode = useUpdateNode(goal.id)
+  // quick-adds are real log entries now (dated, editable, deletable) — only
+  // "Set total" and "Reset" stay raw calibrations
+  const addLog = useAddLog(goal.id)
   const accent = goalColor(goal.color).hex
   const n = view.node
   const [exact, setExact] = useState('')
   // full settings dialog (icon/unit/notes/milestones/gating/derivation) —
   // rendered outside the popover so it survives the popover closing
   const [editOpen, setEditOpen] = useState(false)
+  /** the quick-add entry being fine-tuned (wrong amount / wrong day) */
+  const [editTarget, setEditTarget] = useState<EditLogTarget | null>(null)
 
   const remaining = Math.max(0, n.targetValue - n.currentValue)
+  const unitLabel = view.unit ?? 'units'
 
   function handleAdd(delta: number) {
+    // session-counting plan goals: the add is a dated, editable log entry
+    // that credits this checkpoint (edit/delete adjusts it by the difference).
+    // Quantitative/time goals keep the raw add — their ledger sums amounts in
+    // one unit, so a checkpoint-unit entry would corrupt it.
+    if (isSessionCountingGoal(goal)) {
+      handleAddViaLog(delta)
+      return
+    }
     updateNode.mutate(
       { nodeId: n.id, patch: { add: delta } },
       {
@@ -105,6 +123,41 @@ function NodePopover({
           }
         },
         onError: (e) => toast.error('Could not update', { description: e.message }),
+      },
+    )
+  }
+
+  function handleAddViaLog(delta: number) {
+    addLog.mutate(
+      { amount: delta, nodeId: n.id, unit: view.unit },
+      {
+        onSuccess: (res) => {
+          const node = res.goal?.skillPaths.flatMap((p) => p.nodes).find((x) => x.id === n.id)
+          if (node && node.currentValue >= node.targetValue && n.currentValue < n.targetValue) {
+            toast.success(`Mastered: ${n.title}`, { description: `+${n.xpValue} XP 🏆` })
+          } else {
+            toast.success(`Logged ${logAmountLabel(delta, unitLabel)}`, {
+              description: 'A dated entry in this goal’s history — edit the amount or day any time.',
+              action: res.log
+                ? {
+                    label: 'Edit',
+                    onClick: () =>
+                      setEditTarget({
+                        goalId: goal.id,
+                        logId: res.log.id,
+                        amount: res.log.amount,
+                        unit: unitLabel,
+                        title: n.title,
+                        note: res.log.note,
+                        day: todayDayKey(),
+                        creditLabel: `${n.icon} ${n.title}`,
+                      }),
+                  }
+                : undefined,
+            })
+          }
+        },
+        onError: (e) => toast.error('Could not log', { description: e.message }),
       },
     )
   }
@@ -160,7 +213,8 @@ function NodePopover({
             </div>
             <div className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
               Every {formatNumber(view.derived.factor)} {view.derived.sourceUnit ?? 'source units'} on the source = 1{' '}
-              {view.unit ?? 'unit'} here — no per-session math. Manual entries still work too.
+              {view.unit ?? 'unit'} here — log on the source checkpoint and this
+              converts automatically.
             </div>
           </div>
         )}
@@ -208,7 +262,7 @@ function NodePopover({
                 onKeyDown={(e) => e.key === 'Enter' && handleExact()}
                 type="number"
                 min={0}
-                placeholder={`Set total (${formatNumber(n.currentValue)})`}
+                placeholder={`Calibrate total (${formatNumber(n.currentValue)})`}
                 className="h-8 min-w-0 flex-1 text-xs"
                 inputMode="decimal"
               />
@@ -216,29 +270,37 @@ function NodePopover({
                 Set
               </Button>
             </div>
-            <div className="mt-2 flex items-center gap-1.5">
-              {quickAddSteps(n.targetValue).map((s) => (
-                <Button
-                  key={s}
-                  size="sm"
-                  variant="secondary"
-                  className="h-8 flex-1 tabular-nums"
-                  disabled={updateNode.isPending}
-                  onClick={() => handleAdd(s)}
-                >
-                  +{s}
-                </Button>
-              ))}
-              <Button
-                size="sm"
-                className="h-8 flex-1"
-                disabled={updateNode.isPending || remaining <= 0}
-                onClick={() => handleAdd(remaining)}
-                title={`Complete all ${formatNumber(remaining)} remaining`}
-              >
-                All
-              </Button>
-            </div>
+            {!view.derived && (
+              <>
+                <div className="mt-2 flex items-center gap-1.5">
+                  {quickAddSteps(n.targetValue).map((s) => (
+                    <Button
+                      key={s}
+                      size="sm"
+                      variant="secondary"
+                      className="h-8 flex-1 tabular-nums"
+                      disabled={addLog.isPending}
+                      onClick={() => handleAdd(s)}
+                    >
+                      +{s}
+                    </Button>
+                  ))}
+                  <Button
+                    size="sm"
+                    className="h-8 flex-1"
+                    disabled={addLog.isPending || remaining <= 0}
+                    onClick={() => handleAdd(remaining)}
+                    title={`Log all ${formatNumber(remaining)} remaining`}
+                  >
+                    All
+                  </Button>
+                </div>
+                <p className="mt-1.5 flex items-start gap-1 text-[10px] leading-snug text-muted-foreground">
+                  <History className="mt-px h-3 w-3 shrink-0" />
+                  Quick adds become dated log entries — edit amount or day from this goal&rsquo;s Log tab.
+                </p>
+              </>
+            )}
           </>
         ) : (
           <Button
@@ -279,6 +341,9 @@ function NodePopover({
           onOpenChange={setEditOpen}
         />
       )}
+
+      {/* fine-tune a quick-add right after logging it (wrong amount / day) */}
+      <EditLogDialog key={editTarget?.logId ?? 'none'} target={editTarget} onClose={() => setEditTarget(null)} />
     </>
   )
 }

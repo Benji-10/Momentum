@@ -191,8 +191,9 @@ export interface Occurrence {
   daysAgo: number
   /**
    * Kindness system: a missed session older than GRACE_DAYS stops being
-   * "work to do" and is quietly forgiven — it no longer shows as open,
-   * doesn't count against adherence and never piles up into a backlog.
+   * "work to do" and is quietly forgiven — it no longer shows as open and
+   * never piles up into a backlog. It still counts in the adherence score
+   * (that is the point of the score: telling you whether you're on track).
    */
   forgiven: boolean
   /** derived bucket: done | today | upcoming | open (within grace) | forgiven */
@@ -245,9 +246,10 @@ export function occurrencesInRange(
 
 export interface RoutineStats {
   /**
-   * Kind adherence: done / scheduled over the trailing `weeks` weeks, where
-   * forgiven misses (older than GRACE_DAYS) are excluded from the
-   * denominator so old slip-ups never drag your score down forever.
+   * Honest adherence: done / scheduled over the trailing `weeks` weeks.
+   * Forgiven misses stay in the denominator, so the number tells you
+   * whether you're actually on track — but the rolling window means old
+   * slip-ups roll off instead of piling up forever.
    * null for extra-credit routines — there is nothing to adhere to.
    */
   adherencePct: number | null
@@ -320,7 +322,11 @@ export function routineStats(
     } else {
       const daysAgo = Math.round((today.getTime() - d.getTime()) / DAY_MS)
       if (daysAgo > GRACE_DAYS || r.optional) {
-        forgivenCount++ // excluded from the denominator on purpose
+        // forgiven: gone from the to-do surface, but still in the
+        // denominator — the score stays honest while the rolling window
+        // keeps it from piling up forever
+        forgivenCount++
+        totalCount++
       } else {
         totalCount++
         openCount++

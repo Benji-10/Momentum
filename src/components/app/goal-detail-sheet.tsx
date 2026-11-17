@@ -11,6 +11,8 @@ import {
   Circle,
   CircleDot,
   ClipboardList,
+  Eye,
+  EyeOff,
   Flame,
   ListChecks,
   Map as MapIcon,
@@ -35,6 +37,7 @@ import {
   formatDateLong,
   formatDateShort,
   formatNumber,
+  isSessionCountingGoal,
   weeklyHistory,
 } from '@/lib/goal-math'
 import { goalColor } from '@/lib/goal-colors'
@@ -55,6 +58,7 @@ import {
   useDeleteStep,
   useGoalScopeImport,
   useToggleRoutineDone,
+  useUpdateGoal,
   useUpdateNote,
   useUpdateStep,
 } from '@/hooks/use-goals'
@@ -607,8 +611,14 @@ function DetailBody({
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
   const [date, setDate] = useState(todayStr())
+  /** the Log tab's "counts toward" pick: 'goal' = the goal's own ledger,
+   *  else the checkpoint id the entry should credit ("150 pages") */
+  const [creditTo, setCreditTo] = useState('goal')
   const [newStep, setNewStep] = useState('')
   const [newNote, setNewNote] = useState('')
+  /** per-goal "hide done steps" on: shows the hidden completed steps for
+   *  this open sheet until it closes (the persisted flag is untouched) */
+  const [revealDone, setRevealDone] = useState(false)
   const [routineDialogOpen, setRoutineDialogOpen] = useState(false)
   const [editRoutine, setEditRoutine] = useState<RoutineData | null>(null)
   const [scopeJson, setScopeJson] = useState('')
@@ -621,6 +631,7 @@ function DetailBody({
   const addStep = useAddStep(goal.id)
   const updateStep = useUpdateStep(goal.id)
   const deleteStep = useDeleteStep(goal.id)
+  const updateGoal = useUpdateGoal()
   const deleteGoal = useDeleteGoal()
   const addNote = useAddNote(goal.id)
   const updateNote = useUpdateNote(goal.id)
@@ -630,9 +641,36 @@ function DetailBody({
   const deleteRoutine = useDeleteRoutine(goal.id)
 
   const stats = useMemo(() => computeGoalStats(goal), [goal])
+  // plan list for the Steps tab: the per-goal "hide done steps" preference
+  // filters completed steps out of the list; revealDone (local to this open
+  // sheet) shows them anyway without touching the saved preference
+  const doneStepCount = goal.steps.filter((s) => s.status === 'done').length
+  const shownSteps =
+    goal.hideDoneSteps && !revealDone ? goal.steps.filter((s) => s.status !== 'done') : goal.steps
   const series = useMemo(() => cumulativeSeries(goal), [goal])
   const weekly = useMemo(() => weeklyHistory(goal, 8), [goal])
   const skillMap = useMemo(() => buildSkillMap(goal), [goal])
+  // checkpoints a Log-tab entry can credit: unlocked, not mastered, not a
+  // derived meter — only offered on session-counting plan goals, where the
+  // checkpoint's unit (pages, words) is the real quantity and the goal's
+  // own ledger just counts sittings
+  const creditNodes = useMemo(
+    () =>
+      isSessionCountingGoal(goal)
+        ? skillMap.paths
+            .flatMap((p) => p.nodes)
+            .filter((v) => !v.node.deriveFromId && !v.locked && v.status !== 'mastered')
+        : [],
+    [skillMap, goal],
+  )
+  const creditTarget = creditNodes.find((v) => v.node.id === creditTo) ?? null
+  // log.nodeId → its checkpoint, for history-row chips and the edit dialog
+  const nodeById = useMemo(() => {
+    const m = new Map<string, { icon: string; title: string; unit: string | null }>()
+    for (const p of goal.skillPaths)
+      for (const n of p.nodes) m.set(n.id, { icon: n.icon, title: n.title, unit: n.unit ?? p.unit ?? null })
+    return m
+  }, [goal])
   const c = goalColor(goal.color)
   const unit = goal.unit ?? ''
   // display unit for the log editor (falls back to sessions/units); entries
@@ -658,10 +696,19 @@ function DetailBody({
     }
     const iso = date === todayStr() ? new Date().toISOString() : isoForDayKey(date, '12:00')
     addLog.mutate(
-      { amount: n, note: note.trim() || null, date: iso },
+      {
+        amount: n,
+        note: note.trim() || null,
+        date: iso,
+        ...(creditTarget ? { nodeId: creditTarget.node.id, unit: creditTarget.unit } : {}),
+      },
       {
         onSuccess: () => {
-          toast.success(`Logged ${formatNumber(n)} ${unit || 'progress'}`)
+          toast.success(
+            creditTarget
+              ? `Logged ${logAmountLabel(n, creditTarget.unit ?? 'units')} — advanced ${creditTarget.node.icon} ${creditTarget.node.title}`
+              : `Logged ${formatNumber(n)} ${unit || 'progress'}`,
+          )
           setAmount('')
           setNote('')
         },
@@ -1034,14 +1081,41 @@ function DetailBody({
 
             {/* ============ STEPS ============ */}
             <TabsContent value="steps" className="mt-0">
-              <div className="mb-2 flex items-center justify-between">
+              <div className="mb-1 flex items-center justify-between gap-2">
                 <h4 className="text-sm font-semibold">
                   Your plan <span className="font-normal text-muted-foreground">({stats.stepsDone}/{stats.stepsTotal} done)</span>
                 </h4>
-                <span className="text-xs text-muted-foreground">tap the circle to tick — ✏️ can automate it from routines or metrics</span>
+                {doneStepCount > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={updateGoal.isPending}
+                    className={cn(
+                      'h-7 shrink-0 gap-1.5 rounded-full px-2.5 text-xs',
+                      goal.hideDoneSteps ? 'text-foreground' : 'text-muted-foreground',
+                    )}
+                    title={
+                      goal.hideDoneSteps
+                        ? 'Completed steps are hidden from this list — click to show them again'
+                        : 'Hide completed steps — keeps this list focused on what is left (saved per goal)'
+                    }
+                    onClick={() =>
+                      updateGoal.mutate(
+                        { id: goal.id, patch: { hideDoneSteps: !goal.hideDoneSteps } },
+                        { onError: (e) => toast.error('Could not save the view setting', { description: e.message }) },
+                      )
+                    }
+                  >
+                    {goal.hideDoneSteps ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    {goal.hideDoneSteps ? 'Done hidden' : 'Hide done'}
+                  </Button>
+                )}
               </div>
+              <p className="mb-2 text-xs text-muted-foreground">
+                tap the circle to tick — ✏️ can automate it from routines or metrics
+              </p>
               <div className="space-y-1.5">
-                {goal.steps.map((step) => (
+                {shownSteps.map((step) => (
                   <StepRow
                     key={step.id}
                     step={step}
@@ -1071,6 +1145,18 @@ function DetailBody({
                     }
                   />
                 ))}
+                {goal.hideDoneSteps && doneStepCount > 0 && (
+                  <button
+                    type="button"
+                    className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed py-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                    onClick={() => setRevealDone((v) => !v)}
+                  >
+                    {revealDone ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    {revealDone
+                      ? `Hide the ${doneStepCount} completed step${doneStepCount === 1 ? '' : 's'} again`
+                      : `${doneStepCount} completed step${doneStepCount === 1 ? '' : 's'} hidden — show`}
+                  </button>
+                )}
                 {goal.steps.length === 0 && (
                   <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
                     No steps yet — break this goal into concrete steps below.
@@ -1379,7 +1465,7 @@ function DetailBody({
                                     color:
                                       rs.adherencePct >= 70 ? 'var(--success)' : rs.adherencePct >= 40 ? 'var(--warning)' : 'var(--muted-foreground)',
                                   }}
-                                  title="Recent adherence — forgiven sessions don't count against you"
+                                  title="Recent adherence (last 4 weeks) — forgiven sessions count too, so the number stays honest; they never pile up as catch-up work"
                                 >
                                   {rs.adherencePct}%
                                 </span>
@@ -1452,10 +1538,37 @@ function DetailBody({
                 Log {goal.type === 'plan' ? 'a practice session' : 'progress'}
               </h4>
               <div className="space-y-3 rounded-xl border bg-card p-4">
+                {/* counts toward — credit a checkpoint instead of (well, on top
+                    of) the goal's own session ledger. Only on session-counting
+                    plan goals with at least one creditable checkpoint. */}
+                {creditNodes.length > 0 && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Counts toward</Label>
+                    <Select value={creditTo} onValueChange={setCreditTo}>
+                      <SelectTrigger className="h-9 text-xs" aria-label="Counts toward">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="goal">Just this goal ({logUnit})</SelectItem>
+                        {creditNodes.map((v) => (
+                          <SelectItem key={v.node.id} value={v.node.id}>
+                            {v.node.icon} {v.node.title}
+                            {v.unit ? ` (${v.unit})` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
                 <div className="grid gap-3 sm:grid-cols-[140px_1fr]">
                   <div className="space-y-1.5">
                     <Label htmlFor="log-amount">
-                      Amount {goal.type === 'plan' && !goal.unit ? '(e.g. 1 session)' : `(${unit || 'amount'})`}
+                      Amount{' '}
+                      {creditTarget
+                        ? `(${creditTarget.unit || 'amount'})`
+                        : goal.type === 'plan' && !goal.unit
+                          ? '(e.g. 1 session)'
+                          : `(${unit || 'amount'})`}
                     </Label>
                     <Input
                       id="log-amount"
@@ -1465,7 +1578,7 @@ function DetailBody({
                       value={amount}
                       onChange={(e) => setAmount(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleLog()}
-                      placeholder={goal.type === 'plan' ? '1' : 'e.g. 25'}
+                      placeholder={creditTarget ? 'e.g. 25' : goal.type === 'plan' ? '1' : 'e.g. 25'}
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -1481,9 +1594,9 @@ function DetailBody({
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  {quickAmounts(goal.unit).map((q) => (
+                  {quickAmounts(creditTarget?.unit ?? goal.unit).map((q) => (
                     <Button key={q} type="button" variant="secondary" size="sm" onClick={() => setAmount(String(q))}>
-                      +{formatNumber(q)} {unit}
+                      +{formatNumber(q)} {creditTarget?.unit ?? unit}
                     </Button>
                   ))}
                   <div className="w-[150px]">
@@ -1493,6 +1606,15 @@ function DetailBody({
                     <Check className="h-4 w-4" /> Log it
                   </Button>
                 </div>
+                {creditTarget && (
+                  <p className="flex items-start gap-1.5 rounded-lg bg-primary/8 px-2 py-1.5 text-[11px] font-medium text-primary">
+                    <Target className="mt-px h-3 w-3 shrink-0" />
+                    <span>
+                      Advances {creditTarget.node.icon} {creditTarget.node.title} (and anything derived from it) and counts as
+                      one session — retroactive? Just pick the right day above.
+                    </span>
+                  </p>
+                )}
               </div>
 
               {goal.logs.length > 0 && (
@@ -1506,6 +1628,8 @@ function DetailBody({
                       // check-off entries speak the unit they were recorded in
                       // ("10 words" / "20 min"), everything else the goal's own
                       const rowUnit = logRowUnit(goal, log)
+                      // the checkpoint this entry advanced, when it did
+                      const creditNode = log.nodeId ? nodeById.get(log.nodeId) ?? null : null
                       return (
                       <div
                         key={log.id}
@@ -1526,6 +1650,7 @@ function DetailBody({
                               title: goal.title,
                               note: log.note,
                               day: dayKeyOf(new Date(log.date)),
+                              creditLabel: creditNode ? `${creditNode.icon} ${creditNode.title}` : null,
                             })
                           }
                         >
@@ -1536,6 +1661,14 @@ function DetailBody({
                             +{logAmountLabel(log.amount, rowUnit)}
                             <Pencil className="h-3 w-3 opacity-30 transition-opacity group-hover:opacity-70" />
                           </div>
+                          {creditNode && (
+                            <span
+                              className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
+                              title={`This entry advances ${creditNode.title}`}
+                            >
+                              <Target className="h-2.5 w-2.5" /> {creditNode.title}
+                            </span>
+                          )}
                           <div className="min-w-0 flex-1 truncate text-muted-foreground">{log.note ?? ''}</div>
                         </button>
                         <Button
