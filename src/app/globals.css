@@ -824,6 +824,19 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* The anti-flash boot paint (layout.tsx boot script + SW-injected style +
+       applyAppearanceToDom) puts an OPAQUE theme colour on <html>. Once html
+       is opaque, IT — not body — propagates to the canvas, so body's own
+       bg-background would paint in html's stacking context AFTER the
+       negative-z-index .bg-layer (in-flow block backgrounds paint above
+       negative z-index children), blanketing every background scene behind
+       the page's paper colour. Making body its own stacking context restores
+       the intended order WITHIN body: body's background paints first, the
+       .bg-layer art (z-index: -10) above it, all app content above that.
+       Nothing else moves — html and body wear the same theme colour, so
+       overscroll / boot / status-bar behaviour is unchanged, and glass
+       surfaces still blur the art (their backdrop includes body's context). */
+    isolation: isolate;
   }
   /* Reserve the scrollbar gutter permanently. Radix overlays (dialogs,
      dropdowns) lock body scroll while open — without this, a classic
