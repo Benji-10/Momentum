@@ -127,6 +127,10 @@ model ProgressLog {
   // How much this entry actually added to that checkpoint (amount, clamped
   // by the target at write time) — amount edits adjust by the difference.
   creditedValue   Float?
+  // The personal-best metric this entry mirrors (a recorded attempt, e.g.
+  // "128 WPM"); row id == record id in the metric's history JSON. Plain
+  // string, no FK — deleting the metric removes its mirrored rows.
+  pbId            String?
   createdAt DateTime @default(now())
 
   @@index([goalId, date])

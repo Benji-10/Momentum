@@ -75,6 +75,7 @@ CREATE TABLE "ProgressLog" (
     "unit" TEXT,
     "nodeId" TEXT,
     "creditedValue" DOUBLE PRECISION,
+    "pbId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "ProgressLog_pkey" PRIMARY KEY ("id")
@@ -474,6 +475,16 @@ END $$;`,
     column: 'hideDoneSteps',
     sql: `ALTER TABLE "Goal" ADD COLUMN IF NOT EXISTS "hideDoneSteps" BOOLEAN NOT NULL DEFAULT false;`,
     sqliteType: 'BOOLEAN NOT NULL DEFAULT 0',
+  },
+  {
+    // v1.9: one ledger — a recorded metric attempt ("128 WPM") is mirrored
+    // as a real log entry (pbId set, row id == record id), so the goal's
+    // Log tab shows every session, checkpoint credit AND metric attempt,
+    // editable from either surface. Mirrored rows never count toward the
+    // goal's own sums (they are attempts, not progress amounts).
+    table: 'ProgressLog',
+    column: 'pbId',
+    sql: `ALTER TABLE "ProgressLog" ADD COLUMN IF NOT EXISTS "pbId" TEXT;`,
   },
 ]
 

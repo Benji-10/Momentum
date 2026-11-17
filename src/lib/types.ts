@@ -64,6 +64,11 @@ export interface ProgressLogData {
   /** The skill checkpoint this entry credits (manual "counts toward" logs
    * and skill-map quick-adds) — null = the goal's own ledger only. */
   nodeId: string | null
+  /** The personal-best metric this entry mirrors (a recorded attempt). Row
+   * id == record id in that metric's history JSON — edit/delete from either
+   * the Log tab or the metric's attempt chips; both stay in sync. Null = a
+   * plain progress entry. */
+  pbId: string | null
   createdAt: string
 }
 

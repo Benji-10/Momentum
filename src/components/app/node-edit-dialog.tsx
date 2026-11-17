@@ -1,13 +1,15 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, Link2, Lock, Plus, Repeat, Trash2, Trophy, Wand2, X } from 'lucide-react'
+import { ArrowDown, ArrowUp, Link2, Lock, Pencil, Plus, Repeat, Trash2, Trophy, Wand2, X } from 'lucide-react'
 import { toast } from 'sonner'
-import type { GoalData } from '@/lib/types'
+import type { GoalData, PersonalBestData, RoutineData } from '@/lib/types'
 import type { SkillNodeView } from '@/lib/skill-tree'
 import { formatNumber } from '@/lib/goal-math'
 import { useDeleteNode, useUpdateNode } from '@/hooks/use-goals'
 import { EmojiPicker } from '@/components/app/emoji-picker'
+import { EditPbDialog } from '@/components/app/pb-dialogs'
+import { RoutineDialog } from '@/components/app/routine-dialog'
 import {
   Dialog,
   DialogContent,
@@ -93,6 +95,10 @@ export function NodeEditDialog({
   const [selected, setSelected] = useState<string[]>(() => (n.requiresIds.length ? n.requiresIds : []))
 
   const [confirmDelete, setConfirmDelete] = useState(false)
+  // feeder editors opened straight from the "Fed by" list — the link config
+  // lives with its owner, but you shouldn't have to hunt for it
+  const [editRoutine, setEditRoutine] = useState<RoutineData | null>(null)
+  const [editPb, setEditPb] = useState<PersonalBestData | null>(null)
 
   // what feeds this checkpoint: linked routines + linked PB metrics — the
   // wiring summary, so the roadmap's inputs are visible in one place
@@ -225,6 +231,7 @@ export function NodeEditDialog({
   }
 
   return (
+    <>
     <Dialog open={open} onOpenChange={(o) => { if (!o) setConfirmDelete(false); onOpenChange(o) }}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
@@ -315,7 +322,8 @@ export function NodeEditDialog({
             )}
           </div>
 
-          {/* fed by — the routines and metrics that advance this checkpoint */}
+          {/* fed by — the routines and metrics that advance this checkpoint,
+              each editable in place (no hunting through other tabs) */}
           {(feeders.routines.length > 0 || feeders.metrics.length > 0) && (
             <div className="space-y-1.5 rounded-lg border p-2.5">
               <Label className="flex items-center gap-1.5 text-xs font-medium">
@@ -328,6 +336,15 @@ export function NodeEditDialog({
                     <span className="font-medium text-foreground">{r.title}</span> — routine ·{' '}
                     {r.credit != null ? `+${formatNumber(r.credit)} per check-off` : 'each check-off counts'}
                   </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 shrink-0 gap-1 px-2 text-[10px]"
+                    onClick={() => setEditRoutine(r)}
+                  >
+                    <Pencil className="h-2.5 w-2.5" /> Edit
+                  </Button>
                 </div>
               ))}
               {feeders.metrics.map((p) => (
@@ -339,18 +356,17 @@ export function NodeEditDialog({
                       ? `tracks the average of the last ${p.nodeWindow ?? 3} attempts`
                       : 'every attempt adds its value'}
                   </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 shrink-0 gap-1 px-2 text-[10px]"
+                    onClick={() => setEditPb(p)}
+                  >
+                    <Pencil className="h-2.5 w-2.5" /> Edit
+                  </Button>
                 </div>
               ))}
-              {feeders.routines.length > 0 && (
-                <p className="text-[10px] leading-snug text-muted-foreground/70">
-                  Routine links live in the routine editor — Schedule tab → tap the routine.
-                </p>
-              )}
-              {feeders.metrics.length > 0 && (
-                <p className="text-[10px] leading-snug text-muted-foreground/70">
-                  Metric links live with the metric — Review tab → Bests view → its pencil.
-                </p>
-              )}
               <p className="text-[10px] leading-snug text-muted-foreground/70">
                 Manual adds on the checkpoint (skill map + buttons, Log tab “counts toward”) become dated log entries —
                 edit or remove them from the Log tab.
@@ -561,5 +577,25 @@ export function NodeEditDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {/* feeder editors — layered over this dialog so the checkpoint stays
+        open behind them (saving a feeder can move this checkpoint) */}
+    <RoutineDialog
+      key={`routine-${editRoutine?.id ?? 'none'}`}
+      goal={goal}
+      routine={editRoutine}
+      open={!!editRoutine}
+      onOpenChange={(o) => !o && setEditRoutine(null)}
+    />
+    {editPb && (
+      <EditPbDialog
+        key={`pb-${editPb.id}`}
+        goal={goal}
+        pb={editPb}
+        open
+        onOpenChange={(o) => !o && setEditPb(null)}
+      />
+    )}
+    </>
   )
 }

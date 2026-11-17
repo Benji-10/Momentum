@@ -121,6 +121,12 @@ model ProgressLog {
   // How much this entry actually added to that checkpoint (amount, clamped
   // by the target at write time) — amount edits adjust by the difference.
   creditedValue   Float?
+  // The personal-best metric this entry mirrors (a recorded attempt, e.g.
+  // "128 WPM"). The row id EQUALS the record id inside that metric's
+  // history JSON — one ledger: the Log tab shows every session, checkpoint
+  // credit AND metric attempt, editable from either surface. Plain string,
+  // no FK — deleting the metric removes its mirrored rows explicitly.
+  pbId            String?
   createdAt DateTime @default(now())
 
   @@index([goalId, date])

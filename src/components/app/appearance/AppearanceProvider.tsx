@@ -36,6 +36,7 @@ import { customThemeCss, isCustomThemeDark, isPaletteKey, migrateThemeKey, palet
 import { defaultBackgroundConfig } from '@/lib/appearance/backgrounds'
 import { useSettings, useMe, useUpdateSettings } from '@/hooks/use-auth'
 import { loadSettingsCache, saveSettingsCache } from '@/lib/offline'
+import { writePwaMetaCache } from '@/lib/pwa-meta'
 import { deleteImage, loadImage, saveImage } from '@/lib/appearance/idb'
 import { BackgroundLayer } from './BackgroundLayer'
 
@@ -105,9 +106,11 @@ function applyCustomStyle(custom: CustomTheme | null): void {
   el.textContent = customThemeCss(custom)
 }
 
-/** Keep the PWA status bar (theme-color meta) on the active theme's real
- *  background — created pre-paint by the layout boot script, refreshed here
- *  whenever the appearance changes (local edits + cross-device sync). */
+/** Keep the PWA status bar on the active theme's real background — created
+ *  pre-paint by the layout boot script, refreshed here whenever the
+ *  appearance changes (local edits + cross-device sync). Android/Chrome and
+ *  desktop read theme-color; the iOS standalone status bar reads
+ *  apple-mobile-web-app-status-bar-style, so both metas stay in sync. */
 function syncThemeColorMeta(theme: string, custom: CustomTheme | null): void {
   const color = statusBarColorFor(theme, custom)
   let m = document.querySelector('meta[name="theme-color"]') as HTMLMetaElement | null
@@ -117,6 +120,16 @@ function syncThemeColorMeta(theme: string, custom: CustomTheme | null): void {
     document.head.appendChild(m)
   }
   m.setAttribute('content', color)
+  // iOS standalone: "default" = white bar, "black" = dark bar with light text
+  const dark =
+    theme === 'custom' ? isCustomThemeDark(custom) : (paletteMeta(theme)?.dark ?? false)
+  let apple = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]') as HTMLMetaElement | null
+  if (!apple) {
+    apple = document.createElement('meta')
+    apple.setAttribute('name', 'apple-mobile-web-app-status-bar-style')
+    document.head.appendChild(apple)
+  }
+  apple.setAttribute('content', dark ? 'black' : 'default')
 }
 
 /** Apply one appearance to the document root (no React state involved). */
@@ -130,12 +143,17 @@ export function applyAppearanceToDom(appearance: AppearanceSettings, setTheme: (
       : (paletteMeta(appearance.theme)?.dark ?? false)
   root.dataset.mode = dark ? 'dark' : 'light'
   syncThemeColorMeta(appearance.theme, appearance.custom)
+  // the html canvas itself: without this, overscroll / rubber-banding and
+  // the frames before the stylesheet lands paint the UA default (white) —
+  // the same colour the status bar meta gets, so screen edges never flash
+  root.style.backgroundColor = statusBarColorFor(appearance.theme, appearance.custom)
   if (appearance.surface !== 'solid') root.dataset.surface = appearance.surface
   else delete root.dataset.surface
 }
 
 export function AppearanceProvider({ children }: { children: ReactNode }) {
-  const { data: settings } = useSettings()
+  const settingsQuery = useSettings()
+  const settings = settingsQuery.data
   const { data: me } = useMe()
   const { theme: nextTheme, setTheme } = useTheme()
   const saveSettings = useUpdateSettings()
@@ -145,12 +163,25 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   const [override, setOverride] = useState<AppearanceSettings | null>(null)
 
   const serverAppearance = settings?.appearance ?? null
+  /** true while the first ['me'] fetch is still in flight — the boot script
+   *  already painted the cached appearance pre-hydration, so applying the
+   *  (unknown) fallback now would flash the page light and overwrite the
+   *  status bar + offline cache with a degraded guess. Wait for real data
+   *  (server appearance, a local override, or the query settling) instead. */
+  const settingsPending = !override && !serverAppearance && settingsQuery.isPending
   const effective: AppearanceSettings = useMemo(() => {
     if (override) return override
     if (serverAppearance) return serverAppearance
     // never saved: honour whatever this device's next-themes has (or default)
     const local = migrateThemeKey(nextTheme)
-    return { ...DEFAULT_APPEARANCE, theme: isPaletteKey(local) || local === 'custom' ? local : 'light' }
+    const theme = isPaletteKey(local) || local === 'custom' ? local : 'light'
+    // a 'custom' pick without saved colours renders nothing (no CSS vars) —
+    // fall back to the default custom palette so the page actually paints
+    return {
+      ...DEFAULT_APPEARANCE,
+      theme,
+      custom: theme === 'custom' ? DEFAULT_CUSTOM : null,
+    }
   }, [override, serverAppearance, nextTheme])
 
   /** Apply + persist a new appearance. The local pick wins until the save
@@ -163,6 +194,8 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
       // refresh the offline/PWA cache so the next cold boot paints this
       const cached = loadSettingsCache()
       saveSettingsCache({ theme: next.theme, timezone: cached?.timezone ?? null, appearance: next }, me?.id ?? null)
+      // and the record the service worker personalises boot HTML with
+      writePwaMetaCache(next)
       saveSettings.mutate(
         { appearance: next },
         {
@@ -232,10 +265,17 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
   // -------------------------------------------------------------------------
   // apply the effective appearance whenever it changes (boot + cross-device
-  // sync from the settings poll + override clearing)
+  // sync from the settings poll + override clearing).
+  //
+  // While the first settings fetch is pending there is nothing trustworthy
+  // to apply — the pre-paint boot script already restored the cached look —
+  // so the degraded default is held back until real data lands (or the
+  // query settles with no saved appearance). That kills the cold-boot white
+  // flash AND stops the fallback from overwriting the offline cache.
   // -------------------------------------------------------------------------
   const lastApplied = useRef<string>('')
   useEffect(() => {
+    if (settingsPending) return
     const key = JSON.stringify(effective)
     if (key === lastApplied.current) return
     lastApplied.current = key
@@ -243,7 +283,9 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     // keep the offline cache warm even when the change came from the server
     const cached = loadSettingsCache()
     saveSettingsCache({ theme: effective.theme, timezone: cached?.timezone ?? null, appearance: effective }, me?.id ?? null)
-  }, [effective, setTheme, me?.id])
+    // and the service worker's boot-time chrome colours
+    writePwaMetaCache(effective)
+  }, [effective, setTheme, me?.id, settingsPending])
 
   // -------------------------------------------------------------------------
   // custom image (IndexedDB, this device, per account)

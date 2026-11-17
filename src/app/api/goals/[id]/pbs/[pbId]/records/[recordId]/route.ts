@@ -85,6 +85,16 @@ export async function PATCH(req: Request, { params }: Params) {
       { kind: 'edit', recordId, prev: { value: prev.value, creditedValue: prevCredited } },
     )
 
+    // keep the mirrored log row in the goal's history in sync (same id)
+    await db.progressLog.updateMany({
+      where: { id: recordId, pbId: loaded.pb.id },
+      data: {
+        ...(d.value !== undefined ? { amount: d.value } : {}),
+        ...(d.note !== undefined ? { note: d.note } : {}),
+        ...(d.date ? { date: new Date(d.date) } : {}),
+      },
+    })
+
     // an edited attempt can push a metric-triggered step over its bar
     await evaluateStepTriggers(id)
 
@@ -138,6 +148,9 @@ export async function DELETE(_req: Request, { params }: Params) {
         },
       },
     )
+
+    // the mirrored log row goes with it — one attempt, one history entry
+    await db.progressLog.deleteMany({ where: { id: recordId, pbId: loaded.pb.id } })
 
     // a removed attempt can change a rolling average — re-derive steps
     await evaluateStepTriggers(id)

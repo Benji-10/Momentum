@@ -6,6 +6,8 @@ import { ownedGoal, ownsGoal } from '@/lib/api-helpers'
 import { serializeGoal } from '@/lib/goal-serialize'
 import { syncMilestoneReached } from '@/lib/milestones'
 import { propagateDerived } from '@/lib/derive'
+import { applyPbNodeCredit } from '@/lib/pb-credit'
+import { evaluateStepTriggers } from '@/lib/step-engine'
 
 const patchSchema = z.object({
   amount: z.number().positive('Amount must be greater than 0').max(1_000_000).optional(),
@@ -44,6 +46,92 @@ async function applyNodeDelta(
   return applied
 }
 
+/** Mirror maintenance for metric attempts: the record this log row mirrors
+ *  lives in the PB's history JSON under the SAME id. Updating it means:
+ *  rewrite the record (value/note/date), re-run the checkpoint credit with
+ *  the exact previous contribution, and re-derive metric-triggered steps —
+ *  exactly what the metric-side PATCH does, so both surfaces stay in sync. */
+async function syncMirroredRecord(
+  goalId: string,
+  pbId: string,
+  recordId: string,
+  patch: { value?: number; note?: string | null; date?: string },
+): Promise<void> {
+  const pb = await db.personalBest.findFirst({ where: { id: pbId, goalId } })
+  if (!pb) return
+  let history: unknown[] = []
+  try {
+    const parsed = JSON.parse(pb.history)
+    if (Array.isArray(parsed)) history = parsed
+  } catch {
+    history = []
+  }
+  const idx = history.findIndex(
+    (r) => typeof r === 'object' && r !== null && (r as { id?: unknown }).id === recordId,
+  )
+  if (idx === -1) return
+  const prev = history[idx] as {
+    id: string
+    date: string
+    value: number
+    note?: string | null
+    creditedValue?: number | null
+  }
+  history[idx] = {
+    id: prev.id,
+    date: patch.date ?? prev.date,
+    value: patch.value ?? prev.value,
+    note: patch.note !== undefined ? patch.note : (prev.note ?? null),
+  }
+  const historyJson = JSON.stringify(history)
+  await db.personalBest.update({ where: { id: pb.id }, data: { history: historyJson } })
+  await applyPbNodeCredit(
+    goalId,
+    { ...pb, history: historyJson },
+    {
+      kind: 'edit',
+      recordId,
+      prev: {
+        value: prev.value,
+        creditedValue: typeof prev.creditedValue === 'number' ? prev.creditedValue : null,
+      },
+    },
+  )
+  await evaluateStepTriggers(goalId)
+}
+
+/** Remove the PB record a log row mirrors (log-side delete of an attempt):
+ *  history entry out, credited share back, steps re-derived. */
+async function removeMirroredRecord(goalId: string, pbId: string, recordId: string): Promise<void> {
+  const pb = await db.personalBest.findFirst({ where: { id: pbId, goalId } })
+  if (!pb) return
+  let history: unknown[] = []
+  try {
+    const parsed = JSON.parse(pb.history)
+    if (Array.isArray(parsed)) history = parsed
+  } catch {
+    history = []
+  }
+  const removed = history.find(
+    (r): r is Record<string, unknown> =>
+      typeof r === 'object' && r !== null && (r as { id?: unknown }).id === recordId,
+  )
+  const next = history.filter(
+    (r) => !(typeof r === 'object' && r !== null && (r as { id?: unknown }).id === recordId),
+  )
+  if (next.length === history.length) return
+  const historyJson = JSON.stringify(next)
+  await db.personalBest.update({ where: { id: pb.id }, data: { history: historyJson } })
+  await applyPbNodeCredit(goalId, { ...pb, history: historyJson }, {
+    kind: 'remove',
+    prev: {
+      value: typeof removed?.value === 'number' ? removed.value : 0,
+      creditedValue: typeof removed?.creditedValue === 'number' ? removed.creditedValue : null,
+    },
+  })
+  await evaluateStepTriggers(goalId)
+}
+
 /** PATCH /api/goals/[id]/logs/[logId] — fix up an entry after the fact
  *  (e.g. the routine said 2 hours but you only worked 50 minutes, or the
  *  session actually happened on Tuesday).
@@ -74,7 +162,15 @@ export async function PATCH(req: Request, { params }: Params) {
     // (creditedValue is the amount this entry contributed) — both for
     // check-off auto-logs and direct "counts toward" credits
     const newAmount = parsed.data.amount
-    if (newAmount != null && Math.abs(newAmount - log.amount) > 1e-9) {
+    if (log.pbId) {
+      // a metric attempt mirrored into the ledger — the edit flows back into
+      // the metric's history (value/day/note) and everything it feeds
+      await syncMirroredRecord(id, log.pbId, logId, {
+        ...(newAmount != null ? { value: newAmount } : {}),
+        ...(parsed.data.note !== undefined ? { note: parsed.data.note } : {}),
+        ...(parsed.data.date ? { date: parsed.data.date } : {}),
+      })
+    } else if (newAmount != null && Math.abs(newAmount - log.amount) > 1e-9) {
       const done = await db.routineDone.findFirst({
         where: { logId },
         include: { routine: { select: { nodeId: true } } },
@@ -137,6 +233,10 @@ export async function DELETE(_req: Request, { params }: Params) {
       }
       // the session stays done — it just no longer contributes progress
       await db.routineDone.update({ where: { id: done.id }, data: { logId: null, creditedValue: null } })
+    } else if (log.pbId) {
+      // deleting a mirrored attempt from the Log tab removes the metric
+      // record too — one attempt, one entry, wherever you delete it from
+      await removeMirroredRecord(id, log.pbId, logId)
     } else if (log.nodeId && log.creditedValue != null && log.creditedValue > 0) {
       // direct checkpoint credit — give the progress back
       await applyNodeDelta(id, log.nodeId, -log.creditedValue)

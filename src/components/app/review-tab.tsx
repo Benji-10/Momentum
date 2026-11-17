@@ -59,7 +59,7 @@ function PbMetricBlock({
           {fed && (
             <span
               className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
-              title={`This metric feeds the “${fed.path.title}” roadmap — manage the link with the pencil`}
+              title={`This metric feeds the “${fed.node.title}” roadmap — manage the link with the Edit button`}
             >
               <Target className="h-2.5 w-2.5 shrink-0" />
               feeds {fed.node.icon} {fed.node.title}
@@ -89,14 +89,14 @@ function PbMetricBlock({
             <Plus className="h-3.5 w-3.5" /> Record
           </Button>
           <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1 px-2.5 text-xs"
             aria-label={`Edit ${pb.name} metric`}
-            title="Rename, change unit or direction"
+            title="Rename, change unit or direction, or edit which checkpoint this feeds"
             onClick={() => setEditOpen(true)}
           >
-            <Pencil className="h-3.5 w-3.5" />
+            <Pencil className="h-3.5 w-3.5" /> Edit
           </Button>
           <Button
             variant="ghost"

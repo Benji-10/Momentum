@@ -467,6 +467,11 @@ const logSchema = z.object({
   /** unit the amount was recorded in ("words", "min", …) — optional; null
    *  or missing = the goal's own unit */
   unit: z.string().max(30).nullish(),
+  /** present when the row mirrors a PB metric attempt (an export carries
+   *  those too) — such rows are DROPPED on import: the metric's attempts
+   *  come in through its own records and get fresh mirrors there, so the
+   *  attempt can never land twice in the merged history */
+  pbId: z.string().max(64).nullish(),
 })
 
 const pbRecordSchema = z.object({

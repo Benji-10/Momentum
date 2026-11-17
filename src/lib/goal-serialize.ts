@@ -95,6 +95,7 @@ export function serializeGoal(goal: GoalWithRelations): GoalData {
       note: l.note,
       unit: l.unit ?? null,
       nodeId: l.nodeId ?? null,
+      pbId: l.pbId ?? null,
       createdAt: l.createdAt.toISOString(),
     })),
     notes: goal.notes.map((n) => ({

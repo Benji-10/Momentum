@@ -875,6 +875,11 @@ async function mergePbs(goal: GoalRow, pbs: ImportGoalRaw['pbs'], summary: Merge
           })
           summary.recordsAdded += added.length
         }
+        // one ledger: every attempt in the (updated) history that doesn't
+        // have its mirrored log row yet gets one — new attempts AND the
+        // pre-mirror backfill, so a re-import repairs old history too
+        const unit = pb.unit !== undefined ? pb.unit?.trim() || null : m.unit
+        await mirrorPbRecords(goal.id, m.id, unit, [...history, ...added], summary)
       }
     } else {
       // brand-new metric — created even with no attempts yet: a step's
@@ -882,25 +887,61 @@ async function mergePbs(goal: GoalRow, pbs: ImportGoalRaw['pbs'], summary: Merge
       // later is what completes the step (records are progress, definitions
       // follow the file like everywhere else)
       const [np] = normalizeGoal({ title: 'scope', pbs: [pb] }).pbs
-      await db.personalBest.create({
+      const records = np.records.map((r) => ({ id: randomUUID(), date: r.date, value: r.value, note: r.note }))
+      const created = await db.personalBest.create({
         data: {
           goalId: goal.id,
           name: np.name,
           unit: np.unit,
           direction: np.direction,
-          history: JSON.stringify(
-            np.records.map((r) => ({ id: randomUUID(), date: r.date, value: r.value, note: r.note })),
-          ),
+          history: JSON.stringify(records),
         },
       })
+      await mirrorPbRecords(goal.id, created.id, np.unit, records, summary)
       summary.pbsCreated++
     }
   }
 }
 
+/** One ledger: mirror each PB record as a log row (id = record id, pbId
+ *  set, the metric's unit) so imported attempts appear in the goal's Log
+ *  history like app-recorded ones. Idempotent — records that already have
+ *  their mirror (matched by id) are skipped, and pre-mirror history gets
+ *  backfilled on the next import of the same file. */
+async function mirrorPbRecords(
+  goalId: string,
+  pbId: string,
+  pbUnit: string | null,
+  records: { id: string; date: string; value: number; note: string | null }[],
+  summary: MergeSummary,
+): Promise<void> {
+  if (!records.length) return
+  const existing = await db.progressLog.findMany({ where: { goalId, pbId }, select: { id: true } })
+  const have = new Set(existing.map((l) => l.id))
+  const missing = records.filter((r) => !have.has(r.id))
+  if (!missing.length) return
+  await db.progressLog.createMany({
+    data: missing.map((r) => ({
+      id: r.id,
+      goalId,
+      amount: r.value,
+      note: r.note,
+      unit: pbUnit,
+      pbId,
+      date: new Date(r.date),
+    })),
+  })
+  summary.logsAdded += missing.length
+}
+
 async function mergeLogs(goal: GoalRow, logs: ImportGoalRaw['logs'], summary: MergeSummary): Promise<void> {
   if (!logs?.length) return
-  const nls = normalizeGoal({ title: 'scope', logs }).logs
+  // mirrored metric attempts ride along in an export's logs — drop them
+  // here; the pbs section recreates them from its records (with fresh
+  // mirrors), so an attempt can never land twice in the merged history
+  const plain = logs.filter((l) => l != null && !l.pbId)
+  if (!plain.length) return
+  const nls = normalizeGoal({ title: 'scope', logs: plain }).logs
   const seen = new Set(goal.logs.map((l) => `${dayKey(l.date)}|${l.amount}|${l.note ?? ''}`))
   const fresh = nls.filter((l) => {
     const key = `${l.date.slice(0, 10)}|${l.amount}|${l.note ?? ''}`

@@ -112,7 +112,8 @@ export async function PATCH(req: Request, { params }: Params) {
 }
 
 /** DELETE /api/goals/[id]/pbs/[pbId] — remove the metric and its history.
- *  Sum-mode contributions are taken back out of the linked checkpoint first. */
+ *  Sum-mode contributions are taken back out of the linked checkpoint first,
+ *  and the mirrored attempt rows go with it (one attempt, one entry). */
 export async function DELETE(_req: Request, { params }: Params) {
   const { id, pbId } = await params
   const auth = await requireUser()
@@ -121,6 +122,7 @@ export async function DELETE(_req: Request, { params }: Params) {
     const pb = await loadPb(id, pbId, auth.user.id)
     if (!pb) return NextResponse.json({ error: 'PB not found' }, { status: 404 })
     await takeBackPbSums(id, pb)
+    await db.progressLog.deleteMany({ where: { pbId: pb.id } })
     await db.personalBest.delete({ where: { id: pb.id } })
     const goal = await ownedGoal(id, auth.user)
     return NextResponse.json({ goal: goal ? serializeGoal(goal) : null })

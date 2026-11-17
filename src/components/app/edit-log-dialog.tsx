@@ -26,6 +26,9 @@ export interface EditLogTarget {
   /** the checkpoint this entry credits, when it does — so the editor can
    *  say what a changed amount does to it ("adjusts 📗 Pages by the difference") */
   creditLabel?: string | null
+  /** what creditLabel points at — a skill checkpoint (default) or a PB
+   *  metric this entry mirrors ("adjusts the metric + everything it feeds") */
+  creditKind?: 'node' | 'metric'
 }
 
 /** Nudge size for the ± buttons, in the goal's unit. */
@@ -165,7 +168,9 @@ export function EditLogDialog({ target, onClose }: { target: EditLogTarget | nul
 
           {target?.creditLabel && (
             <p className="rounded-lg bg-primary/8 px-2 py-1.5 text-[11px] font-medium text-primary">
-              Credits {target.creditLabel} — changing the amount adjusts the checkpoint by the difference.
+              {target.creditKind === 'metric'
+                ? `Mirrors the ${target.creditLabel} metric — saving updates the metric, its chart and anything it feeds.`
+                : `Credits ${target.creditLabel} — changing the amount adjusts the checkpoint by the difference.`}
             </p>
           )}
 

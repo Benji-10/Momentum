@@ -25,7 +25,9 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     title: "Momentum",
-    statusBarStyle: "default",
+    // no statusBarStyle here on purpose — the appearance boot script owns
+    // that meta (default/black, matching the active theme's mode) so an
+    // installed iOS PWA never shows a white bar over a dark theme
   },
   icons: {
     // the Momentum mark: M as an ascending progress line (see public/favicon.svg)
@@ -57,18 +59,25 @@ export const viewport = {
  * along. Runs before next-themes hydration so a custom dark palette never
  * flashes light.
  *
- * It also creates/updates the sole <meta name="theme-color"> so the status
- * bar of an installed PWA matches the app's loading paint — the theme's own
- * background for presets (BG map, mirrors PRESET_BACKGROUNDS in palettes.ts —
- * keep in sync), the custom palette's background for custom themes, and the
- * OS colour scheme only as a last-resort fallback.
+ * It also creates/updates the status-bar metas so an installed PWA matches the
+ * app's loading paint — the theme's own background for presets (BG map,
+ * mirrors PRESET_BACKGROUNDS in palettes.ts — keep in sync), the custom
+ * palette's background for custom themes, and the OS colour scheme only as a
+ * last-resort fallback. apple-mobile-web-app-status-bar-style (what iOS
+ * standalone actually reads) flips black/default with the theme's mode.
+ *
+ * Finally it stamps data-theme + next-themes' localStorage key, so the custom
+ * palette's CSS (scoped to html[data-theme='custom']) applies pre-paint even
+ * if next-themes' stored value is stale — its own script runs later and
+ * agrees with the same value.
  */
 const APPEARANCE_BOOT_SCRIPT = `(function(){try{
 var raw=localStorage.getItem('momentum:settings-cache');
 var a=null;
 if(raw){try{var c=JSON.parse(raw);a=(c&&c.settings&&c.settings.appearance)||null}catch(e){}}
 var t=a?a.theme:null;
-var bar=null;
+if(t&&t!=='custom'&&!/^[a-z]+$/.test(t))t=null;
+var bar=null;var dark=false;
 function lum(h){var n=parseInt(h.slice(1),16),r=(n>>16&255)/255,g=(n>>8&255)/255,b=(n&255)/255;function f(x){return x<=.03928?x/12.92:Math.pow((x+.055)/1.055,2.4)}return .2126*f(r)+.7152*f(g)+.0722*f(b)}
 function ct(h){return lum(h)>.35?'#141414':'#fbfbfb'}
 // preset page backgrounds, oklch -> hex once (mirrors PRESET_BACKGROUNDS
@@ -77,17 +86,26 @@ var BG={light:'#faf9f7',dark:'#0c0e12',forest:'#08110b',berry:'#fef4f8',sunset:'
 if(t==='custom'&&a.custom){var v=a.custom,dk=lum(v.background)<.3;
 var css='html[data-theme="custom"]{color-scheme:'+(dk?'dark':'light')+';--background:'+v.background+';--foreground:'+v.text+';--card-solid:'+v.surface+';--card-foreground:'+v.text+';--popover-solid:'+v.surface+';--popover-foreground:'+v.text+';--primary:'+v.primary+';--primary-foreground:'+ct(v.primary)+';--secondary:'+v.surfaceAlt+';--secondary-foreground:'+v.text+';--muted:'+v.surfaceAlt+';--muted-foreground:'+v.textMuted+';--accent:color-mix(in oklab,'+v.accent2+' 14%,'+v.surface+');--accent-foreground:'+v.text+';--destructive:'+v.error+';--destructive-foreground:'+ct(v.error)+';--success:'+v.success+';--success-foreground:'+ct(v.success)+';--warning:'+v.warning+';--warning-foreground:'+ct(v.warning)+';--border:'+v.border+';--input:'+v.border+';--ring:'+v.primary+';--chart-1:'+v.primary+';--chart-2:'+v.accent2+';--chart-3:'+v.warning+';--chart-4:'+v.success+';--chart-5:color-mix(in oklab,'+v.accent2+' 60%,'+v.primary+');--sidebar:'+v.surface+';--sidebar-foreground:'+v.text+';--sidebar-primary:'+v.primary+';--sidebar-primary-foreground:'+ct(v.primary)+';--sidebar-accent:color-mix(in oklab,'+v.accent2+' 14%,'+v.surface+');--sidebar-accent-foreground:'+v.text+';--sidebar-border:'+v.border+';--sidebar-ring:'+v.primary+'}';
 var s=document.createElement('style');s.id='momentum-custom-theme';s.textContent=css;document.head.appendChild(s);
-document.documentElement.dataset.mode=dk?'dark':'light';
+document.documentElement.dataset.mode=dk?'dark':'light';dark=dk;
 if(/^#[0-9a-fA-F]{6}$/.test(v.background))bar=v.background;
 }else{
 var darkList=['dark','forest','sunset','petrolhead','ultraviolet','pomegranate','cryosphere','marigold','nightshade','oxidation','afterburn','mycelium','charcoal'];
-document.documentElement.dataset.mode=t&&darkList.indexOf(t)>=0?'dark':'light';
+dark=t&&darkList.indexOf(t)>=0;
+document.documentElement.dataset.mode=dark?'dark':'light';
 if(t)bar=BG[t]||null;
 }
-if(!bar)bar=(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches)?'#0c0e12':'#faf9f6';
+if(t){document.documentElement.dataset.theme=t;try{localStorage.setItem('theme',t)}catch(e){}}
+if(!bar)bar=dark?'#0c0e12':'#faf9f6';
+// the html canvas paints the bar colour pre-stylesheet (overscroll, the
+// frames before body's bg lands) — the SW injects the same as a static
+// style for installed PWAs; this covers plain browser tabs
+document.documentElement.style.backgroundColor=bar;
 var m=document.querySelector('meta[name="theme-color"]');
 if(!m){m=document.createElement('meta');m.setAttribute('name','theme-color');document.head.appendChild(m)}
 m.setAttribute('content',bar);
+var ap=document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+if(!ap){ap=document.createElement('meta');ap.setAttribute('name','apple-mobile-web-app-status-bar-style');document.head.appendChild(ap)}
+ap.setAttribute('content',dark?'black':'default');
 if(a&&a.surface&&a.surface!=='solid')document.documentElement.dataset.surface=a.surface;
 }catch(e){}})();`
 

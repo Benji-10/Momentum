@@ -42,6 +42,7 @@ import {
 } from '@/lib/goal-math'
 import { goalColor } from '@/lib/goal-colors'
 import { logRowUnit, logAmountLabel, checkoffDisplayUnit } from '@/lib/recording'
+import { beatsPb } from '@/lib/pb-math'
 import { buildSkillMap } from '@/lib/skill-tree'
 import { describeCadence, occurrencesInRange, relativeDayLabel, routineStats, sameDay, startOfWeek, addDays, toDayKey } from '@/lib/routine-math'
 import { dayKeyOf, getAppTimezone, isoForDayKey, todayDayKey } from '@/lib/app-time'
@@ -50,6 +51,7 @@ import { EditLogDialog, type EditLogTarget } from '@/components/app/edit-log-dia
 import {
   useAddLog,
   useAddNote,
+  useAddPbRecord,
   useAddStep,
   useDeleteGoal,
   useDeleteLog,
@@ -614,6 +616,10 @@ function DetailBody({
   /** the Log tab's "counts toward" pick: 'goal' = the goal's own ledger,
    *  else the checkpoint id the entry should credit ("150 pages") */
   const [creditTo, setCreditTo] = useState('goal')
+  /** PB metrics to also record this entry as an attempt for (opt-in chips —
+   *  one session, one tap, no second trip to the Review tab). Keyed by the
+   *  entry's unit so switching the "counts toward" pick starts fresh. */
+  const [attemptPick, setAttemptPick] = useState<{ unit: string; ids: string[] }>({ unit: '', ids: [] })
   const [newStep, setNewStep] = useState('')
   const [newNote, setNewNote] = useState('')
   /** per-goal "hide done steps" on: shows the hidden completed steps for
@@ -627,6 +633,7 @@ function DetailBody({
   const [editLog, setEditLog] = useState<EditLogTarget | null>(null)
 
   const addLog = useAddLog(goal.id)
+  const addPbRecord = useAddPbRecord(goal.id)
   const deleteLog = useDeleteLog(goal.id)
   const addStep = useAddStep(goal.id)
   const updateStep = useUpdateStep(goal.id)
@@ -664,11 +671,34 @@ function DetailBody({
     [skillMap, goal],
   )
   const creditTarget = creditNodes.find((v) => v.node.id === creditTo) ?? null
+  // the unit this Log-tab entry will be recorded in: the credited
+  // checkpoint's ("pages") or the goal's own ("km", "sessions")
+  const entryUnit = (creditTarget?.unit ?? goal.unit ?? '').trim()
+  // metrics speaking the same unit can record this entry as an attempt in
+  // the same tap (opt-in — attempts are history, not progress, and editing
+  // or deleting them works from either surface)
+  const attemptablePbs = useMemo(
+    () =>
+      entryUnit === ''
+        ? []
+        : goal.pbs.filter((p) => (p.unit ?? '').trim().toLowerCase() === entryUnit.toLowerCase()),
+    [goal.pbs, entryUnit],
+  )
+  // the picks that still apply to the current unit (dormant when the unit
+  // changed — no effect needed, it all derives from attemptPick + entryUnit)
+  const attemptPbIds =
+    attemptPick.unit.toLowerCase() === entryUnit.toLowerCase() && entryUnit !== '' ? attemptPick.ids : []
   // log.nodeId → its checkpoint, for history-row chips and the edit dialog
   const nodeById = useMemo(() => {
     const m = new Map<string, { icon: string; title: string; unit: string | null }>()
     for (const p of goal.skillPaths)
       for (const n of p.nodes) m.set(n.id, { icon: n.icon, title: n.title, unit: n.unit ?? p.unit ?? null })
+    return m
+  }, [goal])
+  // log.pbId → its metric (mirrored attempts), for history-row chips
+  const pbById = useMemo(() => {
+    const m = new Map<string, { name: string; unit: string | null }>()
+    for (const pb of goal.pbs) m.set(pb.id, { name: pb.name, unit: pb.unit })
     return m
   }, [goal])
   const c = goalColor(goal.color)
@@ -695,6 +725,10 @@ function DetailBody({
       return
     }
     const iso = date === todayStr() ? new Date().toISOString() : isoForDayKey(date, '12:00')
+    // the opt-in attempt records ride along with the entry: same value,
+    // same day, same note — each creates its own mirrored history row
+    // ("🏆 metric" chip) that edits/deletes from either surface
+    const attempts = attemptablePbs.filter((p) => attemptPbIds.includes(p.id))
     addLog.mutate(
       {
         amount: n,
@@ -711,6 +745,24 @@ function DetailBody({
           )
           setAmount('')
           setNote('')
+          setAttemptPick({ unit: '', ids: [] })
+          for (const pb of attempts) {
+            const wasBest = beatsPb(pb, n)
+            addPbRecord.mutate(
+              { pbId: pb.id, value: n, date: iso, note: note.trim() || null },
+              {
+                onSuccess: () =>
+                  toast.success(
+                    wasBest
+                      ? `New PB — ${pb.name}: ${formatNumber(n)}${pb.unit ? ` ${pb.unit}` : ''} 🏆`
+                      : `Attempt recorded for ${pb.name}`,
+                    { description: 'Editable from the Review tab or this history below.' },
+                  ),
+                onError: (e) =>
+                  toast.error(`Could not record the ${pb.name} attempt`, { description: e.message }),
+              },
+            )
+          }
         },
         onError: (e) => toast.error('Could not log progress', { description: e.message }),
       },
@@ -1615,6 +1667,51 @@ function DetailBody({
                     </span>
                   </p>
                 )}
+                {attemptablePbs.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] font-medium text-muted-foreground">
+                      Also record as an attempt:
+                    </span>
+                    {attemptablePbs.map((pb) => {
+                      const on = attemptPbIds.includes(pb.id)
+                      // if the metric feeds a checkpoint, say so — a recorded
+                      // attempt advances it like any other attempt would
+                      const fedNode = goal.skillPaths
+                        .flatMap((p) => p.nodes)
+                        .find((nd) => nd.id === pb.nodeId)
+                      return (
+                        <button
+                          key={pb.id}
+                          type="button"
+                          aria-pressed={on}
+                          title={
+                            fedNode
+                              ? `Every attempt on ${pb.name} also advances ${fedNode.icon} ${fedNode.title}`
+                              : `Keep ${pb.name} history in step with this entry — fully optional`
+                          }
+                          onClick={() =>
+                            setAttemptPick({
+                              unit: entryUnit,
+                              ids: attemptPbIds.includes(pb.id)
+                                ? attemptPbIds.filter((x) => x !== pb.id)
+                                : [...attemptPbIds, pb.id],
+                            })
+                          }
+                          className={cn(
+                            'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors',
+                            on
+                              ? 'border-primary/60 bg-primary/15 text-primary'
+                              : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/40 hover:text-foreground',
+                          )}
+                        >
+                          <Trophy className="h-3 w-3 shrink-0" />
+                          {pb.name}
+                          {on && <Check className="h-3 w-3 shrink-0" />}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
 
               {goal.logs.length > 0 && (
@@ -1630,6 +1727,8 @@ function DetailBody({
                       const rowUnit = logRowUnit(goal, log)
                       // the checkpoint this entry advanced, when it did
                       const creditNode = log.nodeId ? nodeById.get(log.nodeId) ?? null : null
+                      // the metric this entry mirrors (a recorded attempt)
+                      const creditPb = log.pbId ? pbById.get(log.pbId) ?? null : null
                       return (
                       <div
                         key={log.id}
@@ -1650,7 +1749,12 @@ function DetailBody({
                               title: goal.title,
                               note: log.note,
                               day: dayKeyOf(new Date(log.date)),
-                              creditLabel: creditNode ? `${creditNode.icon} ${creditNode.title}` : null,
+                              creditLabel: creditNode
+                                ? `${creditNode.icon} ${creditNode.title}`
+                                : creditPb
+                                  ? creditPb.name
+                                  : null,
+                              creditKind: creditPb ? 'metric' : 'node',
                             })
                           }
                         >
@@ -1667,6 +1771,14 @@ function DetailBody({
                               title={`This entry advances ${creditNode.title}`}
                             >
                               <Target className="h-2.5 w-2.5" /> {creditNode.title}
+                            </span>
+                          )}
+                          {creditPb && (
+                            <span
+                              className="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400"
+                              title={`${creditPb.name} attempt — edit it here or from the metric's attempt chips`}
+                            >
+                              <Trophy className="h-2.5 w-2.5" /> {creditPb.name}
                             </span>
                           )}
                           <div className="min-w-0 flex-1 truncate text-muted-foreground">{log.note ?? ''}</div>

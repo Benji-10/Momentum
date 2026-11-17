@@ -573,11 +573,15 @@ export function RecordPbDialog({
         onSuccess: (res) => {
           const unit = pb.unit ? ` ${pb.unit}` : ''
           if (isRecord) {
-            toast.success(`New PB — ${formatNumber(n)}${unit} 🎉`)
+            toast.success(`New PB — ${formatNumber(n)}${unit} 🎉`, {
+              description: "It's in this goal's Log history too — edit it from either place.",
+            })
           } else {
             const cur = currentPb(pb)
             toast.success(`Recorded ${formatNumber(n)}${unit}`, {
-              description: cur ? `PB stays ${formatNumber(cur.value)}${unit}` : undefined,
+              description: cur
+                ? `PB stays ${formatNumber(cur.value)}${unit} · also in the Log history`
+                : "It's in this goal's Log history too.",
             })
           }
           // a metric-triggered step may have just cleared its bar

@@ -23,12 +23,21 @@ function logDay(l: { date: string }): number {
   return dayStart(parseDayKey(l.date)).getTime()
 }
 
-/** Amount logged during the week containing `ref`. */
+/** A metric attempt mirrored into the ledger (pbId set) — real history, but
+ *  never progress: it must not inflate the goal's own sums, sessions, pace
+ *  or time. (Attempts still count as activity for day streaks.) */
+function isMetricAttempt(l: { pbId?: string | null }): boolean {
+  return l.pbId != null
+}
+
+/** Amount logged during the week containing `ref` (mirrored metric attempts
+ *  excluded — an attempt is not a progress amount). */
 export function amountInWeek(logs: GoalData['logs'], ref: Date, weekStartOffset = 0): number {
   const ws = new Date(startOfWeek(ref).getTime() + weekStartOffset * WEEK_MS)
   const we = new Date(ws.getTime() + WEEK_MS)
   return logs
     .filter((l) => {
+      if (isMetricAttempt(l)) return false
       const t = logDay(l)
       return t >= ws.getTime() && t < we.getTime()
     })
@@ -136,6 +145,8 @@ function sessionEvents(goal: GoalData): { date: number; n: number }[] {
   )
   for (const l of goal.logs) {
     if (autoLogIds.has(l.id)) continue
+    // mirrored metric attempts aren't sessions — they're recorded results
+    if (isMetricAttempt(l)) continue
     events.push({ date: logDay(l), n: l.nodeId ? 1 : l.amount })
   }
   return events
@@ -190,7 +201,10 @@ export interface GoalStats {
 }
 
 export function computeGoalStats(goal: GoalData, now = new Date()): GoalStats {
-  const logs = [...goal.logs].sort((a, b) => +new Date(a.date) - +new Date(b.date))
+  const logs = [...goal.logs]
+    // mirrored metric attempts ("128 WPM") are history, not progress amounts
+    .filter((l) => !isMetricAttempt(l))
+    .sort((a, b) => +new Date(a.date) - +new Date(b.date))
   const sessionCounting = isSessionCountingGoal(goal)
   const currentValue = Math.round(logs.reduce((s, l) => s + l.amount, 0) * 100) / 100
   const created = new Date(goal.createdAt)
@@ -295,7 +309,12 @@ export function computeGoalStats(goal: GoalData, now = new Date()): GoalStats {
   for (let i = 0; i < 52; i++) {
     const amount = sessionCounting
       ? sessionsInWeek(goal, now, -i)
-      : amountInWeek(goal.logs, now, -i)
+      : amountInWeek(
+          // mirrored metric attempts are history, not progress
+          goal.logs.filter((l) => !isMetricAttempt(l)),
+          now,
+          -i,
+        )
     const met = weeklyRequirement != null ? amount >= weeklyRequirement * 0.99 : amount > 0
     if (met) streakWeeks++
     else if (i === 0) continue // current week still in progress — don't break the streak
@@ -317,8 +336,11 @@ export function computeGoalStats(goal: GoalData, now = new Date()): GoalStats {
       ? Math.ceil((stepsTotal - stepsDone) / weeksLeft)
       : null
 
-  const lastActivityDate = logs.length
-    ? new Date(logs[logs.length - 1].date)
+  // "last activity" counts every history row — a recorded metric attempt is
+  // still the user showing up (the progress sums above exclude them)
+  const activityLogs = [...goal.logs].sort((a, b) => +new Date(a.date) - +new Date(b.date))
+  const lastActivityDate = activityLogs.length
+    ? new Date(activityLogs[activityLogs.length - 1].date)
     : steps.some((s) => s.completedAt)
       ? new Date(
           steps
@@ -361,7 +383,7 @@ export function computeGoalStats(goal: GoalData, now = new Date()): GoalStats {
     requiredStepsPerWeek,
     streakWeeks,
     lastActivityDate,
-    logsCount: logs.length,
+    logsCount: activityLogs.length,
   }
 }
 
@@ -385,7 +407,9 @@ export function cumulativeSeries(goal: GoalData, now = new Date()): CumulativePo
   if (span <= 0) return []
   const stepDays = Math.max(1, Math.ceil(span / DAY_MS / 160))
 
-  const logs = [...goal.logs].sort((a, b) => +new Date(a.date) - +new Date(b.date))
+  const logs = [...goal.logs]
+    .filter((l) => !isMetricAttempt(l))
+    .sort((a, b) => +new Date(a.date) - +new Date(b.date))
   const points: CumulativePoint[] = []
   let cum = 0
   let li = 0
@@ -458,9 +482,9 @@ export function timeSpent(goal: GoalData, now = new Date()): TimeSpent | null {
   // session happened *in the user's timezone*, regardless of which device's
   // clock stored it
   if (timeUnit === 'hours') {
-    events = goal.logs.map((l) => ({ date: logDay(l), hours: l.amount }))
+    events = goal.logs.filter((l) => !isMetricAttempt(l)).map((l) => ({ date: logDay(l), hours: l.amount }))
   } else if (timeUnit === 'minutes') {
-    events = goal.logs.map((l) => ({ date: logDay(l), hours: l.amount / 60 }))
+    events = goal.logs.filter((l) => !isMetricAttempt(l)).map((l) => ({ date: logDay(l), hours: l.amount / 60 }))
   } else {
     events = goal.routines
       .filter((r) => !r.archived && r.durationMin != null && r.durationMin > 0)

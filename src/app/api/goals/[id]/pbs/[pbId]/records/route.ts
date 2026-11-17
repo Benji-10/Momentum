@@ -22,6 +22,12 @@ type Params = { params: Promise<{ id: string; pbId: string }> }
  * new PB is derived client-side (pb-math); the server just keeps history —
  * and, when the metric feeds a roadmap checkpoint, credits it (sum mode) or
  * re-mirrors the rolling average (average mode).
+ *
+ * One ledger: the attempt is ALSO written as a ProgressLog row (id = record
+ * id, pbId set, the metric's unit) so it shows in the goal's Log tab history
+ * next to sessions and checkpoint credits — editable from either surface.
+ * Mirrored rows never count toward the goal's own sums (attempts are not
+ * progress amounts).
  */
 export async function POST(req: Request, { params }: Params) {
   const { id, pbId } = await params
@@ -57,6 +63,19 @@ export async function POST(req: Request, { params }: Params) {
     // the linked checkpoint (if any) gets its share of the attempt
     const nodeCredit = await applyPbNodeCredit(id, { ...pb, history: historyJson }, { kind: 'add', recordId })
 
+    // mirror the attempt into the goal's log history (same id, metric unit)
+    await db.progressLog.create({
+      data: {
+        id: recordId,
+        goalId: id,
+        amount: d.value,
+        note: d.note ?? null,
+        unit: pb.unit,
+        pbId: pb.id,
+        date: d.date ? new Date(d.date) : new Date(),
+      },
+    })
+
     // a new attempt can push a metric-triggered step over its bar
     const advances = await evaluateStepTriggers(id)
 
@@ -64,6 +83,7 @@ export async function POST(req: Request, { params }: Params) {
     return NextResponse.json(
       {
         goal: goal ? serializeGoal(goal) : null,
+        log: { id: recordId, amount: d.value, unit: pb.unit },
         stepsAdvanced: advances.map((a) => ({ id: a.stepId, title: a.title })),
         nodeCredit,
       },
