@@ -513,7 +513,7 @@ export function SettingsDialog({
 
             {/* build stamp — one glance answers "am I on the fresh deploy?" */}
             <p className="pt-1 text-center text-[11px] text-muted-foreground/70">
-              Momentum · build 2026-11-17.4
+              Momentum · build 2026-11-18.2
             </p>
           </TabsContent>
         </Tabs>

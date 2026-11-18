@@ -1582,3 +1582,449 @@ export function makeFluidMechanics(settings: BgSettings): WarmupSceneFactory {
   factory.warmupFrames = 110
   return factory
 }
+
+// ---------------------------------------------------------------------------
+// Vapourwave — the procedural retro postcard (canvas port).
+//
+// A dusk sky with seeded stars and a banded sun setting behind two layers of
+// fbm-noise mountains, over a dark ground plane carrying a neon perspective
+// grid that scrolls toward the horizon. The sky (gradient + atmosphere blobs
+// + stars + sun + grain), the ground and the horizontal grid lines are
+// pre-rendered once to offscreen layers at device resolution; only the
+// mountains and the scrolling grid animate per frame.
+//
+// Settings: speed (100% = the reference drift; 0 = a still postcard) and
+// density (star density, 50 = the reference field). Stars, terrain shape and
+// grain derive from one per-page-load seed — a fresh landscape every visit,
+// stable across resizes and slider tweaks (the factory re-runs on both, the
+// seed does not).
+// ---------------------------------------------------------------------------
+
+/** one roll per page load — every visit grows a new landscape */
+const VW_SEED = Math.floor(Math.random() * 2 ** 31)
+
+/** integer hash → [0, 1) — deterministic procedural noise */
+function vwHash(n: number, seed: number): number {
+  let x = (Math.floor(n) + seed) | 0
+  x = Math.imul(x ^ (x >>> 16), 0x7feb352d)
+  x = Math.imul(x ^ (x >>> 15), 0x846ca68b)
+  x ^= x >>> 16
+  return (x >>> 0) / 4294967295
+}
+
+function vwSmoothNoise(x: number, seed: number): number {
+  const i = Math.floor(x)
+  let f = x - i
+  f = f * f * (3 - 2 * f)
+  const a = vwHash(i, seed)
+  const b = vwHash(i + 1, seed)
+  return a + (b - a) * f
+}
+
+function vwFbm(x: number, seed: number): number {
+  return (
+    vwSmoothNoise(x, seed) * 0.55 +
+    vwSmoothNoise(x * 2.3, seed + 19) * 0.29 +
+    vwSmoothNoise(x * 4.7, seed + 47) * 0.16
+  )
+}
+
+/** seeded LCG — stars and grain roll deterministically from the load seed */
+function vwRng(seed: number): () => number {
+  let s = seed >>> 0
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0
+    return s / 4294967296
+  }
+}
+
+/** soft elliptical gradient blob (atmosphere / haze) */
+function vwSoftBlob(
+  c: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  rx: number,
+  ry: number,
+  colour: string,
+  opacity: number,
+): void {
+  c.save()
+  c.translate(x, y)
+  c.scale(rx, ry)
+  const gradient = c.createRadialGradient(0, 0, 0, 0, 0, 1)
+  gradient.addColorStop(0, `rgba(${colour},${opacity})`)
+  gradient.addColorStop(0.4, `rgba(${colour},${opacity * 0.55})`)
+  gradient.addColorStop(1, `rgba(${colour},0)`)
+  c.fillStyle = gradient
+  c.fillRect(-1, -1, 2, 2)
+  c.restore()
+}
+
+export function makeVapourwave(settings: BgSettings): SceneFactory {
+  const speed = numOf(settings.speed, 100) / 100 // 0 = a still postcard
+  const starDensity = numOf(settings.density, 50) / 50 // 50 = reference field
+
+  return (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+    const TAU = Math.PI * 2
+    const cw = Math.max(1, w)
+    const ch = Math.max(1, h)
+    // device-pixel ratio the shared runner set up (canvas.width = cw * dpr):
+    // offscreen layers render at this resolution so stars and neon lines
+    // stay crisp on retina screens, then blit back into CSS-pixel space
+    const dpr = ctx.canvas.width / cw
+    // CSS-pixel horizon for the parts drawn directly on the live context
+    const horizon = ch * 0.635
+    const vanishingY = ch * 0.6
+
+    // -----------------------------------------------------------------
+    // static layers (offscreen, device resolution)
+    // -----------------------------------------------------------------
+    const W = Math.max(1, Math.round(cw * dpr))
+    const H = Math.max(1, Math.round(ch * dpr))
+    const HORIZON = H * 0.635
+    const makeLayer = () => {
+      const layer = document.createElement('canvas')
+      layer.width = W
+      layer.height = H
+      return layer
+    }
+
+    /** procedural stars, clipped to the sky */
+    const drawStars = (c: CanvasRenderingContext2D) => {
+      const random = vwRng(VW_SEED ^ 0x73462)
+      const count = Math.round(Math.min(180, Math.max(35, (cw * ch) / 14000)) * starDensity)
+      c.save()
+      c.beginPath()
+      c.rect(0, 0, W, HORIZON)
+      c.clip()
+      c.globalCompositeOperation = 'screen'
+      for (let i = 0; i < count; i++) {
+        const x = random() * W
+        const y = random() * HORIZON * 0.91
+        const size = (0.35 + Math.pow(random(), 2) * 1.3) * dpr
+        const opacity = 0.22 + random() * 0.55
+        const choice = random()
+        let colour: string
+        if (choice < 0.65) colour = `rgba(220,226,255,${opacity})`
+        else if (choice < 0.85) colour = `rgba(178,185,255,${opacity})`
+        else colour = `rgba(255,207,199,${opacity})`
+        c.beginPath()
+        c.arc(x, y, size, 0, TAU)
+        c.fillStyle = colour
+        c.fill()
+        // occasional brighter four-point stars
+        if (random() > 0.965) {
+          const length = size * 4
+          c.strokeStyle = `rgba(230,223,255,${opacity * 0.65})`
+          c.lineWidth = Math.max(0.5, dpr * 0.5)
+          c.beginPath()
+          c.moveTo(x - length, y)
+          c.lineTo(x + length, y)
+          c.moveTo(x, y - length)
+          c.lineTo(x, y + length)
+          c.stroke()
+          c.beginPath()
+          c.arc(x, y, size * 1.5, 0, TAU)
+          c.fillStyle = `rgba(255,245,235,${opacity})`
+          c.fill()
+        }
+      }
+      c.restore()
+    }
+
+    /** the banded sun with its glow stack */
+    const drawSun = (c: CanvasRenderingContext2D) => {
+      const cx = W * 0.5
+      const cy = HORIZON - H * 0.14
+      const r = H * 0.25
+      c.save()
+      c.globalCompositeOperation = 'screen'
+      // large diffuse outer glow
+      const outer = c.createRadialGradient(cx, cy, r * 0.9, cx, cy, r * 5.5)
+      outer.addColorStop(0, 'rgba(255,185,95,0.24)')
+      outer.addColorStop(0.15, 'rgba(255,151,85,0.21)')
+      outer.addColorStop(0.32, 'rgba(255,103,112,0.17)')
+      outer.addColorStop(0.55, 'rgba(242,70,154,0.11)')
+      outer.addColorStop(0.78, 'rgba(145,63,177,0.045)')
+      outer.addColorStop(1, 'rgba(100,40,140,0)')
+      c.fillStyle = outer
+      c.fillRect(cx - r * 5.6, cy - r * 5.6, r * 11.2, r * 11.2)
+      // medium orange halo
+      const warm = c.createRadialGradient(cx, cy, r, cx, cy, r * 2.5)
+      warm.addColorStop(0, 'rgba(255,205,82,0.27)')
+      warm.addColorStop(0.15, 'rgba(255,148,51,0.34)')
+      warm.addColorStop(0.42, 'rgba(255,108,66,0.20)')
+      warm.addColorStop(0.72, 'rgba(255,77,111,0.08)')
+      warm.addColorStop(1, 'rgba(255,60,120,0)')
+      c.fillStyle = warm
+      c.fillRect(cx - r * 2.6, cy - r * 2.6, r * 5.2, r * 5.2)
+      // tight bright yellow rim
+      const ring = c.createRadialGradient(cx, cy, r * 0.96, cx, cy, r * 1.28)
+      ring.addColorStop(0, 'rgba(255,243,110,0)')
+      ring.addColorStop(0.1, 'rgba(255,248,133,0.98)')
+      ring.addColorStop(0.27, 'rgba(255,232,80,0.95)')
+      ring.addColorStop(0.48, 'rgba(255,189,49,0.65)')
+      ring.addColorStop(0.76, 'rgba(255,130,45,0.20)')
+      ring.addColorStop(1, 'rgba(255,110,50,0)')
+      c.fillStyle = ring
+      c.fillRect(cx - r * 1.4, cy - r * 1.4, r * 2.8, r * 2.8)
+      // crisp luminous edge
+      c.beginPath()
+      c.arc(cx, cy, r * 1.008, 0, TAU)
+      c.strokeStyle = 'rgba(255,243,128,0.95)'
+      c.lineWidth = Math.max(1.5 * dpr, r * 0.012)
+      c.stroke()
+      c.restore()
+      // sun disc: yellow → orange → coral → hot pink, with the retro bands
+      c.save()
+      c.beginPath()
+      c.arc(cx, cy, r, 0, TAU)
+      c.clip()
+      const disc = c.createLinearGradient(cx, cy - r, cx, cy + r)
+      disc.addColorStop(0, '#fff45c')
+      disc.addColorStop(0.14, '#ffed4d')
+      disc.addColorStop(0.26, '#ffdc3e')
+      disc.addColorStop(0.36, '#ffc02f')
+      disc.addColorStop(0.43, '#ff9d2b')
+      disc.addColorStop(0.5, '#ff7838')
+      disc.addColorStop(0.58, '#ff6260')
+      disc.addColorStop(0.66, '#ff427f')
+      disc.addColorStop(0.73, '#ff258f')
+      disc.addColorStop(0.84, '#f4199b')
+      disc.addColorStop(1, '#d70a91')
+      c.fillStyle = disc
+      c.fillRect(cx - r, cy - r, r * 2, r * 2)
+      // procedurally spaced sun bands
+      for (let i = 0; i < 8; i++) {
+        const y = cy + (r * i * i) / 50
+        c.fillStyle = `rgba(219, 10, 74,${0.17 + i * 0.08})`
+        c.fillRect(cx - r, y, r * 2, (r * i) / 40)
+      }
+      c.restore()
+    }
+
+    /** subtle film grain over the whole sky */
+    const drawGrain = (c: CanvasRenderingContext2D) => {
+      const random = vwRng(VW_SEED ^ 0x16a9f)
+      const tile = document.createElement('canvas')
+      tile.width = 512
+      tile.height = 512
+      const tc = tile.getContext('2d')
+      if (!tc) return
+      const image = tc.createImageData(512, 512)
+      for (let i = 0; i < image.data.length; i += 4) {
+        const value = 100 + Math.floor(random() * 56)
+        image.data[i] = value
+        image.data[i + 1] = value
+        image.data[i + 2] = value
+        image.data[i + 3] = 255
+      }
+      tc.putImageData(image, 0, 0)
+      c.save()
+      c.globalCompositeOperation = 'soft-light'
+      c.globalAlpha = 0.13
+      c.fillStyle = c.createPattern(tile, 'repeat')
+      c.fillRect(0, 0, W, H)
+      c.restore()
+    }
+
+    // sky: the dusk gradient, atmosphere blobs, stars, sun, grain
+    const skyLayer = makeLayer()
+    {
+      const c = skyLayer.getContext('2d')!
+      const sky = c.createLinearGradient(0, 0, 0, H)
+      sky.addColorStop(0, '#090b25')
+      sky.addColorStop(0.2, '#151431')
+      sky.addColorStop(0.38, '#302044')
+      sky.addColorStop(0.51, '#563052')
+      sky.addColorStop(0.59, '#91445e')
+      sky.addColorStop(0.635, '#c05d6c')
+      sky.addColorStop(0.72, '#542644')
+      sky.addColorStop(1, '#100d25')
+      c.fillStyle = sky
+      c.fillRect(0, 0, W, H)
+      // cool atmospheric variations
+      vwSoftBlob(c, W * 0.16, H * 0.3, W * 0.47, H * 0.32, '63,85,166', 0.17)
+      vwSoftBlob(c, W * 0.83, H * 0.35, W * 0.4, H * 0.3, '127,65,155', 0.17)
+      // warm sunset atmosphere
+      vwSoftBlob(c, W * 0.48, H * 0.6, W * 0.43, H * 0.12, '255,139,119', 0.18)
+      vwSoftBlob(c, W * 0.15, H * 0.56, W * 0.33, H * 0.12, '177,81,129', 0.13)
+      vwSoftBlob(c, W * 0.89, H * 0.56, W * 0.31, H * 0.12, '225,88,147', 0.12)
+      // faint organic atmospheric patches
+      vwSoftBlob(c, W * 0.22, H * 0.37, W * 0.23, H * 0.045, '148,109,174', 0.1)
+      vwSoftBlob(c, W * 0.7, H * 0.43, W * 0.28, H * 0.06, '189,99,163', 0.09)
+      vwSoftBlob(c, W * 0.43, H * 0.29, W * 0.18, H * 0.055, '104,104,170', 0.08)
+      drawStars(c)
+      drawSun(c)
+      drawGrain(c)
+    }
+
+    // ground: the dark plane below the horizon
+    const groundLayer = makeLayer()
+    {
+      const c = groundLayer.getContext('2d')!
+      const ground = c.createLinearGradient(0, HORIZON, 0, H)
+      ground.addColorStop(0, '#34203d')
+      ground.addColorStop(0.17, '#21162f')
+      ground.addColorStop(0.55, '#111126')
+      ground.addColorStop(1, '#090a1b')
+      c.fillStyle = ground
+      c.fillRect(0, HORIZON, W, H - HORIZON)
+      vwSoftBlob(c, W * 0.5, HORIZON, W * 0.35, H * 0.12, '217,78,145', 0.13)
+      vwSoftBlob(c, W * 0.15, H * 0.74, W * 0.35, H * 0.2, '75,56,143', 0.09)
+      vwSoftBlob(c, W * 0.9, H * 0.75, W * 0.32, H * 0.2, '57,70,141', 0.09)
+    }
+
+    // static horizontal grid lines (depth-spaced, alternating pink / blue)
+    const hGridLayer = makeLayer()
+    {
+      const c = hGridLayer.getContext('2d')!
+      c.save()
+      c.beginPath()
+      c.rect(0, HORIZON, W, H - HORIZON)
+      c.clip()
+      c.globalCompositeOperation = 'screen'
+      const rows = 15
+      for (let i = 0; i < rows; i++) {
+        const q = (i + 1) / rows
+        const depth = Math.pow(q, 1.72)
+        const y = HORIZON + depth * (H - HORIZON)
+        const alpha = 0.24 + depth * 0.42
+        const colour = i % 2 === 0 ? '255,82,201' : '112,111,255'
+        // broad outer glow
+        c.beginPath()
+        c.moveTo(-W * 0.1, y)
+        c.lineTo(W * 1.1, y)
+        c.strokeStyle = `rgba(${colour},${alpha * 0.24})`
+        c.lineWidth = Math.max(12, dpr * 10)
+        c.stroke()
+        // middle glow
+        c.beginPath()
+        c.moveTo(-W * 0.1, y)
+        c.lineTo(W * 1.1, y)
+        c.strokeStyle = `rgba(${colour},${alpha * 0.35})`
+        c.lineWidth = Math.max(5, dpr * 5)
+        c.stroke()
+        // neon centre
+        c.beginPath()
+        c.moveTo(-W * 0.1, y)
+        c.lineTo(W * 1.1, y)
+        c.strokeStyle = `rgba(${colour},${alpha})`
+        c.lineWidth = Math.max(1.2, dpr * 1.2)
+        c.stroke()
+        // fine highlight
+        c.beginPath()
+        c.moveTo(-W * 0.1, y)
+        c.lineTo(W * 1.1, y)
+        c.strokeStyle = `rgba(229,199,255,${alpha * 0.38})`
+        c.lineWidth = Math.max(0.7, dpr * 0.6)
+        c.stroke()
+      }
+      c.restore()
+    }
+
+    // -----------------------------------------------------------------
+    // animated parts (drawn directly on the live context, CSS pixels)
+    // -----------------------------------------------------------------
+    /** one fbm-noise mountain ridge with a central valley for the sun */
+    const drawMountainLayer = (
+      c: CanvasRenderingContext2D,
+      seconds: number,
+      seed: number,
+      moveSpeed: number,
+      featureScale: number,
+      minHeight: number,
+      maxHeight: number,
+      colourTop: string,
+      colourBottom: string,
+    ) => {
+      const step = 3
+      const gradient = c.createLinearGradient(0, horizon - ch * maxHeight, 0, horizon)
+      gradient.addColorStop(0, colourTop)
+      gradient.addColorStop(1, colourBottom)
+      c.beginPath()
+      let first = true
+      for (let x = -step; x <= cw + step; x += step) {
+        const u = x / cw
+        const worldX = (u + seconds * moveSpeed) / featureScale
+        let n = vwFbm(worldX, seed)
+        n = Math.pow(n, 1.25)
+        // dip in the middle so the sun stays visible
+        const centralValley = 0.015 + 0.985 * Math.pow(Math.min(1, Math.abs((u - 0.5) * 2)), 1.5)
+        const mountainHeight = minHeight + n * (maxHeight - minHeight) * centralValley
+        const y = horizon - ch * mountainHeight
+        if (first) {
+          c.moveTo(x, y)
+          first = false
+        } else {
+          c.lineTo(x, y)
+        }
+      }
+      c.lineTo(cw + step, horizon)
+      c.lineTo(-step, horizon)
+      c.closePath()
+      c.fillStyle = gradient
+      c.fill()
+    }
+
+    /** the infinite scrolling neon grid converging on the vanishing point */
+    const drawPerspectiveGrid = (seconds: number) => {
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(0, horizon, cw, ch - horizon)
+      ctx.clip()
+      ctx.globalCompositeOperation = 'screen'
+      const spacing = cw / 3
+      const cameraX = seconds * cw * 0.02 * speed
+      const firstIndex = Math.floor(cameraX / spacing) - 30
+      const lastIndex = firstIndex + 60
+      const vpX = cw * 0.5
+      const vpY = vanishingY
+      const paths = new Path2D()
+      for (let i = firstIndex; i <= lastIndex; i++) {
+        const bottomX = cw * 0.5 + i * spacing - cameraX
+        paths.moveTo(vpX, vpY)
+        paths.lineTo(bottomX, ch * 1.1)
+      }
+      // outer glow
+      ctx.strokeStyle = 'rgba(177,84,255,0.24)'
+      ctx.lineWidth = 12
+      ctx.stroke(paths)
+      // secondary glow
+      ctx.strokeStyle = 'rgba(227,93,255,0.25)'
+      ctx.lineWidth = 6
+      ctx.stroke(paths)
+      // main neon gradient
+      const colours = ctx.createLinearGradient(0, 0, cw, 0)
+      colours.addColorStop(0, 'rgba(255,90,205,0.95)')
+      colours.addColorStop(0.5, 'rgba(182,111,255,0.95)')
+      colours.addColorStop(1, 'rgba(103,156,255,0.95)')
+      ctx.strokeStyle = colours
+      ctx.lineWidth = 1.3
+      ctx.stroke(paths)
+      // fine highlight
+      ctx.strokeStyle = 'rgba(235,205,255,0.40)'
+      ctx.lineWidth = 0.7
+      ctx.stroke(paths)
+      ctx.restore()
+    }
+
+    return (tSec: number) => {
+      // static sky
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.globalAlpha = 1
+      ctx.drawImage(skyLayer, 0, 0, cw, ch)
+      // moving mountains
+      drawMountainLayer(ctx, tSec, VW_SEED ^ 118, 0.0025 * speed, 0.24, 0.025, 0.22, '#735071', '#30203f')
+      drawMountainLayer(ctx, tSec, VW_SEED ^ 836, 0.0065 * speed, 0.16, 0.012, 0.15, '#4d365b', '#201831')
+      // ground covers the lower sun
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.drawImage(groundLayer, 0, 0, cw, ch)
+      // horizontal grid lines
+      ctx.globalCompositeOperation = 'screen'
+      ctx.drawImage(hGridLayer, 0, 0, cw, ch)
+      // continuously scrolling perspective grid
+      drawPerspectiveGrid(tSec)
+    }
+  }
+}

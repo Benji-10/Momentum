@@ -4,10 +4,10 @@ import { useState } from 'react'
 import { CalendarDays, Check, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { GoalData } from '@/lib/types'
-import { formatNumber, isSessionCountingGoal } from '@/lib/goal-math'
+import { formatNumber } from '@/lib/goal-math'
 import { dayKeyAgo, isoForDayKey, todayDayKey } from '@/lib/app-time'
 import { logAmountLabel } from '@/lib/recording'
-import { useAddLog, useUpdateNode } from '@/hooks/use-goals'
+import { useAddLog } from '@/hooks/use-goals'
 import { EditLogDialog, type EditLogTarget } from '@/components/app/edit-log-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -196,9 +196,10 @@ export function QuickLogPopover({
  * the dashboard use this, so ongoing targets are actionable right there
  * (they advance by logged progress, not by a checkbox).
  *
- * On session-counting plan goals the add is a dated, editable log entry that
- * credits the checkpoint; other goals keep the direct checkpoint add (their
- * ledger sums one unit, so a checkpoint-unit entry has no home in it).
+ * The add is always a dated, editable log entry that credits the checkpoint.
+ * When the checkpoint's unit differs from the goal's own, the entry counts
+ * for the tree and stays history for the goal's sums (one ledger, many
+ * units — see lib/units.ts).
  */
 export function NodeQuickAddPopover({
   goal,
@@ -221,10 +222,8 @@ export function NodeQuickAddPopover({
   const [amount, setAmount] = useState('')
   /** the entry being fine-tuned right after logging it */
   const [editTarget, setEditTarget] = useState<EditLogTarget | null>(null)
-  const updateNode = useUpdateNode(goal.id)
   const addLog = useAddLog(goal.id)
-  const viaLog = isSessionCountingGoal(goal)
-  const pending = viaLog ? addLog.isPending : updateNode.isPending
+  const pending = addLog.isPending
 
   function submit(preset?: number) {
     const n = preset != null ? preset : parseFloat(amount)
@@ -232,45 +231,28 @@ export function NodeQuickAddPopover({
       toast.error('Enter an amount greater than 0')
       return
     }
-    if (viaLog) {
-      addLog.mutate(
-        { amount: n, nodeId, unit: unit ?? null },
-        {
-          onSuccess: (res) => {
-            toast.success(`Logged ${logAmountLabel(n, unit ?? 'units')}`, {
-              description: 'A dated entry in this goal’s history — edit the amount or day any time.',
-              action: res.log
-                ? {
-                    label: 'Edit',
-                    onClick: () =>
-                      setEditTarget({
-                        goalId: goal.id,
-                        logId: res.log.id,
-                        amount: res.log.amount,
-                        unit: unit ?? 'units',
-                        title: nodeTitle,
-                        note: res.log.note,
-                        day: todayDayKey(),
-                        creditLabel: nodeIcon ? `${nodeIcon} ${nodeTitle}` : nodeTitle,
-                      }),
-                  }
-                : undefined,
-            })
-            setAmount('')
-            setOpen(false)
-          },
-          onError: (e) => toast.error('Could not add progress', { description: e.message }),
-        },
-      )
-      return
-    }
-    updateNode.mutate(
-      { nodeId, patch: { add: n } },
+    addLog.mutate(
+      { amount: n, nodeId, unit: unit ?? null },
       {
-        onSuccess: (_data, vars) => {
-          const added = vars.patch.add ?? 0
-          toast.success(`+${formatNumber(added)} ${unit || 'progress'}`, {
-            description: `${nodeTitle} advanced — see the roadmap for the full tree.`,
+        onSuccess: (res) => {
+          toast.success(`Logged ${logAmountLabel(n, unit ?? 'units')}`, {
+            description: 'A dated entry in this goal’s history — edit the amount or day any time.',
+            action: res.log
+              ? {
+                  label: 'Edit',
+                  onClick: () =>
+                    setEditTarget({
+                      goalId: goal.id,
+                      logId: res.log.id,
+                      amount: res.log.amount,
+                      unit: unit ?? 'units',
+                      title: nodeTitle,
+                      note: res.log.note,
+                      day: todayDayKey(),
+                      creditLabel: nodeIcon ? `${nodeIcon} ${nodeTitle}` : nodeTitle,
+                    }),
+                }
+              : undefined,
           })
           setAmount('')
           setOpen(false)
@@ -287,7 +269,7 @@ export function NodeQuickAddPopover({
           {children}
         </PopoverTrigger>
         <PopoverContent align={align} className="w-64 p-3" onClick={(e) => e.stopPropagation()}>
-          <div className="text-sm font-semibold">{viaLog ? 'Log progress' : 'Add progress'}</div>
+          <div className="text-sm font-semibold">Log progress</div>
           <div className="mt-0.5 truncate text-xs text-muted-foreground">{nodeTitle}</div>
           <div className="mt-2.5 flex gap-2">
             <Input
@@ -305,7 +287,7 @@ export function NodeQuickAddPopover({
             />
             <Button size="sm" className="flex-1" onClick={() => submit()} disabled={pending || !amount}>
               {pending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-              {viaLog ? 'Log' : 'Add'}
+              Log
             </Button>
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
@@ -321,12 +303,10 @@ export function NodeQuickAddPopover({
               </button>
             ))}
           </div>
-          {viaLog && (
-            <p className="mt-2 text-[10px] leading-snug text-muted-foreground">
-              Becomes a dated entry in {goal.title}&rsquo;s history — it advances this checkpoint and counts as one
-              session.
-            </p>
-          )}
+          <p className="mt-2 text-[10px] leading-snug text-muted-foreground">
+            Becomes a dated entry in {goal.title}&rsquo;s history — it advances this checkpoint and,
+            when the units match, the goal&rsquo;s own total too.
+          </p>
         </PopoverContent>
       </Popover>
 

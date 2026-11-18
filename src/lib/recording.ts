@@ -1,5 +1,6 @@
 import type { GoalData, ProgressLogData, RoutineData } from './types'
 import { formatNumber } from './goal-math'
+import { HOUR_UNITS, MINUTE_UNITS, SESSION_UNITS } from './units'
 
 /**
  * What a routine check-off RECORDS, and in which unit.
@@ -35,10 +36,6 @@ import { formatNumber } from './goal-math'
  * Shared by the API routes (amount + unit to store) and the client (unit to
  * show), so the two can never drift apart again.
  */
-
-const HOUR_UNITS = ['h', 'hr', 'hrs', 'hour', 'hours']
-const MINUTE_UNITS = ['m', 'min', 'mins', 'minute', 'minutes']
-const SESSION_UNITS = ['session', 'sessions']
 
 /** Minimal structural types: Prisma rows and client wire data both fit. */
 interface GoalLike {

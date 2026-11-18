@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import type { GoalData, SkillPathData } from '@/lib/types'
 import { buildSkillMap, type SkillNodeView, type SkillPathView } from '@/lib/skill-tree'
 import { goalColor } from '@/lib/goal-colors'
-import { formatNumber, isSessionCountingGoal } from '@/lib/goal-math'
+import { formatNumber } from '@/lib/goal-math'
 import { todayDayKey } from '@/lib/app-time'
 import { logAmountLabel } from '@/lib/recording'
 import {
@@ -89,8 +89,11 @@ function NodePopover({
   children: React.ReactNode
 }) {
   const updateNode = useUpdateNode(goal.id)
-  // quick-adds are real log entries now (dated, editable, deletable) — only
-  // "Set total" and "Reset" stay raw calibrations
+  // every quick-add is a real, dated, editable log entry that credits this
+  // checkpoint — on any goal type. When the checkpoint's unit differs from
+  // the goal's own the entry counts for the tree and stays history for the
+  // goal's sums, so nothing is corrupted. Only "Set total" and "Reset"
+  // stay raw calibrations.
   const addLog = useAddLog(goal.id)
   const accent = goalColor(goal.color).hex
   const n = view.node
@@ -105,26 +108,11 @@ function NodePopover({
   const unitLabel = view.unit ?? 'units'
 
   function handleAdd(delta: number) {
-    // session-counting plan goals: the add is a dated, editable log entry
-    // that credits this checkpoint (edit/delete adjusts it by the difference).
-    // Quantitative/time goals keep the raw add — their ledger sums amounts in
-    // one unit, so a checkpoint-unit entry would corrupt it.
-    if (isSessionCountingGoal(goal)) {
-      handleAddViaLog(delta)
-      return
-    }
-    updateNode.mutate(
-      { nodeId: n.id, patch: { add: delta } },
-      {
-        onSuccess: (res) => {
-          const node = res.goal?.skillPaths.flatMap((p) => p.nodes).find((x) => x.id === n.id)
-          if (node && node.currentValue >= node.targetValue && n.currentValue < n.targetValue) {
-            toast.success(`Mastered: ${n.title}`, { description: `+${n.xpValue} XP 🏆` })
-          }
-        },
-        onError: (e) => toast.error('Could not update', { description: e.message }),
-      },
-    )
+    // the add is a dated, editable log entry that credits this checkpoint
+    // (edit/delete adjusts it by the difference) — on every goal type: a
+    // matching unit also advances the goal's own total, a different one is
+    // history for the goal and progress for the tree
+    handleAddViaLog(delta)
   }
 
   function handleAddViaLog(delta: number) {
@@ -297,7 +285,8 @@ function NodePopover({
                 </div>
                 <p className="mt-1.5 flex items-start gap-1 text-[10px] leading-snug text-muted-foreground">
                   <History className="mt-px h-3 w-3 shrink-0" />
-                  Quick adds become dated log entries — edit amount or day from this goal&rsquo;s Log tab.
+                  Quick adds become dated entries in this goal&rsquo;s history — edit the
+                  amount or day any time from its Log tab.
                 </p>
               </>
             )}

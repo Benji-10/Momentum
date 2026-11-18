@@ -30,7 +30,7 @@ import {
   generateTopography,
   MINERAL_IMAGE_URL,
 } from './generators'
-import { NebulaScene, VapourwaveScene } from './animated'
+import { NebulaScene } from './animated'
 
 // ---------------------------------------------------------------------------
 // Palette → custom theme (for "start from a preset")
@@ -265,7 +265,7 @@ export function BackgroundThumb({ def }: { def: BackgroundDef }) {
       visual = <NebulaScene settings={settings} />
       break
     case 'vapourwave':
-      visual = <VapourwaveScene settings={settings} />
+      visual = <AnimatedThumb id="vapourwave" />
       break
     case 'topography':
       visual = (

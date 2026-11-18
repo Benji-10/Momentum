@@ -11,6 +11,7 @@ import {
   Circle,
   CircleDot,
   ClipboardList,
+  Clock,
   Eye,
   EyeOff,
   Flame,
@@ -41,7 +42,8 @@ import {
   weeklyHistory,
 } from '@/lib/goal-math'
 import { goalColor } from '@/lib/goal-colors'
-import { logRowUnit, logAmountLabel, checkoffDisplayUnit } from '@/lib/recording'
+import { logRowUnit, logAmountLabel, checkoffDisplayUnit, isTimeUnitString } from '@/lib/recording'
+import { countsTowardGoal, sameUnitFamily } from '@/lib/units'
 import { beatsPb } from '@/lib/pb-math'
 import { buildSkillMap } from '@/lib/skill-tree'
 import { describeCadence, occurrencesInRange, relativeDayLabel, routineStats, sameDay, startOfWeek, addDays, toDayKey } from '@/lib/routine-math'
@@ -616,6 +618,10 @@ function DetailBody({
   /** the Log tab's "counts toward" pick: 'goal' = the goal's own ledger,
    *  else the checkpoint id the entry should credit ("150 pages") */
   const [creditTo, setCreditTo] = useState('goal')
+  /** unit picked for a goal-ledger entry that ISN'T the goal's own ("45 min"
+   *  of reading on a pages goal) — null = the goal's unit. Foreign-unit
+   *  entries are real, editable history that never inflate the goal's sums. */
+  const [unitTo, setUnitTo] = useState<string | null>(null)
   /** PB metrics to also record this entry as an attempt for (opt-in chips —
    *  one session, one tap, no second trip to the Review tab). Keyed by the
    *  entry's unit so switching the "counts toward" pick starts fresh. */
@@ -658,22 +664,41 @@ function DetailBody({
   const weekly = useMemo(() => weeklyHistory(goal, 8), [goal])
   const skillMap = useMemo(() => buildSkillMap(goal), [goal])
   // checkpoints a Log-tab entry can credit: unlocked, not mastered, not a
-  // derived meter — only offered on session-counting plan goals, where the
-  // checkpoint's unit (pages, words) is the real quantity and the goal's
-  // own ledger just counts sittings
+  // derived meter — on ANY goal type. The checkpoint's unit is the entry's
+  // unit: when it matches the goal's own, the entry advances both; when it
+  // differs, it's history for the goal's sums and progress for the tree
   const creditNodes = useMemo(
     () =>
-      isSessionCountingGoal(goal)
-        ? skillMap.paths
-            .flatMap((p) => p.nodes)
-            .filter((v) => !v.node.deriveFromId && !v.locked && v.status !== 'mastered')
-        : [],
-    [skillMap, goal],
+      skillMap.paths
+        .flatMap((p) => p.nodes)
+        .filter((v) => !v.node.deriveFromId && !v.locked && v.status !== 'mastered'),
+    [skillMap],
   )
   const creditTarget = creditNodes.find((v) => v.node.id === creditTo) ?? null
   // the unit this Log-tab entry will be recorded in: the credited
-  // checkpoint's ("pages") or the goal's own ("km", "sessions")
-  const entryUnit = (creditTarget?.unit ?? goal.unit ?? '').trim()
+  // checkpoint's ("pages"), the picked alternative ("min") or the goal's own
+  const entryUnit = (creditTarget?.unit ?? unitTo ?? goal.unit ?? '').trim()
+  // when the entry speaks the goal's own unit it advances the goal's total
+  // too; a foreign unit is history for the goal (one ledger, many units)
+  const entryOnGoalLedger = creditTarget
+    ? countsTowardGoal(goal, { unit: creditTarget.unit })
+    : countsTowardGoal(goal, { unit: unitTo })
+  // other units this goal already speaks — its metrics' and checkpoints'
+  // units, plus minutes for time — offered as quick picks on manual entries
+  const unitChoices = useMemo(() => {
+    const goalUnit = (goal.unit ?? '').trim()
+    const set = new Set<string>()
+    for (const pb of goal.pbs) {
+      const u = (pb.unit ?? '').trim()
+      if (u && !sameUnitFamily(u, goalUnit)) set.add(u)
+    }
+    for (const v of creditNodes) {
+      const u = (v.unit ?? '').trim()
+      if (u && !sameUnitFamily(u, goalUnit)) set.add(u)
+    }
+    if (goalUnit && !isTimeUnitString(goalUnit) && !sameUnitFamily('min', goalUnit)) set.add('min')
+    return [...set]
+  }, [goal.pbs, creditNodes, goal.unit])
   // metrics speaking the same unit can record this entry as an attempt in
   // the same tap (opt-in — attempts are history, not progress, and editing
   // or deleting them works from either surface)
@@ -734,14 +759,19 @@ function DetailBody({
         amount: n,
         note: note.trim() || null,
         date: iso,
+        // a credited checkpoint owns the entry's unit (server-authoritative);
+        // a goal-ledger entry carries the picked alternative unit, if any
         ...(creditTarget ? { nodeId: creditTarget.node.id, unit: creditTarget.unit } : {}),
+        ...(!creditTarget && unitTo ? { unit: unitTo } : {}),
       },
       {
         onSuccess: () => {
           toast.success(
             creditTarget
               ? `Logged ${logAmountLabel(n, creditTarget.unit ?? 'units')} — advanced ${creditTarget.node.icon} ${creditTarget.node.title}`
-              : `Logged ${formatNumber(n)} ${unit || 'progress'}`,
+              : unitTo
+                ? `Logged ${logAmountLabel(n, unitTo)} for the history`
+                : `Logged ${formatNumber(n)} ${unit || 'progress'}`,
           )
           setAmount('')
           setNote('')
@@ -1591,12 +1621,21 @@ function DetailBody({
               </h4>
               <div className="space-y-3 rounded-xl border bg-card p-4">
                 {/* counts toward — credit a checkpoint instead of (well, on top
-                    of) the goal's own session ledger. Only on session-counting
-                    plan goals with at least one creditable checkpoint. */}
+                    of) the goal's own ledger. Offered on every goal type:
+                    matching units advance both, differing units keep the
+                    goal's sums clean. */}
                 {creditNodes.length > 0 && (
                   <div className="space-y-1.5">
                     <Label className="text-xs">Counts toward</Label>
-                    <Select value={creditTo} onValueChange={setCreditTo}>
+                    <Select
+                      value={creditTo}
+                      onValueChange={(v) => {
+                        setCreditTo(v)
+                        // the checkpoint owns the entry's unit — drop any
+                        // manual unit pick from the goal-ledger mode
+                        setUnitTo(null)
+                      }}
+                    >
                       <SelectTrigger className="h-9 text-xs" aria-label="Counts toward">
                         <SelectValue />
                       </SelectTrigger>
@@ -1612,15 +1651,53 @@ function DetailBody({
                     </Select>
                   </div>
                 )}
+                {/* unit — goal-ledger entries can speak one of the goal's other
+                    units ("45 min" of reading on a pages goal); recorded as
+                    history, never summed into the goal's own total */}
+                {!creditTarget && unitChoices.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] font-medium text-muted-foreground">In:</span>
+                    <button
+                      type="button"
+                      aria-pressed={!unitTo}
+                      onClick={() => setUnitTo(null)}
+                      className={cn(
+                        'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors',
+                        !unitTo
+                          ? 'border-primary/60 bg-primary/15 text-primary'
+                          : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/40 hover:text-foreground',
+                      )}
+                    >
+                      {logUnit} · the goal&rsquo;s own
+                    </button>
+                    {unitChoices.map((u) => (
+                      <button
+                        key={u}
+                        type="button"
+                        aria-pressed={unitTo === u}
+                        title={`Recorded as history — time entries still feed “time invested”`}
+                        onClick={() => setUnitTo(unitTo === u ? null : u)}
+                        className={cn(
+                          'rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors',
+                          unitTo === u
+                            ? 'border-primary/60 bg-primary/15 text-primary'
+                            : 'border-border bg-muted/40 text-muted-foreground hover:border-primary/40 hover:text-foreground',
+                        )}
+                      >
+                        {u}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <div className="grid gap-3 sm:grid-cols-[140px_1fr]">
                   <div className="space-y-1.5">
                     <Label htmlFor="log-amount">
                       Amount{' '}
-                      {creditTarget
-                        ? `(${creditTarget.unit || 'amount'})`
-                        : goal.type === 'plan' && !goal.unit
+                      {entryUnit
+                        ? `(${entryUnit})`
+                        : goal.type === 'plan'
                           ? '(e.g. 1 session)'
-                          : `(${unit || 'amount'})`}
+                          : '(amount)'}
                     </Label>
                     <Input
                       id="log-amount"
@@ -1646,9 +1723,9 @@ function DetailBody({
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  {quickAmounts(creditTarget?.unit ?? goal.unit).map((q) => (
+                  {quickAmounts(creditTarget?.unit ?? unitTo ?? goal.unit).map((q) => (
                     <Button key={q} type="button" variant="secondary" size="sm" onClick={() => setAmount(String(q))}>
-                      +{formatNumber(q)} {creditTarget?.unit ?? unit}
+                      +{formatNumber(q)} {creditTarget?.unit ?? unitTo ?? unit}
                     </Button>
                   ))}
                   <div className="w-[150px]">
@@ -1662,8 +1739,21 @@ function DetailBody({
                   <p className="flex items-start gap-1.5 rounded-lg bg-primary/8 px-2 py-1.5 text-[11px] font-medium text-primary">
                     <Target className="mt-px h-3 w-3 shrink-0" />
                     <span>
-                      Advances {creditTarget.node.icon} {creditTarget.node.title} (and anything derived from it) and counts as
-                      one session — retroactive? Just pick the right day above.
+                      {isSessionCountingGoal(goal)
+                        ? `Advances ${creditTarget.node.icon} ${creditTarget.node.title} (and anything derived from it) and counts as one session — retroactive? Just pick the right day above.`
+                        : entryOnGoalLedger
+                          ? `Advances ${creditTarget.node.icon} ${creditTarget.node.title} and this goal’s own ${logUnit} total — they speak the same unit.`
+                          : `Advances ${creditTarget.node.icon} ${creditTarget.node.title}. Recorded in ${creditTarget.unit || 'its own unit'}, so the goal’s ${logUnit || 'own'} total stays untouched — history for the goal, progress for the tree.`}
+                    </span>
+                  </p>
+                )}
+                {!creditTarget && unitTo && (
+                  <p className="flex items-start gap-1.5 rounded-lg bg-muted/60 px-2 py-1.5 text-[11px] font-medium text-muted-foreground">
+                    <Clock className="mt-px h-3 w-3 shrink-0" />
+                    <span>
+                      Recorded in {unitTo} — real, editable history that doesn&rsquo;t add to the goal&rsquo;s{' '}
+                      {logUnit || 'own'} total
+                      {isTimeUnitString(unitTo) ? '; it still feeds the “time invested” chart.' : '.'}
                     </span>
                   </p>
                 )}

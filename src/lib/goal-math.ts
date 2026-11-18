@@ -10,6 +10,7 @@ import {
   toDayKey,
 } from './routine-math'
 import { dayKeyOf, getAppTimezone } from './app-time'
+import { countsTowardGoal, HOUR_UNITS, MINUTE_UNITS } from './units'
 
 export { DAY_MS, WEEK_MS, startOfWeek, addDays, dayStart, parseDayKey }
 
@@ -30,14 +31,24 @@ function isMetricAttempt(l: { pbId?: string | null }): boolean {
   return l.pbId != null
 }
 
-/** Amount logged during the week containing `ref` (mirrored metric attempts
- *  excluded — an attempt is not a progress amount). */
-export function amountInWeek(logs: GoalData['logs'], ref: Date, weekStartOffset = 0): number {
+// ---------------------------------------------------------------------------
+// Weekly totals — what each week's bars and pace actually add up
+// ---------------------------------------------------------------------------
+
+/** Amount logged during the week containing `ref`, in the goal's own unit.
+ * Mirrored metric attempts and entries recorded in another unit (checkpoint
+ * units, minutes on a pages goal…) never inflate it — they are history, not
+ * progress. (Session-counting goals use sessionsInWeek instead.) */
+export function amountInWeek(
+  goal: GoalData,
+  ref: Date,
+  weekStartOffset = 0,
+): number {
   const ws = new Date(startOfWeek(ref).getTime() + weekStartOffset * WEEK_MS)
   const we = new Date(ws.getTime() + WEEK_MS)
-  return logs
+  return goal.logs
     .filter((l) => {
-      if (isMetricAttempt(l)) return false
+      if (!countsTowardGoal(goal, l)) return false
       const t = logDay(l)
       return t >= ws.getTime() && t < we.getTime()
     })
@@ -66,6 +77,7 @@ export function weeklyHistory(goal: GoalData, weeks = 8, ref = new Date()): Week
       ? sessionsInWeek(goal, ref, -i)
       : goal.logs
           .filter((l) => {
+            if (!countsTowardGoal(goal, l)) return false
             const t = logDay(l)
             return t >= ws.getTime() && t < we.getTime()
           })
@@ -147,7 +159,11 @@ function sessionEvents(goal: GoalData): { date: number; n: number }[] {
     if (autoLogIds.has(l.id)) continue
     // mirrored metric attempts aren't sessions — they're recorded results
     if (isMetricAttempt(l)) continue
-    events.push({ date: logDay(l), n: l.nodeId ? 1 : l.amount })
+    // goal-unit entries count their amount (usually 1 per sitting); anything
+    // else — a credited checkpoint or a foreign-unit entry ("45 min" of
+    // reading) — is one session: the sitting happened, the pages are the
+    // checkpoint's business
+    events.push({ date: logDay(l), n: l.nodeId || !countsTowardGoal(goal, l) ? 1 : l.amount })
   }
   return events
 }
@@ -202,8 +218,10 @@ export interface GoalStats {
 
 export function computeGoalStats(goal: GoalData, now = new Date()): GoalStats {
   const logs = [...goal.logs]
-    // mirrored metric attempts ("128 WPM") are history, not progress amounts
-    .filter((l) => !isMetricAttempt(l))
+    // one ledger, many units: only entries in the goal's own unit (and never
+    // mirrored attempts) add up to its total — checkpoint credits in "words"
+    // or "min" are history for the tree, not progress for the goal
+    .filter((l) => countsTowardGoal(goal, l))
     .sort((a, b) => +new Date(a.date) - +new Date(b.date))
   const sessionCounting = isSessionCountingGoal(goal)
   const currentValue = Math.round(logs.reduce((s, l) => s + l.amount, 0) * 100) / 100
@@ -213,7 +231,7 @@ export function computeGoalStats(goal: GoalData, now = new Date()): GoalStats {
   const daysLeft = deadline ? Math.max(0, Math.ceil((deadline.getTime() - now.getTime()) / DAY_MS)) : null
   const weeksLeft = deadline ? Math.max(0, (deadline.getTime() - now.getTime()) / WEEK_MS) : null
   const thisWeekLogged = Math.round(
-    (sessionCounting ? sessionsInWeek(goal, now) : amountInWeek(goal.logs, now)) * 100,
+    (sessionCounting ? sessionsInWeek(goal, now) : amountInWeek(goal, now)) * 100,
   ) / 100
 
   const steps = [...goal.steps].sort((a, b) => a.order - b.order)
@@ -309,12 +327,7 @@ export function computeGoalStats(goal: GoalData, now = new Date()): GoalStats {
   for (let i = 0; i < 52; i++) {
     const amount = sessionCounting
       ? sessionsInWeek(goal, now, -i)
-      : amountInWeek(
-          // mirrored metric attempts are history, not progress
-          goal.logs.filter((l) => !isMetricAttempt(l)),
-          now,
-          -i,
-        )
+      : amountInWeek(goal, now, -i)
     const met = weeklyRequirement != null ? amount >= weeklyRequirement * 0.99 : amount > 0
     if (met) streakWeeks++
     else if (i === 0) continue // current week still in progress — don't break the streak
@@ -408,7 +421,7 @@ export function cumulativeSeries(goal: GoalData, now = new Date()): CumulativePo
   const stepDays = Math.max(1, Math.ceil(span / DAY_MS / 160))
 
   const logs = [...goal.logs]
-    .filter((l) => !isMetricAttempt(l))
+    .filter((l) => countsTowardGoal(goal, l))
     .sort((a, b) => +new Date(a.date) - +new Date(b.date))
   const points: CumulativePoint[] = []
   let cum = 0
@@ -444,9 +457,6 @@ export function formatDateLong(d: Date): string {
 // Time spent — everything the app knows about *duration*, as hours
 // ---------------------------------------------------------------------------
 
-const HOUR_UNITS = ['h', 'hr', 'hrs', 'hour', 'hours']
-const MINUTE_UNITS = ['m', 'min', 'mins', 'minute', 'minutes']
-
 export function isTimeUnitGoal(goal: GoalData): 'hours' | 'minutes' | null {
   const unit = (goal.unit ?? '').toLowerCase()
   if (HOUR_UNITS.includes(unit)) return 'hours'
@@ -469,26 +479,61 @@ export interface TimeSpent {
  * Cumulative time spent on a goal, in hours — the "time going up" chart.
  *
  * Where the time comes from:
- *  - goals that count in hours/minutes → every progress log (routine
- *    check-offs auto-log their duration, manual entries add the rest)
+ *  - goals that count in hours/minutes → every on-unit progress log (routine
+ *    check-offs auto-log their duration, manual entries add the rest), plus
+ *    any other time-family entry converted ("45 min" on an hours goal = 0.75h)
  *  - any other goal → each completed routine session counts its preset
- *    duration ("Shooting drills · 45m" = 0.75h per check-off)
+ *    duration ("Shooting drills · 45m" = 0.75h per check-off), plus manual
+ *    entries recorded in a time unit ("45 min" of reading) — auto-logs of
+ *    check-offs are skipped so a session never counts twice
+ *
+ * Non-time foreign entries (words, attempts…) never show up here: there is
+ * no honest way to turn them into hours.
  */
 export function timeSpent(goal: GoalData, now = new Date()): TimeSpent | null {
   const timeUnit = isTimeUnitGoal(goal)
   let events: { date: number; hours: number }[]
 
+  /** One log entry as an hours event, when its unit is time — null for
+   *  anything that can't be honestly converted. An entry without a unit is
+   *  in the goal's own unit: hours on an hours goal, minutes on a minutes
+   *  goal, nothing at all on a goal that doesn't count time. */
+  const timeEvent = (l: GoalData['logs'][number]): { date: number; hours: number } | null => {
+    if (l.pbId != null) return null // a recorded attempt is a result, not time
+    const u = (l.unit ?? '').trim().toLowerCase()
+    if (HOUR_UNITS.includes(u)) return { date: logDay(l), hours: l.amount }
+    if (MINUTE_UNITS.includes(u)) return { date: logDay(l), hours: l.amount / 60 }
+    if (!u && timeUnit === 'hours') return { date: logDay(l), hours: l.amount }
+    if (!u && timeUnit === 'minutes') return { date: logDay(l), hours: l.amount / 60 }
+    return null
+  }
+
   // event dates are canonical app-tz days (dayStart∘parseDayKey): the day a
   // session happened *in the user's timezone*, regardless of which device's
   // clock stored it
-  if (timeUnit === 'hours') {
-    events = goal.logs.filter((l) => !isMetricAttempt(l)).map((l) => ({ date: logDay(l), hours: l.amount }))
-  } else if (timeUnit === 'minutes') {
-    events = goal.logs.filter((l) => !isMetricAttempt(l)).map((l) => ({ date: logDay(l), hours: l.amount / 60 }))
+  if (timeUnit) {
+    // the goal counts time: every time-family entry counts, converted if
+    // needed ("30 min" on an hours goal → 0.5h)
+    events = goal.logs.map(timeEvent).filter((e): e is { date: number; hours: number } => e !== null)
   } else {
-    events = goal.routines
-      .filter((r) => !r.archived && r.durationMin != null && r.durationMin > 0)
-      .flatMap((r) => r.dones.map((d) => ({ date: logDay(d), hours: r.durationMin! / 60 })))
+    // routine sessions count their preset duration; manual time entries add
+    // theirs — but never an auto-log a check-off already wrote (that's the
+    // same session twice)
+    const doneLogIds = new Set<string>()
+    for (const r of goal.routines) {
+      for (const d of r.dones) {
+        if (d.logId) doneLogIds.add(d.logId)
+      }
+    }
+    events = [
+      ...goal.routines
+        .filter((r) => !r.archived && r.durationMin != null && r.durationMin > 0)
+        .flatMap((r) => r.dones.map((d) => ({ date: logDay(d), hours: r.durationMin! / 60 }))),
+      ...goal.logs
+        .filter((l) => !doneLogIds.has(l.id))
+        .map(timeEvent)
+        .filter((e): e is { date: number; hours: number } => e !== null),
+    ]
   }
 
   if (events.length === 0) return null

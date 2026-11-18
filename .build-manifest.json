@@ -25,6 +25,8 @@ public/backgrounds/previews/particle-field-still.webp
 public/backgrounds/previews/particle-field.webp
 public/backgrounds/previews/ripple-still.webp
 public/backgrounds/previews/ripple.webp
+public/backgrounds/previews/vapourwave-still.webp
+public/backgrounds/previews/vapourwave.webp
 public/favicon.ico
 public/favicon.svg
 public/icon-192.png
@@ -188,6 +190,7 @@ src/lib/step-engine.ts
 src/lib/step-triggers.ts
 src/lib/templates.ts
 src/lib/types.ts
+src/lib/units.ts
 src/lib/utils.ts
 tailwind.config.ts
 tsconfig.json

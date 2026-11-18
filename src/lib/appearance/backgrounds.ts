@@ -141,10 +141,10 @@ export const BACKGROUNDS: BackgroundDef[] = [
   {
     id: 'vapourwave',
     name: 'Vapourwave',
-    category: 'static',
-    hint: 'Retro sunset — stars, skyline, grid, scanlines',
+    category: 'animated',
+    hint: 'Procedural sunset — banded sun, mountains, neon grid',
     renderer: 'vapourwave',
-    settings: [opacity(75), speed(70), blur()],
+    settings: [opacity(75), speed(100), { kind: 'slider', key: 'density', label: 'Star density', min: 0, max: 100, step: 1, default: 50 }, blur()],
   },
   {
     id: 'bg-mycelium',

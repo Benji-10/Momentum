@@ -35,8 +35,8 @@ import {
   generateTopography,
   MINERAL_IMAGE_URL,
 } from './generators'
-import { CanvasScene, CustomImageScene, NebulaScene, VapourwaveScene } from './animated'
-import { makeBioluminescence, makeFluidMechanics, makeParametric, makeParticleField, makeRipple } from './scenes'
+import { CanvasScene, CustomImageScene, NebulaScene } from './animated'
+import { makeBioluminescence, makeFluidMechanics, makeParametric, makeParticleField, makeRipple, makeVapourwave } from './scenes'
 
 /** Read a CSS variable from the document root and re-read when the theme
  *  changes. Watches <html> attribute mutations (data-theme flips from
@@ -217,7 +217,7 @@ export function BackgroundLayer({
       scene = <NebulaScene settings={config.settings} />
       break
     case 'vapourwave':
-      scene = <VapourwaveScene settings={config.settings} />
+      scene = <CanvasScene makeScene={makeVapourwave} settings={sceneSettings} settingsKey={settingsKey} />
       break
     case 'custom-image':
       scene = customImageUrl ? (

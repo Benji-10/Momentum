@@ -8,7 +8,7 @@ import { syncMilestoneReached } from '@/lib/milestones'
 import { propagateDerived } from '@/lib/derive'
 import { nodeStatus } from '@/lib/skill-tree'
 import { nodeUnlockedById } from '@/lib/pb-credit'
-import { isPlanSessionGoal } from '@/lib/recording'
+import { sameUnitFamily } from '@/lib/units'
 
 const createLogSchema = z.object({
   amount: z.number().positive('Amount must be greater than 0').max(1_000_000),
@@ -16,14 +16,19 @@ const createLogSchema = z.object({
   /** ISO date, optional — defaults to now */
   date: z.string().datetime().optional(),
   /** Unit the amount was recorded in, when it differs from the goal's own
-   *  (e.g. an import carrying "20 min" entries). Manual entries omit it —
-   *  they are in the goal's unit by definition. When `nodeId` credits a
-   *  checkpoint, the server overrides this with the checkpoint's unit. */
+   *  (an import carrying "20 min" entries, or a manual entry in one of the
+   *  goal's other units). Entries in the goal's own unit (or a matching
+   * family, "h" ≙ "hours") are normalized to null — that's what no unit
+   * means. Foreign-unit entries are real, editable history that never
+   * inflates the goal's own sums (see lib/units.ts). When `nodeId` credits
+   * a checkpoint, the server overrides this with the checkpoint's unit. */
   unit: z.string().max(30).nullable().optional(),
   /** Credit this skill checkpoint with the amount ("counts toward 📗
-   *  Pages") — session-counting plan goals only. The entry becomes real,
-   *  editable history: amount edits and deletes adjust the checkpoint by
-   *  exactly the difference (creditedValue bookkeeping, like check-offs). */
+   *  Pages") — on any goal type. The entry becomes real, editable history:
+   *  amount edits and deletes adjust the checkpoint by exactly the
+   *  difference (creditedValue bookkeeping, like check-offs). When the
+   *  checkpoint's unit differs from the goal's own, the entry is history
+   *  for the goal and progress for the tree. */
   nodeId: z.string().max(64).nullable().optional(),
 })
 
@@ -46,19 +51,17 @@ export async function POST(req: Request, { params }: Params) {
     if (!goalRow) return NextResponse.json({ error: 'Goal not found' }, { status: 404 })
 
     const d = parsed.data
-    let unit = d.unit?.trim() || null
+    // a manual unit in the goal's own family is just "the goal's unit" —
+    // store it clean (null) so the ledger membership rule stays simple
+    let unit =
+      d.unit?.trim() && !sameUnitFamily(d.unit, goalRow.unit) ? d.unit.trim() : null
     let nodeId: string | null = null
     let creditedValue: number | null = null
 
     if (d.nodeId) {
-      // checkpoint-crediting entries only make sense where the goal's own
-      // ledger is sessions — the checkpoint's unit is the real quantity
-      if (!isPlanSessionGoal(goalRow)) {
-        return NextResponse.json(
-          { error: 'Logging straight into a checkpoint needs a plan goal that counts sessions.' },
-          { status: 400 },
-        )
-      }
+      // checkpoint-crediting entries work on every goal type: the checkpoint
+      // is the real ledger for its unit, and when that unit differs from the
+      // goal's own the entry simply doesn't count toward the goal's sums
       const node = await db.skillNode.findFirst({
         where: { id: d.nodeId, goalId: id },
         include: { path: { select: { unit: true } } },

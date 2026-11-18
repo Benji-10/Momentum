@@ -799,17 +799,9 @@
 .bg-drift-b { animation: bg-drift-b 120s ease-in-out infinite alternate; }
 .bg-drift-c { animation: bg-drift-c 150s ease-in-out infinite alternate; }
 
-/* — Vapourwave: scrolling perspective grid + bobbing sun — */
-@keyframes bg-grid-scroll {
-  from { background-position-y: 0; }
-  to { background-position-y: 56px; }
-}
-@keyframes bg-sun-bob {
-  0%, 100% { transform: translateY(-1.5%); }
-  50% { transform: translateY(1.5%); }
-}
-.bg-grid-scroll { animation: bg-grid-scroll 3.2s linear infinite; }
-.bg-sun-bob { animation: bg-sun-bob 9s ease-in-out infinite; }
+/* (Vapourwave is a canvas scene now — see makeVapourwave in
+   appearance/scenes.ts; its old CSS grid-scroll / sun-bob animations
+   went away with the component.) */
 
 /* pause every background animation when motion isn't welcome */
 @media (prefers-reduced-motion: reduce) {
