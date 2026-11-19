@@ -298,15 +298,11 @@ function NodeLogPopover({
   const remaining = Math.max(0, n.targetValue - n.currentValue)
 
   function add(v: number) {
-    updateNode.mutate(
-      { nodeId: n.id, patch: { add: v } },
-      {
-        onError: (e) => toast.error('Could not update', { description: e.message }),
-      },
-    )
+    updateNode.mutate({ nodeId: n.id, patch: { add: v } })
   }
 
-  const canLog = (qn.view === 'active' || qn.view === 'mastered') && remaining > 0 && !updateNode.isPending
+  // the value shows optimistically, so rapid taps are fine — no isPending gate
+  const canLog = (qn.view === 'active' || qn.view === 'mastered') && remaining > 0
 
   return (
     <Popover open={open} onOpenChange={onOpenChange}>

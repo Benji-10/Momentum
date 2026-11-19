@@ -65,9 +65,15 @@ export function Providers({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // online/offline listeners + replay of anything queued last session
     initOffline()
-    // the app shell as a PWA: installable and bootable with no connection
-    if (process.env.NODE_ENV === 'production' && 'serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {
+    // the app shell as a PWA: installable and bootable with no connection.
+    // Registered in dev too — the preview instance IS the app for testing
+    // (without this, an offline launch of the preview can't even load the
+    // shell). The worker takes ?mode=dev and adapts: network-first
+    // navigations + non-cached dev chunks, so development never serves a
+    // stale compile.
+    if ('serviceWorker' in navigator) {
+      const swUrl = process.env.NODE_ENV === 'production' ? '/sw.js' : '/sw.js?mode=dev'
+      navigator.serviceWorker.register(swUrl).catch(() => {
         /* not fatal — offline still works within an open tab */
       })
     }

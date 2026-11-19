@@ -14,6 +14,41 @@ import GoTrue, { JSONHTTPError, User } from 'gotrue-js'
 
 export type IdentityMode = 'netlify' | 'preview' | 'unconfigured'
 
+// ---------------------------------------------------------------------------
+// Identity-mode cache
+//
+// Which backend (/\.netlify/identity vs /api/dev-identity) this deployment
+// uses is stable for the life of a deployment — probing it costs two network
+// round trips that block the whole boot. The resolved mode is remembered so
+// a reload (or an offline launch) renders the app instantly and re-probes in
+// the background. 'unconfigured' is remembered too: it is only ever returned
+// when there is no saved session either, so nothing can go stale that isn't
+// already signed out.
+// ---------------------------------------------------------------------------
+
+const IDENTITY_MODE_KEY = 'momentum:identity-mode'
+
+function cacheIdentityMode(mode: IdentityMode) {
+  try {
+    if (typeof window !== 'undefined') window.localStorage.setItem(IDENTITY_MODE_KEY, mode)
+  } catch {
+    /* ignore */
+  }
+}
+
+/** The identity backend this device resolved on a previous boot (null =
+ *  never resolved / not in a browser) — the instant-boot stand-in while
+ *  initIdentity() re-probes. */
+export function readCachedIdentityMode(): IdentityMode | null {
+  try {
+    if (typeof window === 'undefined') return null
+    const v = window.localStorage.getItem(IDENTITY_MODE_KEY)
+    return v === 'netlify' || v === 'preview' || v === 'unconfigured' ? v : null
+  } catch {
+    return null
+  }
+}
+
 interface Identity {
   mode: IdentityMode
   auth: GoTrue | null
@@ -101,12 +136,12 @@ export function restoreIdentityBackup(): boolean {
 
 let initPromise: Promise<Identity> | null = null
 
-async function probe(url: string): Promise<boolean> {
+async function probe(url: string): Promise<'ok' | 'down' | 'unreachable'> {
   try {
     const res = await fetch(url, { cache: 'no-store' })
-    return res.ok
+    return res.ok ? 'ok' : 'down'
   } catch {
-    return false
+    return 'unreachable'
   }
 }
 
@@ -134,27 +169,46 @@ export function initIdentity(): Promise<Identity> {
   if (!initPromise) {
     initPromise = (async () => {
       if (typeof window === 'undefined') return { mode: 'unconfigured', auth: null }
-      if (await probe('/.netlify/identity/settings')) {
+      const netlifyProbe = await probe('/.netlify/identity/settings')
+      if (netlifyProbe === 'ok') {
         const auth = new GoTrue({ APIUrl: '/.netlify/identity' })
         await consumeRedirectHash(auth)
+        cacheIdentityMode('netlify')
         return { mode: 'netlify', auth }
       }
-      if (await probe('/api/dev-identity/settings')) {
+      const devProbe = await probe('/api/dev-identity/settings')
+      if (devProbe === 'ok') {
         const auth = new GoTrue({ APIUrl: '/api/dev-identity' })
         await consumeRedirectHash(auth)
+        cacheIdentityMode('preview')
         return { mode: 'preview', auth }
       }
-      // Both probes failed. Either we're offline (or the network is blocking
-      // the probes) or sign-in genuinely isn't configured. If this browser
-      // holds a saved session, boot against the API it was created with so
-      // the app still works offline; the session token verifies later.
+      // Neither endpoint said yes. If this browser holds a saved session,
+      // boot against the API it was created with so the app still works
+      // offline; the session token verifies later. (The derived mode is
+      // cached too — it is never 'unconfigured' while a session exists, so
+      // a cached value can't fake a configured deploy.)
       const savedUrl = readSavedSessionUrl()
       if (savedUrl) {
+        const mode: IdentityMode = savedUrl.includes('dev-identity') ? 'preview' : 'netlify'
         const auth = new GoTrue({ APIUrl: savedUrl })
         await consumeRedirectHash(auth)
-        return { mode: savedUrl.includes('dev-identity') ? 'preview' : 'netlify', auth }
+        cacheIdentityMode(mode)
+        return { mode, auth }
       }
-      // deployed without Netlify Identity enabled (or both probes blocked)
+      // No saved session. If the probes FAILED TO CONNECT (offline, flaky
+      // network, blocked proxy) the deployment isn't suddenly unconfigured —
+      // fall back to the previously resolved mode instead of claiming sign-in
+      // is disabled. Only probes that actually ANSWERED "no" mean it.
+      if (netlifyProbe === 'unreachable' || devProbe === 'unreachable') {
+        const cached = readCachedIdentityMode()
+        if (cached && cached !== 'unconfigured') {
+          return { mode: cached, auth: new GoTrue({ APIUrl: identityApiBase(cached) }) }
+        }
+        return { mode: 'unconfigured', auth: null } // not cached — inconclusive
+      }
+      // the endpoints answered and said no — genuinely not configured
+      cacheIdentityMode('unconfigured')
       return { mode: 'unconfigured', auth: null }
     })()
   }

@@ -598,7 +598,7 @@ export function RecordPbDialog({
           setDate(todayStr())
           onOpenChange(false)
         },
-        onError: (e) => toast.error('Could not record the attempt', { description: e.message }),
+        // errors (incl. offline-queued saves) are reported by the hook itself
       },
     )
   }
@@ -736,7 +736,7 @@ export function EditPbRecordDialog({
         toast.success(`Attempt saved — ${formatNumber(n)}${pb.unit ? ` ${pb.unit}` : ''}`)
         onOpenChange(false)
       },
-      onError: (e) => toast.error('Could not update the attempt', { description: e.message }),
+      // errors (incl. offline-queued saves) are reported by the hook itself
     })
   }
 
@@ -876,7 +876,6 @@ export function EditPbRecordDialog({
                         toast.success('Attempt removed')
                         onOpenChange(false)
                       },
-                      onError: (e) => toast.error('Could not remove the attempt', { description: e.message }),
                     },
                   )
                 }

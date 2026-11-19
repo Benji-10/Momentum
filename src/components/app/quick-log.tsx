@@ -83,7 +83,7 @@ export function QuickLogPopover({
           setNote('')
           setOpen(false)
         },
-        onError: (e) => toast.error('Could not log progress', { description: e.message }),
+        // errors (incl. offline-queued saves) are reported by the hook itself
       },
     )
   }
@@ -257,7 +257,7 @@ export function NodeQuickAddPopover({
           setAmount('')
           setOpen(false)
         },
-        onError: (e) => toast.error('Could not add progress', { description: e.message }),
+        // errors (incl. offline-queued saves) are reported by the hook itself
       },
     )
   }

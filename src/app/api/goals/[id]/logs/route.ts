@@ -30,6 +30,9 @@ const createLogSchema = z.object({
    *  checkpoint's unit differs from the goal's own, the entry is history
    *  for the goal and progress for the tree. */
   nodeId: z.string().max(64).nullable().optional(),
+  /** optional client-generated id — lets the optimistic UI edit/delete an
+   *  entry before this create lands (see the steps route for the full story) */
+  id: z.string().min(6).max(80).regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).optional(),
 })
 
 type Params = { params: Promise<{ id: string }> }
@@ -103,6 +106,7 @@ export async function POST(req: Request, { params }: Params) {
 
     const log = await db.progressLog.create({
       data: {
+        ...(d.id ? { id: d.id } : {}),
         goalId: id,
         amount: d.amount,
         note: d.note ?? null,

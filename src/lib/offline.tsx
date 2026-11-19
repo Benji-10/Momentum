@@ -179,6 +179,38 @@ export function loadSettingsCache(): UserSettings | null {
 }
 
 // ---------------------------------------------------------------------------
+// session cache (who is signed in — the instant-boot twin of the /me check)
+// ---------------------------------------------------------------------------
+
+const SESSION_CACHE_KEY = 'momentum:session-cache'
+
+export interface SessionCacheEntry {
+  userId: string
+  email: string
+  name: string | null
+  savedAt: number
+}
+
+/**
+ * Remember the last verified signed-in account so the app can render
+ * instantly on boot (["me"] initialData) while /api/auth/me re-verifies in
+ * the background. Cleared on sign-out and on a real "no session" answer,
+ * so a stale entry can never keep a signed-out device locked in a ghost
+ * session — the worst case is one frame of app before the auth gate.
+ */
+export function saveSessionCache(user: { id: string; email: string; name: string | null }) {
+  lsSet(SESSION_CACHE_KEY, JSON.stringify({ userId: user.id, email: user.email, name: user.name, savedAt: Date.now() }))
+}
+
+export function loadSessionCache(): SessionCacheEntry | null {
+  return readJson<SessionCacheEntry>(SESSION_CACHE_KEY)
+}
+
+export function clearSessionCache() {
+  lsRemove(SESSION_CACHE_KEY)
+}
+
+// ---------------------------------------------------------------------------
 // mutation queue
 // ---------------------------------------------------------------------------
 
@@ -465,6 +497,7 @@ export function handleUserSwitch(userId: string | null) {
     lsRemove(QUEUE_OWNER_KEY)
     lsRemove(GOALS_CACHE_KEY)
     lsRemove(SETTINGS_CACHE_KEY)
+    lsRemove(SESSION_CACHE_KEY)
     patchSnapshot({ pending: 0, fromCache: false })
   }
   if (userId) lsSet(QUEUE_OWNER_KEY, userId)
@@ -476,6 +509,7 @@ export function clearOfflineData() {
   lsRemove(QUEUE_OWNER_KEY)
   lsRemove(GOALS_CACHE_KEY)
   lsRemove(SETTINGS_CACHE_KEY)
+  lsRemove(SESSION_CACHE_KEY)
   patchSnapshot({ pending: 0, fromCache: false })
 }
 

@@ -1077,3 +1077,26 @@ html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
+
+/* No input zoom: iOS Safari auto-zooms the page whenever a form control
+   with a computed font-size under 16px gets focus (the "textbox fills the
+   whole screen" effect). Every interactive control is pinned to 16px on
+   touch devices — bigger text on phones is a win anyway, and desktop
+   (pointer: fine) keeps its compact sizes. The :not() chain gives the rule
+   enough specificity to beat single-class utility overrides (text-sm etc.);
+   checkbox/radio/range/file controls have no text to zoom. */
+@media (hover: none) and (pointer: coarse) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  /* sonner's close button is a 20px circle with its X icon inside — on
+     touch that's a hard target. Give it a little more room (the icon
+     itself stretches with the button). */
+  [data-sonner-toast] [data-close-button] {
+    height: 24px;
+    width: 24px;
+  }
+}

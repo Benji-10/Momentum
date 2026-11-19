@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ApiError, apiFetch } from '@/lib/api-client'
@@ -13,7 +14,7 @@ import {
   initIdentity,
   requestRecovery,
 } from '@/lib/identity-client'
-import { handleUserSwitch, isNetworkError, loadSettingsCache, saveSettingsCache } from '@/lib/offline'
+import { clearSessionCache, handleUserSwitch, isNetworkError, loadSessionCache, loadSettingsCache, saveSessionCache, saveSettingsCache } from '@/lib/offline'
 import type { SessionUser } from '@/lib/auth'
 import { DEFAULT_SETTINGS, type UserSettings } from '@/lib/settings'
 import type { AppearanceSettings } from '@/lib/appearance/types'
@@ -30,11 +31,18 @@ import type { AppearanceSettings } from '@/lib/appearance/types'
 async function fetchMe(): Promise<{ user: SessionUser | null; settings: UserSettings }> {
   await initIdentity()
   const identity = await currentIdentityUser()
-  if (!identity) return { user: null, settings: { ...DEFAULT_SETTINGS } }
+  if (!identity) {
+    // no local session at all — the cached "signed in" state (if any) is
+    // stale; drop it so the next boot doesn't render a ghost app first
+    clearSessionCache()
+    return { user: null, settings: { ...DEFAULT_SETTINGS } }
+  }
   // confirms the token server-side; also creates the app row (and adopts
   // unclaimed goals) on the very first sign-in
   try {
     const res = await apiFetch<{ user: SessionUser | null; settings: UserSettings }>('/api/auth/me')
+    if (res.user) saveSessionCache({ id: res.user.id, email: res.user.email, name: res.user.name })
+    else clearSessionCache()
     saveSettingsCache(res.settings, res.user?.id ?? identity.id)
     return res
   } catch (e) {
@@ -52,11 +60,14 @@ async function fetchMe(): Promise<{ user: SessionUser | null; settings: UserSett
       // genuine "session rejected": stay locally signed in (and keep the
       // cached settings alive) so the offline list stays reachable. The next
       // successful poll re-verifies, and a real 401 signs out properly.
+      const name = (identity.user_metadata?.name as string | undefined) ?? null
+      // keep the session cache alive too — the app boots instantly next time
+      saveSessionCache({ id: identity.id, email: identity.email, name })
       return {
         user: {
           id: identity.id,
           email: identity.email,
-          name: (identity.user_metadata?.name as string | undefined) ?? null,
+          name,
           settings: null,
         },
         settings: loadSettingsCache() ?? { ...DEFAULT_SETTINGS },
@@ -66,30 +77,57 @@ async function fetchMe(): Promise<{ user: SessionUser | null; settings: UserSett
   }
 }
 
-/** Who is signed in (null = nobody). */
+/** Who is signed in (null = nobody).
+ *
+ *  The last verified session seeds the ['me'] cache right AFTER hydration
+ *  (a useEffect + setQueryData — initialData would render during hydration
+ *  and mismatch the server's loading shell), so the app paints instantly
+ *  while /api/auth/me re-verifies in the background. The fetch triggered by
+ *  the empty mount always runs: sign-outs and cross-device settings appear
+ *  on the next open, not after the staleTime. */
+function useSeedSessionCache() {
+  const qc = useQueryClient()
+  useEffect(() => {
+    const session = loadSessionCache()
+    if (!session || qc.getQueryData(['me'])) return
+    // updatedAt: 0 — the seed is "always stale", so the mount-fetch still
+    // verifies the session server-side (sign-outs and cross-device settings
+    // land on the next open, not after the staleTime)
+    qc.setQueryData(
+      ['me'],
+      {
+        user: { id: session.userId, email: session.email, name: session.name, settings: null },
+        settings: loadSettingsCache() ?? { ...DEFAULT_SETTINGS },
+      },
+      { updatedAt: 0 },
+    )
+  }, [qc])
+}
+
+const ME_QUERY_OPTIONS = {
+  queryKey: ['me'] as const,
+  queryFn: fetchMe,
+  staleTime: 60_000,
+  refetchInterval: 300_000,
+  refetchOnWindowFocus: true,
+  retry: false,
+}
+
 export function useMe() {
+  useSeedSessionCache()
   return useQuery({
-    queryKey: ['me'],
-    queryFn: fetchMe,
+    ...ME_QUERY_OPTIONS,
     select: (d) => d.user,
-    staleTime: 60_000,
-    refetchInterval: 300_000,
-    refetchOnWindowFocus: true,
-    retry: false,
   })
 }
 
 /** The signed-in user's synced app settings (theme + timezone). Same cache
  *  as useMe — one fetch, two views. */
 export function useSettings() {
+  useSeedSessionCache()
   return useQuery({
-    queryKey: ['me'],
-    queryFn: fetchMe,
+    ...ME_QUERY_OPTIONS,
     select: (d) => d.settings,
-    staleTime: 60_000,
-    refetchInterval: 300_000,
-    refetchOnWindowFocus: true,
-    retry: false,
   })
 }
 

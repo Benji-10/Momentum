@@ -10,7 +10,7 @@ import { useSyncState } from '@/hooks/use-sync'
 import { replaySyncQueue } from '@/lib/offline'
 import { useLogout, useMe, useSettings } from '@/hooks/use-auth'
 import { useQueryClient } from '@tanstack/react-query'
-import { initIdentity } from '@/lib/identity-client'
+import { initIdentity, readCachedIdentityMode, type IdentityMode } from '@/lib/identity-client'
 import { setAppTimezone } from '@/lib/app-time'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
@@ -406,9 +406,13 @@ export default function Home() {
   const me = meQuery.data ?? null
   const settingsQuery = useSettings()
   const settings = settingsQuery.data ?? null
-  const [identityMode, setIdentityMode] = useState<'netlify' | 'preview' | 'unconfigured' | null>(null)
+  const [identityMode, setIdentityMode] = useState<IdentityMode | null>(null)
 
   useEffect(() => {
+    // the previously resolved backend renders instantly (no boot gate);
+    // the live probe re-checks and corrects it if this deploy changed
+    const cached = readCachedIdentityMode()
+    if (cached) setIdentityMode(cached)
     initIdentity().then((i) => setIdentityMode(i.mode))
   }, [])
 

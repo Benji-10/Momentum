@@ -203,7 +203,6 @@ function StepRow({
   onMove,
   onDelete,
   onEdit,
-  busy,
 }: {
   step: GoalStepData
   goal: GoalData
@@ -212,7 +211,6 @@ function StepRow({
   onMove: (dir: 'up' | 'down') => void
   onDelete: () => void
   onEdit: (patch: StepEditPatch) => void
-  busy: boolean
 }) {
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState(step.title)
@@ -271,7 +269,6 @@ function StepRow({
         <button
           type="button"
           onClick={onCycle}
-          disabled={busy}
           aria-label={`Mark step "${step.title}" as ${step.status === 'pending' ? 'in progress' : step.status === 'in_progress' ? 'done' : 'pending'}`}
           className="shrink-0 transition-transform hover:scale-110 disabled:opacity-50"
         >
@@ -325,17 +322,16 @@ function StepRow({
             aria-label={`Edit step "${step.title}"`}
             title="Rename, add notes, set up automation"
             onClick={openEditor}
-            disabled={busy}
           >
             <Pencil className="h-3.5 w-3.5" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Move up" onClick={() => onMove('up')} disabled={busy}>
+          <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Move up" onClick={() => onMove('up')}>
             <ArrowUp className="h-3.5 w-3.5" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Move down" onClick={() => onMove('down')} disabled={busy}>
+          <Button variant="ghost" size="icon" className="h-7 w-7" aria-label="Move down" onClick={() => onMove('down')}>
             <ArrowDown className="h-3.5 w-3.5" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" aria-label="Delete step" onClick={onDelete} disabled={busy}>
+          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" aria-label="Delete step" onClick={onDelete}>
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -532,7 +528,7 @@ function StepRow({
             <Button
               size="sm"
               className="h-7 text-xs"
-              disabled={!title.trim() || busy || (kind === 'metric' && (!metricName || !(valueNum > 0)))}
+              disabled={!title.trim() || (kind === 'metric' && (!metricName || !(valueNum > 0)))}
               onClick={() => {
                 onEdit({
                   title: title.trim(),
@@ -788,13 +784,11 @@ function DetailBody({
                       : `Attempt recorded for ${pb.name}`,
                     { description: 'Editable from the Review tab or this history below.' },
                   ),
-                onError: (e) =>
-                  toast.error(`Could not record the ${pb.name} attempt`, { description: e.message }),
+                // errors (incl. offline-queued saves) are reported by the hook
               },
             )
           }
         },
-        onError: (e) => toast.error('Could not log progress', { description: e.message }),
       },
     )
   }
@@ -808,7 +802,7 @@ function DetailBody({
         onSuccess: () => {
           if (next === 'done') toast.success('Step completed! 🎉', { description: step.title })
         },
-        onError: (e) => toast.error('Could not update step', { description: e.message }),
+        // errors (incl. offline-queued saves) are reported by the hook itself
       },
     )
   }
@@ -1182,10 +1176,7 @@ function DetailBody({
                         : 'Hide completed steps — keeps this list focused on what is left (saved per goal)'
                     }
                     onClick={() =>
-                      updateGoal.mutate(
-                        { id: goal.id, patch: { hideDoneSteps: !goal.hideDoneSteps } },
-                        { onError: (e) => toast.error('Could not save the view setting', { description: e.message }) },
-                      )
+                      updateGoal.mutate({ id: goal.id, patch: { hideDoneSteps: !goal.hideDoneSteps } })
                     }
                   >
                     {goal.hideDoneSteps ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
@@ -1203,26 +1194,16 @@ function DetailBody({
                     step={step}
                     goal={goal}
                     isNext={stats.nextStep?.id === step.id}
-                    busy={updateStep.isPending || deleteStep.isPending}
                     onCycle={() => cycleStepStatus(step)}
-                    onMove={(dir) =>
-                      updateStep.mutate({ stepId: step.id, patch: { move: dir } }, {
-                        onError: (e) => toast.error('Could not move step', { description: e.message }),
-                      })
-                    }
+                    onMove={(dir) => updateStep.mutate({ stepId: step.id, patch: { move: dir } })}
                     onEdit={(patch) =>
-                      updateStep.mutate(
-                        { stepId: step.id, patch },
-                        {
-                          onSuccess: () => toast.success('Step updated'),
-                          onError: (e) => toast.error('Could not update step', { description: e.message }),
-                        },
-                      )
+                      updateStep.mutate({ stepId: step.id, patch }, {
+                        onSuccess: () => toast.success('Step updated'),
+                      })
                     }
                     onDelete={() =>
                       deleteStep.mutate(step.id, {
                         onSuccess: () => toast.success('Step removed'),
-                        onError: (e) => toast.error('Could not remove step', { description: e.message }),
                       })
                     }
                   />
@@ -1252,14 +1233,12 @@ function DetailBody({
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && newStep.trim()) {
                       e.preventDefault()
+                      const title = newStep.trim()
+                      setNewStep('') // the row appears optimistically — don't wait for the server
                       addStep.mutate(
-                        { title: newStep.trim() },
+                        { title },
                         {
-                          onSuccess: () => {
-                            setNewStep('')
-                            toast.success('Step added')
-                          },
-                          onError: (e2) => toast.error('Could not add step', { description: e2.message }),
+                          onSuccess: () => toast.success('Step added'),
                         },
                       )
                     }
@@ -1270,18 +1249,16 @@ function DetailBody({
                 <Button
                   variant="secondary"
                   disabled={!newStep.trim() || addStep.isPending}
-                  onClick={() =>
+                  onClick={() => {
+                    const title = newStep.trim()
+                    setNewStep('') // the row appears optimistically — don't wait for the server
                     addStep.mutate(
-                      { title: newStep.trim() },
+                      { title },
                       {
-                        onSuccess: () => {
-                          setNewStep('')
-                          toast.success('Step added')
-                        },
-                        onError: (e2) => toast.error('Could not add step', { description: e2.message }),
+                        onSuccess: () => toast.success('Step added'),
                       },
                     )
-                  }
+                  }}
                 >
                   <Plus className="h-4 w-4" /> Add
                 </Button>
@@ -1882,7 +1859,6 @@ function DetailBody({
                           onClick={() =>
                             deleteLog.mutate(log.id, {
                               onSuccess: () => toast.success('Entry removed'),
-                              onError: (e) => toast.error('Could not remove entry', { description: e.message }),
                             })
                           }
                         >
@@ -1913,7 +1889,6 @@ function DetailBody({
                             setNewNote('')
                             toast.success('Note added')
                           },
-                          onError: (e2) => toast.error('Could not add note', { description: e2.message }),
                         },
                       )
                     }
@@ -1933,7 +1908,6 @@ function DetailBody({
                           setNewNote('')
                           toast.success('Note added')
                         },
-                        onError: (e2) => toast.error('Could not add note', { description: e2.message }),
                       },
                     )
                   }
@@ -1979,7 +1953,6 @@ function DetailBody({
                           onClick={() =>
                             deleteNote.mutate(n.id, {
                               onSuccess: () => toast.success('Note removed'),
-                              onError: (e) => toast.error('Could not remove note', { description: e.message }),
                             })
                           }
                         >

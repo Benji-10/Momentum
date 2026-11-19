@@ -30,6 +30,10 @@ const createStepSchema = z.object({
   dueDate: z.string().datetime().nullable().optional(),
   /** insert after this step order (append by default) */
   afterOrder: z.number().int().optional(),
+  /** optional client-generated id — the optimistic UI creates the row
+   *  before this request lands, and follow-up moves/edits reference it;
+   *  honoring the client's id keeps those requests valid */
+  id: z.string().min(6).max(80).regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).optional(),
 }).and(triggerFields)
 
 type Params = { params: Promise<{ id: string }> }
@@ -73,6 +77,7 @@ export async function POST(req: Request, { params }: Params) {
 
     const step = await db.goalStep.create({
       data: {
+        ...(d.id ? { id: d.id } : {}),
         goalId: id,
         title: d.title,
         notes: d.notes ?? null,

@@ -96,7 +96,7 @@ export function EditLogDialog({ target, onClose }: { target: EditLogTarget | nul
         toast.success(`Saved — ${formatNumber(n)} ${plural(target.unit, n)}${when}`)
         onClose()
       },
-      onError: (e) => toast.error('Could not update the entry', { description: e.message }),
+      // errors (incl. offline-queued saves) are reported by the hook itself
     })
   }
 

@@ -193,7 +193,7 @@ export function NodeEditDialog({
           toast.success('Checkpoint removed')
           onOpenChange(false)
         },
-        onError: (e) => toast.error('Could not remove checkpoint', { description: e.message }),
+        // errors (incl. offline-queued saves) are reported by the hook itself
       },
     )
   }
@@ -225,7 +225,7 @@ export function NodeEditDialog({
           toast.success('Checkpoint updated')
           onOpenChange(false)
         },
-        onError: (e) => toast.error('Could not update checkpoint', { description: e.message }),
+        // errors (incl. offline-queued saves) are reported by the hook itself
       },
     )
   }

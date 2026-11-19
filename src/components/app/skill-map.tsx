@@ -145,7 +145,7 @@ function NodePopover({
             })
           }
         },
-        onError: (e) => toast.error('Could not log', { description: e.message }),
+        // errors (incl. offline-queued saves) are reported by the hook itself
       },
     )
   }
@@ -484,7 +484,6 @@ function PathColumn({
       },
       {
         onSuccess: () => setNt(''),
-        onError: (e) => toast.error('Could not add tier', { description: e.message }),
       },
     )
   }

@@ -1,9 +1,22 @@
 'use client'
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect } from 'react'
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { CloudOff } from 'lucide-react'
 import { toast } from 'sonner'
-import type { CreateGoalInput, GoalData, MergeSummary, PbNodeCreditData, RoutineDoneData, StepStatus } from '@/lib/types'
+import type {
+  CreateGoalInput,
+  GoalData,
+  GoalNoteData,
+  GoalStepData,
+  MergeSummary,
+  PbNodeCreditData,
+  ProgressLogData,
+  PbRecordData,
+  RoutineDoneData,
+  SkillNodeData,
+  StepStatus,
+} from '@/lib/types'
 import type { NormalizedImport } from '@/lib/import-format'
 import { dayKeyOf, todayDayKey } from '@/lib/app-time'
 import { parseDayKey } from '@/lib/routine-math'
@@ -25,7 +38,212 @@ function jsonFetch<T>(url: string, init?: RequestInit): Promise<T> {
   return apiFetch<T>(url, init)
 }
 
+// ---------------------------------------------------------------------------
+// optimistic goal writes
+//
+// Every quick interaction (tick a step, reorder, log an entry, …) paints its
+// result into the ['goals'] cache IMMEDIATELY; the server confirms in the
+// background. Rules:
+//
+//  - onMutate  → patch the one goal inside the cache (snapshot kept for
+//                rollback), cancel in-flight refetches so they can't land
+//                over the optimistic state
+//  - onSuccess → swap in the server's goal — but only when no other write
+//                for that goal is still in flight: an earlier response
+//                doesn't know about later local patches and would clobber
+//                them (rapid reordering would visibly flicker)
+//  - onError   → offline-queued keeps the optimistic state (it will replay);
+//                a real error rolls the goal back to its pre-patch state
+// ---------------------------------------------------------------------------
+
+type GoalsCacheShape = { goals: GoalData[] }
+
+const inFlightGoalWrites = new Map<string, number>()
+
+interface GoalWriteCtx {
+  goalId: string
+  prevGoal?: GoalData
+}
+
+function tempId(prefix: string) {
+  return `optimistic-${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+/** Creates that are still on their way to the server, keyed by the
+ *  client-generated id they will be created under. */
+const pendingCreates = new Map<string, Promise<unknown>>()
+
+/** A follow-up write on a client-generated id (move the step you just
+ *  added, pin the note you just wrote) waits for its create to land first —
+ *  the server would otherwise 404 the child before the parent exists. A
+ *  create that failed offline needs no wait: both ops go into the offline
+ *  queue in order and replay create-first. */
+function waitForCreate(id: string | null | undefined): Promise<void> {
+  if (!id || !id.startsWith('optimistic-')) return Promise.resolve()
+  const p = pendingCreates.get(id)
+  if (!p) return Promise.resolve() // already settled (or never ours)
+  return p.then(
+    () => undefined,
+    () => undefined,
+  )
+}
+
+/** Register a create's promise so follow-ups on the same id can wait. */
+function trackCreate(id: string, p: Promise<unknown>): Promise<unknown> {
+  pendingCreates.set(id, p)
+  return p.finally(() => {
+    if (pendingCreates.get(id) === p) pendingCreates.delete(id)
+  })
+}
+
+function beginGoalWrite(qc: QueryClient, goalId: string | null, patch: (g: GoalData) => GoalData): GoalWriteCtx {
+  const id = goalId ?? ''
+  inFlightGoalWrites.set(id, (inFlightGoalWrites.get(id) ?? 0) + 1)
+  void qc.cancelQueries({ queryKey: ['goals'] })
+  const cur = qc.getQueryData<GoalsCacheShape>(['goals'])
+  const prevGoal = goalId ? cur?.goals.find((g) => g.id === goalId) : undefined
+  if (cur && prevGoal) {
+    qc.setQueryData<GoalsCacheShape>(['goals'], {
+      goals: cur.goals.map((g) => (g.id === goalId ? patch(g) : g)),
+    })
+  }
+  return { goalId: id, prevGoal }
+}
+
+function settleGoalWrite(qc: QueryClient, ctx: GoalWriteCtx, serverGoal: GoalData | null | undefined) {
+  const n = (inFlightGoalWrites.get(ctx.goalId) ?? 1) - 1
+  if (n > 0) {
+    inFlightGoalWrites.set(ctx.goalId, n)
+    return
+  }
+  inFlightGoalWrites.delete(ctx.goalId)
+  if (serverGoal) {
+    qc.setQueryData<GoalsCacheShape>(['goals'], (cur) =>
+      cur ? { goals: cur.goals.map((g) => (g.id === serverGoal.id ? serverGoal : g)) } : cur,
+    )
+  } else {
+    void qc.invalidateQueries({ queryKey: ['goals'] })
+  }
+}
+
+function failGoalWrite(qc: QueryClient, ctx: GoalWriteCtx, e: unknown, what: string) {
+  const n = (inFlightGoalWrites.get(ctx.goalId) ?? 1) - 1
+  if (n > 0) inFlightGoalWrites.set(ctx.goalId, n)
+  else inFlightGoalWrites.delete(ctx.goalId)
+
+  if (isOfflineQueuedError(e)) {
+    // saved on this device — the optimistic change stays on screen and
+    // replays when the connection returns
+    toast('Saved offline', {
+      icon: <CloudOff className="h-4 w-4 text-amber-500" />,
+      description: 'No connection right now — this change stays on this device and will sync when you reconnect.',
+    })
+    return
+  }
+  if (n > 0) {
+    // other writes are still in flight for this goal — restoring this
+    // write's snapshot would clobber their optimistic state; the server
+    // truth from the last settle reconciles everything
+    void qc.invalidateQueries({ queryKey: ['goals'] })
+    toast.error(`Couldn't ${what}`, { description: e instanceof Error ? e.message : 'Please try again.' })
+    return
+  }
+  if (ctx.prevGoal) {
+    const restore = ctx.prevGoal
+    qc.setQueryData<GoalsCacheShape>(['goals'], (cur) =>
+      cur ? { goals: cur.goals.map((g) => (g.id === restore.id ? restore : g)) } : cur,
+    )
+  }
+  toast.error(`Couldn't ${what}`, {
+    description: e instanceof Error ? `${e.message} — your change was undone, try again.` : 'Your change was undone — try again.',
+  })
+}
+
+/** Swap a step (or node) with its neighbour and return the list in its NEW
+ * order — positions swapped and renumbered 0..n-1, matching what the server
+ * sends back (the steps list renders in raw array order, so both the
+ * position and the order value must move). */
+function movedInOrder<T extends { id: string; order: number }>(items: T[], id: string, dir: 'up' | 'down'): T[] {
+  const sorted = [...items].sort((a, b) => a.order - b.order)
+  const i = sorted.findIndex((s) => s.id === id)
+  const j = dir === 'up' ? i - 1 : i + 1
+  if (i < 0 || j < 0 || j >= sorted.length) return items
+  const reordered = [...sorted]
+  const tmp = reordered[i]
+  reordered[i] = reordered[j]
+  reordered[j] = tmp
+  return reordered.map((s, idx) => ({ ...s, order: idx }))
+}
+
+function withStepPatched(goal: GoalData, stepId: string, patch: Record<string, unknown>): GoalData {
+  return {
+    ...goal,
+    steps: goal.steps.map((s): GoalStepData => {
+      if (s.id !== stepId) return s
+      const next: GoalStepData = { ...s }
+      if (typeof patch.title === 'string') next.title = patch.title
+      if ('notes' in patch) next.notes = (patch.notes as string | null) ?? null
+      if ('status' in patch && patch.status !== undefined) {
+        next.status = patch.status as StepStatus
+        next.completedAt = next.status === 'done' ? new Date().toISOString() : null
+      }
+      if ('dueDate' in patch) next.dueDate = (patch.dueDate as string | null) ?? null
+      if ('trigger' in patch && patch.trigger !== undefined) next.trigger = patch.trigger as GoalStepData['trigger']
+      if ('routineId' in patch) next.routineId = (patch.routineId as string | null) ?? null
+      if ('triggerCount' in patch && patch.triggerCount !== undefined) next.triggerCount = patch.triggerCount as number
+      if ('metricName' in patch) next.metricName = (patch.metricName as string | null) ?? null
+      if ('metricWindow' in patch) next.metricWindow = (patch.metricWindow as number | null) ?? null
+      if ('metricOp' in patch && patch.metricOp !== undefined) next.metricOp = patch.metricOp as GoalStepData['metricOp']
+      if ('metricValue' in patch) next.metricValue = (patch.metricValue as number | null) ?? null
+      return next
+    }),
+  }
+}
+
+function withNodePatched(goal: GoalData, nodeId: string, patch: Record<string, unknown>): GoalData {
+  return {
+    ...goal,
+    skillPaths: goal.skillPaths.map((p) => ({
+      ...p,
+      nodes: p.nodes.map((n): SkillNodeData => {
+        if (n.id !== nodeId) return n
+        const next: SkillNodeData = { ...n }
+        if (typeof patch.title === 'string') next.title = patch.title
+        if ('description' in patch) next.description = (patch.description as string | null) ?? null
+        if (typeof patch.icon === 'string') next.icon = patch.icon
+        if (typeof patch.add === 'number') next.currentValue += patch.add
+        if (typeof patch.currentValue === 'number') next.currentValue = patch.currentValue
+        if (typeof patch.targetValue === 'number') next.targetValue = patch.targetValue
+        if ('unit' in patch) next.unit = (patch.unit as string | null) ?? null
+        if (typeof patch.xpValue === 'number') next.xpValue = patch.xpValue
+        if (typeof patch.mastered === 'boolean') next.completedAt = patch.mastered ? new Date().toISOString() : null
+        return next
+      }),
+    })),
+  }
+}
+
 export function useGoals() {
+  const qc = useQueryClient()
+  // Post-hydration cache seed: the moment hydration finishes, the last
+  // synced snapshot (plus queued check-offs) is dropped into the ['goals']
+  // cache so the app paints instantly — the fetch triggered by the empty
+  // mount keeps running and reconciles with the server when it lands.
+  // (NOT initialData: that would render during hydration and mismatch the
+  // server's loading shell.)
+  useEffect(() => {
+    const cached = loadGoalsCache()
+    if (cached && !qc.getQueryData(['goals'])) {
+      // updatedAt: 0 — the seed is "always stale", so react-query's
+      // mount-fetch decision (which may run after this effect) still sends
+      // the request: the cache is the first paint, never the truth
+      qc.setQueryData(
+        ['goals'],
+        { goals: applyQueuedDones(cached.goals, queuedOps()) },
+        { updatedAt: 0 },
+      )
+    }
+  }, [qc])
   return useQuery({
     queryKey: ['goals'],
     queryFn: async () => {
@@ -92,7 +310,25 @@ export function useUpdateGoal() {
         method: 'PATCH',
         body: JSON.stringify(patch),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+    // optimistic: the edit (title, weekly target, hide-done, archive…)
+    // paints immediately; the server confirms in the background
+    onMutate: ({ id, patch }) =>
+      beginGoalWrite(qc, id, (g) => ({
+        ...g,
+        ...('title' in patch ? { title: patch.title! } : {}),
+        ...('description' in patch ? { description: patch.description ?? null } : {}),
+        ...('emoji' in patch ? { emoji: patch.emoji! } : {}),
+        ...('color' in patch ? { color: patch.color! } : {}),
+        ...('category' in patch ? { category: patch.category ?? null } : {}),
+        ...('unit' in patch ? { unit: patch.unit ?? null } : {}),
+        ...('targetValue' in patch ? { targetValue: patch.targetValue ?? null } : {}),
+        ...('weeklyTarget' in patch ? { weeklyTarget: patch.weeklyTarget ?? null } : {}),
+        ...('deadline' in patch ? { deadline: patch.deadline ?? null } : {}),
+        ...('status' in patch ? { status: patch.status! } : {}),
+        ...('hideDoneSteps' in patch ? { hideDoneSteps: patch.hideDoneSteps! } : {}),
+      })),
+    onError: (e, _v, ctx) => ctx && failGoalWrite(qc, ctx, e, 'save the goal'),
+    onSuccess: (res, _v, ctx) => ctx && settleGoalWrite(qc, ctx, res.goal),
   })
 }
 
@@ -108,14 +344,54 @@ export function useDeleteGoal() {
 
 export function useAddStep(goalId: string | null) {
   const qc = useQueryClient()
-  return useMutation({
-    mutationFn: ({ title }: { title: string }) =>
-      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/steps`, {
-        method: 'POST',
-        body: JSON.stringify({ title }),
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+  const mutation = useMutation({
+    mutationFn: ({ title, id }: { title: string; id: string }) =>
+      trackCreate(
+        id,
+        jsonFetch<{ step: { id: string } }>(`/api/goals/${goalId}/steps`, {
+          method: 'POST',
+          body: JSON.stringify({ title, id }),
+        }),
+      ) as Promise<{ step: { id: string } }>,
+    // optimistic: the step appears at the end of the plan immediately, under
+    // its client-generated id — moves/edits on it are valid from the start
+    onMutate: ({ title, id }) =>
+      beginGoalWrite(qc, goalId, (g) => ({
+        ...g,
+        steps: [
+          ...g.steps,
+          {
+            id,
+            goalId: g.id,
+            title,
+            notes: null,
+            order: g.steps.reduce((m, s) => Math.max(m, s.order), -1) + 1,
+            status: 'pending',
+            completedAt: null,
+            dueDate: null,
+            trigger: 'manual',
+            routineId: null,
+            triggerCount: 1,
+            metricName: null,
+            metricWindow: null,
+            metricOp: null,
+            metricValue: null,
+            currentSince: null,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      })),
+    onError: (e, _v, ctx) => ctx && failGoalWrite(qc, ctx, e, 'add the step'),
+    // this route answers with the step, not the goal — reconcile via refetch
+    onSuccess: (_res, _v, ctx) => ctx && settleGoalWrite(qc, ctx, undefined),
   })
+  // the public mutate gets a client-generated id injected, so callers
+  // stay as simple as mutate({ title })
+  return {
+    ...mutation,
+    mutate: (vars: { title: string }, opts?: Parameters<typeof mutation.mutate>[1]) =>
+      mutation.mutate({ ...vars, id: tempId('step') }, opts),
+  }
 }
 
 export function useUpdateStep(goalId: string | null) {
@@ -142,11 +418,26 @@ export function useUpdateStep(goalId: string | null) {
         metricValue?: number | null
       }
     }) =>
-      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/steps/${stepId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(patch),
+      // a step that was just added optimistically may still be on its way
+      // to the server — wait for the create before patching it
+      waitForCreate(stepId).then(() =>
+        jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/steps/${stepId}`, {
+          method: 'PATCH',
+          body: JSON.stringify(patch),
+        }),
+      ),
+    // optimistic: ticks, renames and reorders show instantly — no waiting
+    // on the network to see your own tap
+    onMutate: ({ stepId, patch }) =>
+      beginGoalWrite(qc, goalId, (g) => {
+        let out = patch.move ? { ...g, steps: movedInOrder(g.steps, stepId, patch.move) } : g
+        const rest: Record<string, unknown> = { ...patch }
+        delete rest.move
+        if (Object.keys(rest).length > 0) out = withStepPatched(out, stepId, rest)
+        return out
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+    onError: (e, _v, ctx) => ctx && failGoalWrite(qc, ctx, e, 'update the step'),
+    onSuccess: (res, _v, ctx) => ctx && settleGoalWrite(qc, ctx, res.goal),
   })
 }
 
@@ -154,10 +445,15 @@ export function useDeleteStep(goalId: string | null) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (stepId: string) =>
-      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/steps/${stepId}`, {
-        method: 'DELETE',
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+      waitForCreate(stepId).then(() =>
+        jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/steps/${stepId}`, {
+          method: 'DELETE',
+        }),
+      ),
+    // optimistic: the step leaves the list immediately
+    onMutate: (stepId) => beginGoalWrite(qc, goalId, (g) => ({ ...g, steps: g.steps.filter((s) => s.id !== stepId) })),
+    onError: (e, _v, ctx) => ctx && failGoalWrite(qc, ctx, e, 'remove the step'),
+    onSuccess: (res, _v, ctx) => ctx && settleGoalWrite(qc, ctx, res.goal),
   })
 }
 
@@ -165,42 +461,67 @@ export function useDeleteStep(goalId: string | null) {
 
 export function useAddLog(goalId: string | null) {
   const qc = useQueryClient()
-  return useMutation({
-    mutationFn: ({
-      amount,
-      note,
-      date,
-      unit,
-      nodeId,
-    }: {
-      amount: number
-      note?: string | null
-      date?: string
-      /** the unit the amount is in — defaults to the goal's own on the server */
-      unit?: string | null
-      /** credit this skill checkpoint with the amount (session-counting plan
-       *  goals only; the server validates lock/mastery/derivation) */
-      nodeId?: string | null
-    }) =>
-      jsonFetch<{
+  const mutation = useMutation({
+    mutationFn: ({ id, amount, note, date, unit, nodeId }: { id: string; amount: number; note?: string | null; date?: string; unit?: string | null; nodeId?: string | null }) =>
+      trackCreate(
+        id,
+        jsonFetch<{
+          log: { id: string; amount: number; unit: string | null; note: string | null }
+          goal: GoalData | null
+        }>(`/api/goals/${goalId}/logs`, {
+          method: 'POST',
+          body: JSON.stringify({ id, amount, note: note || null, date, unit: unit ?? null, nodeId: nodeId ?? null }),
+        }),
+      ) as Promise<{
         log: { id: string; amount: number; unit: string | null; note: string | null }
         goal: GoalData | null
-      }>(`/api/goals/${goalId}/logs`, {
-        method: 'POST',
-        body: JSON.stringify({ amount, note: note || null, date, unit: unit ?? null, nodeId: nodeId ?? null }),
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+      }>,
+    // optimistic: the entry lands in the ledger (and every derived progress
+    // number that reads it) immediately, under its client-generated id
+    onMutate: ({ id, amount, note, date, unit, nodeId }) =>
+      beginGoalWrite(qc, goalId, (g) => ({
+        ...g,
+        logs: [
+          ...g.logs,
+          {
+            id,
+            goalId: g.id,
+            date: date ?? new Date().toISOString(),
+            amount,
+            note: note ?? null,
+            unit: unit ?? null,
+            nodeId: nodeId ?? null,
+            pbId: null,
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      })),
+    onError: (e, _v, ctx) => ctx && failGoalWrite(qc, ctx, e, 'log the entry'),
+    onSuccess: (res, _v, ctx) => ctx && settleGoalWrite(qc, ctx, res.goal),
   })
+  return {
+    ...mutation,
+    mutate: (
+      vars: { amount: number; note?: string | null; date?: string; unit?: string | null; nodeId?: string | null },
+      opts?: Parameters<typeof mutation.mutate>[1],
+    ) => mutation.mutate({ ...vars, id: tempId('log') }, opts),
+  }
 }
 
 export function useDeleteLog(goalId: string | null) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (logId: string) =>
-      jsonFetch<{ ok: boolean }>(`/api/goals/${goalId}/logs/${logId}`, {
-        method: 'DELETE',
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+      waitForCreate(logId).then(() =>
+        jsonFetch<{ ok: boolean }>(`/api/goals/${goalId}/logs/${logId}`, {
+          method: 'DELETE',
+        }),
+      ),
+    // optimistic: the entry leaves the ledger immediately
+    onMutate: (logId) => beginGoalWrite(qc, goalId, (g) => ({ ...g, logs: g.logs.filter((l) => l.id !== logId) })),
+    onError: (e, _v, ctx) => ctx && failGoalWrite(qc, ctx, e, 'remove the entry'),
+    // the DELETE response carries no goal — reconcile via a background refetch
+    onSuccess: (_res, _v, ctx) => ctx && settleGoalWrite(qc, ctx, undefined),
   })
 }
 
@@ -221,11 +542,29 @@ export function useUpdateLog(goalId: string | null) {
       /** new ISO instant — only sent when the day actually changed */
       date?: string
     }) =>
-      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/logs/${logId}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ amount, note: note ?? null, ...(date ? { date } : {}) }),
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+      waitForCreate(logId).then(() =>
+        jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/logs/${logId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ amount, note: note ?? null, ...(date ? { date } : {}) }),
+        }),
+      ),
+    // optimistic: the corrected amount/day/note shows immediately
+    onMutate: ({ logId, amount, note, date }) =>
+      beginGoalWrite(qc, goalId, (g) => ({
+        ...g,
+        logs: g.logs.map((l): ProgressLogData =>
+          l.id !== logId
+            ? l
+            : {
+                ...l,
+                amount,
+                note: note ?? null,
+                ...(date ? { date } : {}),
+              },
+        ),
+      })),
+    onError: (e, _v, ctx) => ctx && failGoalWrite(qc, ctx, e, 'update the entry'),
+    onSuccess: (res, _v, ctx) => ctx && settleGoalWrite(qc, ctx, res.goal),
   })
 }
 
@@ -233,25 +572,61 @@ export function useUpdateLog(goalId: string | null) {
 
 export function useAddNote(goalId: string | null) {
   const qc = useQueryClient()
-  return useMutation({
-    mutationFn: ({ content, pinned }: { content: string; pinned?: boolean }) =>
-      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/notes`, {
-        method: 'POST',
-        body: JSON.stringify({ content, pinned }),
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+  const mutation = useMutation({
+    mutationFn: ({ id, content, pinned }: { id: string; content: string; pinned?: boolean }) =>
+      trackCreate(
+        id,
+        jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/notes`, {
+          method: 'POST',
+          body: JSON.stringify({ id, content, pinned }),
+        }),
+      ) as Promise<{ goal: GoalData | null }>,
+    // optimistic: the note appears immediately, under its client-generated id
+    onMutate: ({ id, content, pinned }) =>
+      beginGoalWrite(qc, goalId, (g) => ({
+        ...g,
+        notes: [
+          ...g.notes,
+          {
+            id,
+            goalId: g.id,
+            content,
+            pinned: pinned === true,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        ],
+      })),
+    onError: (e, _v, ctx) => ctx && failGoalWrite(qc, ctx, e, 'add the note'),
+    onSuccess: (res, _v, ctx) => ctx && settleGoalWrite(qc, ctx, res.goal),
   })
+  return {
+    ...mutation,
+    mutate: (vars: { content: string; pinned?: boolean }, opts?: Parameters<typeof mutation.mutate>[1]) =>
+      mutation.mutate({ ...vars, id: tempId('note') }, opts),
+  }
 }
 
 export function useUpdateNote(goalId: string | null) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ noteId, patch }: { noteId: string; patch: { content?: string; pinned?: boolean } }) =>
-      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/notes/${noteId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(patch),
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+      waitForCreate(noteId).then(() =>
+        jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/notes/${noteId}`, {
+          method: 'PATCH',
+          body: JSON.stringify(patch),
+        }),
+      ),
+    // optimistic: pin/unpin and edits show immediately
+    onMutate: ({ noteId, patch }) =>
+      beginGoalWrite(qc, goalId, (g) => ({
+        ...g,
+        notes: g.notes.map((n): GoalNoteData =>
+          n.id !== noteId ? n : { ...n, ...patch, updatedAt: new Date().toISOString() },
+        ),
+      })),
+    onError: (e, _v, ctx) => ctx && failGoalWrite(qc, ctx, e, 'update the note'),
+    onSuccess: (res, _v, ctx) => ctx && settleGoalWrite(qc, ctx, res.goal),
   })
 }
 
@@ -262,7 +637,10 @@ export function useDeleteNote(goalId: string | null) {
       jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/notes/${noteId}`, {
         method: 'DELETE',
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+    // optimistic: the note leaves the list immediately
+    onMutate: (noteId) => beginGoalWrite(qc, goalId, (g) => ({ ...g, notes: g.notes.filter((n) => n.id !== noteId) })),
+    onError: (e, _v, ctx) => ctx && failGoalWrite(qc, ctx, e, 'remove the note'),
+    onSuccess: (res, _v, ctx) => ctx && settleGoalWrite(qc, ctx, res.goal),
   })
 }
 
@@ -511,20 +889,69 @@ export function useDeletePath(goalId: string | null) {
 
 export function useAddNode(goalId: string | null) {
   const qc = useQueryClient()
-  return useMutation({
+  const mutation = useMutation({
     mutationFn: ({
       pathId,
       input,
     }: {
       pathId: string
-      input: Omit<SkillNodeInputPayload, 'afterOrder'> & { afterOrder?: number }
+      input: Omit<SkillNodeInputPayload, 'afterOrder'> & { afterOrder?: number; id?: string }
     }) =>
-      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/paths/${pathId}/nodes`, {
-        method: 'POST',
-        body: JSON.stringify(input),
+      trackCreate(
+        input.id ?? '',
+        jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/paths/${pathId}/nodes`, {
+          method: 'POST',
+          body: JSON.stringify(input),
+        }),
+      ) as Promise<{ goal: GoalData | null }>,
+    // optimistic: the new tier appears at the end of its path immediately,
+    // under its client-generated id
+    onMutate: ({ pathId, input }) =>
+      beginGoalWrite(qc, goalId, (g) => {
+        const path = g.skillPaths.find((p) => p.id === pathId)
+        if (!path) return g
+        const nodeId = input.id ?? tempId('node')
+        const maxOrder = path.nodes.reduce((m, n) => Math.max(m, n.order), -1)
+        const node: SkillNodeData = {
+          id: nodeId,
+          goalId: g.id,
+          pathId,
+          title: input.title,
+          description: input.description ?? null,
+          icon: input.icon ?? '✨',
+          order: input.afterOrder != null ? input.afterOrder + 0.5 : maxOrder + 1,
+          currentValue: input.currentValue ?? 0,
+          targetValue: input.targetValue,
+          unit: input.unit ?? null,
+          xpValue: input.xpValue ?? 20,
+          requiresIds: [],
+          deriveFromId: null,
+          deriveFactor: null,
+          completedAt: null,
+          createdAt: new Date().toISOString(),
+          milestones: (input.milestones ?? []).map((m) => ({
+            id: tempId('ms'),
+            nodeId,
+            value: typeof m === 'number' ? m : m.value,
+            label: typeof m === 'number' ? null : (m.label ?? null),
+            reachedAt: null,
+          })),
+        }
+        return {
+          ...g,
+          skillPaths: g.skillPaths.map((p) => (p.id === pathId ? { ...p, nodes: [...p.nodes, node] } : p)),
+        }
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+    onError: (e, _v, ctx) => ctx && failGoalWrite(qc, ctx, e, 'add the checkpoint'),
+    onSuccess: (res, _v, ctx) => ctx && settleGoalWrite(qc, ctx, res.goal),
   })
+  return {
+    ...mutation,
+    mutate: (
+      vars: { pathId: string; input: Omit<SkillNodeInputPayload, 'afterOrder'> & { afterOrder?: number } },
+      opts?: Parameters<typeof mutation.mutate>[1],
+    ) => mutation.mutate({ ...vars, input: { ...vars.input, id: tempId('node') } }, opts),
+  }
 }
 
 export function useUpdateNode(goalId: string | null) {
@@ -555,11 +982,36 @@ export function useUpdateNode(goalId: string | null) {
         deriveFactor?: number | null
       }
     }) =>
-      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/nodes/${nodeId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(patch),
+      waitForCreate(nodeId).then(() =>
+        jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/nodes/${nodeId}`, {
+          method: 'PATCH',
+          body: JSON.stringify(patch),
+        }),
+      ),
+    // optimistic: quick-adds, mastery flips and tier moves show instantly
+    // (complex patches like milestones/gating settle from the server truth)
+    onMutate: ({ nodeId, patch }) =>
+      beginGoalWrite(qc, goalId, (g) => {
+        let out = patch.move
+          ? {
+              ...g,
+              skillPaths: g.skillPaths.map((p) => ({
+                ...p,
+                nodes: movedInOrder(p.nodes, nodeId, patch.move!),
+              })),
+            }
+          : g
+        const rest: Record<string, unknown> = { ...patch }
+        delete rest.move
+        delete rest.milestones
+        delete rest.requiresIds
+        delete rest.deriveFromId
+        delete rest.deriveFactor
+        if (Object.keys(rest).length > 0) out = withNodePatched(out, nodeId, rest)
+        return out
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+    onError: (e, _v, ctx) => ctx && failGoalWrite(qc, ctx, e, 'update the checkpoint'),
+    onSuccess: (res, _v, ctx) => ctx && settleGoalWrite(qc, ctx, res.goal),
   })
 }
 
@@ -567,10 +1019,19 @@ export function useDeleteNode(goalId: string | null) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ nodeId }: { nodeId: string }) =>
-      jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/nodes/${nodeId}`, {
-        method: 'DELETE',
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+      waitForCreate(nodeId).then(() =>
+        jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/nodes/${nodeId}`, {
+          method: 'DELETE',
+        }),
+      ),
+    // optimistic: the tier leaves its path immediately
+    onMutate: ({ nodeId }) =>
+      beginGoalWrite(qc, goalId, (g) => ({
+        ...g,
+        skillPaths: g.skillPaths.map((p) => ({ ...p, nodes: p.nodes.filter((n) => n.id !== nodeId) })),
+      })),
+    onError: (e, _v, ctx) => ctx && failGoalWrite(qc, ctx, e, 'remove the checkpoint'),
+    onSuccess: (res, _v, ctx) => ctx && settleGoalWrite(qc, ctx, res.goal),
   })
 }
 
@@ -646,7 +1107,24 @@ export function useAddPbRecord(goalId: string | null) {
         method: 'POST',
         body: JSON.stringify({ value, date, note: note || null }),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+    // optimistic: the attempt appears in the metric's history immediately
+    onMutate: ({ pbId, value, date, note }) =>
+      beginGoalWrite(qc, goalId, (g) => ({
+        ...g,
+        pbs: g.pbs.map((pb) =>
+          pb.id !== pbId
+            ? pb
+            : {
+                ...pb,
+                records: [
+                  ...pb.records,
+                  { id: tempId('rec'), date: date ?? new Date().toISOString(), value, note: note ?? null },
+                ],
+              },
+        ),
+      })),
+    onError: (e, _v, ctx) => ctx && failGoalWrite(qc, ctx, e, 'record the attempt'),
+    onSuccess: (res, _v, ctx) => ctx && settleGoalWrite(qc, ctx, res.goal),
   })
 }
 
@@ -672,7 +1150,25 @@ export function useUpdatePbRecord(goalId: string | null) {
         method: 'PATCH',
         body: JSON.stringify({ value, note: note ?? null, ...(date ? { date } : {}) }),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+    // optimistic: the corrected attempt shows immediately
+    onMutate: ({ pbId, recordId, value, date, note }) =>
+      beginGoalWrite(qc, goalId, (g) => ({
+        ...g,
+        pbs: g.pbs.map((pb) =>
+          pb.id !== pbId
+            ? pb
+            : {
+                ...pb,
+                records: pb.records.map((r): PbRecordData =>
+                  r.id !== recordId
+                    ? r
+                    : { ...r, value, note: note ?? null, ...(date ? { date } : {}) },
+                ),
+              },
+        ),
+      })),
+    onError: (e, _v, ctx) => ctx && failGoalWrite(qc, ctx, e, 'update the attempt'),
+    onSuccess: (res, _v, ctx) => ctx && settleGoalWrite(qc, ctx, res.goal),
   })
 }
 
@@ -683,7 +1179,16 @@ export function useDeletePbRecord(goalId: string | null) {
       jsonFetch<{ goal: GoalData | null }>(`/api/goals/${goalId}/pbs/${pbId}/records/${recordId}`, {
         method: 'DELETE',
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals'] }),
+    // optimistic: the attempt leaves the history immediately
+    onMutate: ({ pbId, recordId }) =>
+      beginGoalWrite(qc, goalId, (g) => ({
+        ...g,
+        pbs: g.pbs.map((pb) =>
+          pb.id !== pbId ? pb : { ...pb, records: pb.records.filter((r) => r.id !== recordId) },
+        ),
+      })),
+    onError: (e, _v, ctx) => ctx && failGoalWrite(qc, ctx, e, 'remove the attempt'),
+    onSuccess: (res, _v, ctx) => ctx && settleGoalWrite(qc, ctx, res.goal),
   })
 }
 

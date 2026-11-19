@@ -8,6 +8,9 @@ import { goalInclude, serializeGoal } from '@/lib/goal-serialize'
 const createNoteSchema = z.object({
   content: z.string().min(1, 'Note cannot be empty').max(2000),
   pinned: z.boolean().optional(),
+  /** optional client-generated id — lets the optimistic UI pin/edit a note
+   *  before this create lands (see the steps route for the full story) */
+  id: z.string().min(6).max(80).regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).optional(),
 })
 
 type Params = { params: Promise<{ id: string }> }
@@ -26,7 +29,12 @@ export async function POST(req: Request, { params }: Params) {
     if (!goal) return NextResponse.json({ error: 'Goal not found' }, { status: 404 })
 
     await db.goalNote.create({
-      data: { goalId: id, content: parsed.data.content.trim(), pinned: parsed.data.pinned ?? false },
+      data: {
+        ...(parsed.data.id ? { id: parsed.data.id } : {}),
+        goalId: id,
+        content: parsed.data.content.trim(),
+        pinned: parsed.data.pinned ?? false,
+      },
     })
     const updated = await ownedGoal(id, auth.user)
     return NextResponse.json({ goal: updated ? serializeGoal(updated) : null }, { status: 201 })

@@ -18,6 +18,9 @@ const createNodeSchema = z.object({
   milestones: z.array(z.union([z.number(), z.object({ value: z.number(), label: z.string().max(60).nullish() })])).max(20).optional(),
   /** insert after this tier index (append by default) */
   afterOrder: z.number().int().min(0).optional(),
+  /** optional client-generated id — lets the optimistic UI move/master a
+   *  tier before this create lands (see the steps route for the full story) */
+  id: z.string().min(6).max(80).regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/).optional(),
 })
 
 type Params = { params: Promise<{ id: string; pathId: string }> }
@@ -54,6 +57,7 @@ export async function POST(req: Request, { params }: Params) {
 
     await db.skillNode.create({
       data: {
+        ...(d.id ? { id: d.id } : {}),
         goalId: id,
         pathId,
         title: d.title.trim(),
